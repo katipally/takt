@@ -1,0 +1,23 @@
+{
+  "name": "prox",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.5.2",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "concurrently -n web,agent -c cyan,magenta \"pnpm --filter @prox/web dev\" \"pnpm --filter @prox/agent dev\"",
+    "build": "pnpm -r --filter @prox/web build",
+    "ingest": "pnpm --filter @prox/ingest start --",
+    "db:reset": "pnpm --filter @prox/db reset",
+    "warm": "pnpm --filter @prox/embed warm",
+    "seed": "pnpm ingest --product vulcan-omnipro-220 --name \"Vulcan OmniPro 220\" --manufacturer \"Vulcan\" --summary \"Multiprocess welder (MIG, Flux-Cored, TIG, Stick) with synergic LCD control, 120V/240V input.\" --dir ./files --hero ./assets/vulcan-omnipro-220.webp",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "typescript": "^5.7.3"
+  }
+}

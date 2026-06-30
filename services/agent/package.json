@@ -1,0 +1,26 @@
+{
+  "name": "@prox/agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.195",
+    "@hono/node-server": "^1.13.8",
+    "@prox/db": "workspace:*",
+    "@prox/embed": "workspace:*",
+    "@prox/ingest": "workspace:*",
+    "@prox/shared": "workspace:*",
+    "hono": "^4.12.27",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.22.4",
+    "typescript": "^5.7.3"
+  }
+}

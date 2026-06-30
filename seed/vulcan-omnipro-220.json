@@ -1,0 +1,8 @@
+{
+  "slug": "vulcan-omnipro-220",
+  "name": "Vulcan OmniPro 220",
+  "manufacturer": "Vulcan",
+  "summary": "Multiprocess welder (MIG, Flux-Cored, TIG, Stick) with synergic LCD control, 120V/240V input.",
+  "dir": "./files",
+  "heroSrc": "./assets/vulcan-omnipro-220.webp"
+}

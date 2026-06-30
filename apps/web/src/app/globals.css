@@ -1,0 +1,184 @@
+@import "tailwindcss";
+
+/* ─── Prox design tokens ───────────────────────────────────────────────────
+   Token *names* are mapped to CSS custom properties via @theme inline, so the
+   Tailwind utilities (bg-card, text-accent, …) resolve to var() at runtime.
+   The actual values live in :root (warm-paper light) and .dark (near-black),
+   and next-themes toggles the .dark class — flipping every surface at once. */
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-card: var(--card);
+  --color-elevated: var(--elevated);
+  --color-popover: var(--popover);
+  --color-foreground: var(--foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-faint: var(--faint);
+  --color-border: var(--border);
+  --color-border-heavy: var(--border-heavy);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-arc: var(--arc);
+  --color-arc-soft: var(--arc-soft);
+  --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-link-foreground: var(--link-foreground);
+
+  --text-chat: 13px;
+  --text-chat--line-height: 21px;
+  --text-chat-meta: 11px;
+
+  --radius-sm: 6px;
+  --radius-md: 9px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  --font-sans: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Light — "warm paper": warm off-white page, white cards, near-black ink. */
+:root {
+  color-scheme: light;
+  --background: #f5f4f1;
+  --surface: #ecebe6;
+  --card: #ffffff;
+  --elevated: #ffffff;
+  --popover: #ffffff;
+  --foreground: #1a1a18;
+  --muted-foreground: #6a6a66;
+  --faint: rgba(0, 0, 0, 0.45);
+  --border: rgba(0, 0, 0, 0.09);
+  --border-heavy: rgba(0, 0, 0, 0.16);
+  --accent: #2f6fed;
+  --accent-soft: rgba(47, 111, 237, 0.10);
+  --arc: #e2701f;
+  --arc-soft: rgba(226, 112, 31, 0.12);
+  --destructive: #dc2626;
+  --success: #16a34a;
+  --link-foreground: #2563eb;
+
+  --scrollbar-thumb: rgba(0, 0, 0, 0.16);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.26);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px -12px rgba(0, 0, 0, 0.12);
+
+  /* Shared motion vocabulary (used by CSS keyframes and JS presets alike). */
+  --ease-out-quart: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-fast: 150ms;
+  --dur-base: 220ms;
+}
+
+.dark {
+  color-scheme: dark;
+  --background: #0b0b0c;
+  --surface: #141416;
+  --card: #1a1a1d;
+  --elevated: #202024;
+  --popover: #202024;
+  --foreground: #fafafa;
+  --muted-foreground: #a1a1aa;
+  --faint: rgba(255, 255, 255, 0.45);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-heavy: rgba(255, 255, 255, 0.14);
+  --accent: #5b9dff;
+  --accent-soft: rgba(91, 157, 255, 0.14);
+  --arc: #ff8a3d;
+  --arc-soft: rgba(255, 138, 61, 0.16);
+  --destructive: #fa423e;
+  --success: #40c977;
+  --link-foreground: #8fbcff;
+
+  --scrollbar-thumb: rgba(255, 255, 255, 0.14);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.24);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px -16px rgba(0, 0, 0, 0.6);
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Faint grain on the page background — gives light mode the demo's paper feel.
+   A single inline SVG turbulence tile, kept very low opacity in both themes. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.025;
+  mix-blend-mode: multiply;
+}
+.dark body::before { opacity: 0.04; mix-blend-mode: overlay; }
+
+/* ─── Scrollbars ──────────────────────────────────────────────────────────── */
+.prox-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+.prox-scroll::-webkit-scrollbar { width: 9px; height: 9px; }
+.prox-scroll::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.prox-scroll::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); background-clip: content-box; }
+
+/* ─── Interaction animations ───────────────────────────────────────────────── */
+@keyframes streaming-fade {
+  0% { opacity: 0.4; }
+  100% { opacity: 1; }
+}
+.animate-streaming-fade { animation: streaming-fade 180ms ease-out; }
+
+@keyframes panel-in {
+  from { opacity: 0; transform: translateX(10px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.animate-panel-in { animation: panel-in 200ms var(--ease-out-quart); }
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up { animation: fade-up 240ms var(--ease-out-quart); }
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.82); }
+}
+.animate-pulse-dot { animation: pulse-dot 1.6s ease-in-out infinite; }
+
+/* "arc" shimmer for the thinking / generating state — a quiet welding nod */
+@keyframes arc-sweep {
+  0% { background-position: 140% 0; }
+  100% { background-position: -40% 0; }
+}
+.arc-shimmer {
+  background: linear-gradient(
+    100deg,
+    var(--color-muted-foreground) 30%,
+    var(--color-arc) 50%,
+    var(--color-muted-foreground) 70%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: arc-sweep 2.4s linear infinite;
+}
+
+.text-chat { font-size: var(--text-chat); line-height: var(--text-chat--line-height); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}

@@ -1,0 +1,18 @@
+# Secrets — NEVER bake these. Judges paste their own key at runtime.
+.env
+.env.*
+
+# Host build artifacts — must NOT enter the image (macOS-native binaries, stale builds).
+**/node_modules
+**/.next
+**/.turbo
+**/.cache
+**/.transformers-cache
+.git
+*.log
+
+# Source PDFs are only needed for re-ingest, not at runtime — keep the image lean.
+data/pdfs
+
+# NOTE: data/prox.db, data/pages, data/heroes and data/.enc-key are intentionally
+# NOT ignored — the seeded catalog + vector index + page images are baked in.

@@ -1,0 +1,23 @@
+{
+  "name": "@prox/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "reset": "tsx src/reset.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@prox/shared": "workspace:*",
+    "better-sqlite3": "^12.11.1",
+    "sqlite-vec": "^0.1.9"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
