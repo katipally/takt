@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { getAllSettings, setSetting } from "@prox/db";
+import { DEFAULT_CHAT_MODEL, DEFAULT_CAPTION_MODEL, DEFAULT_EFFORT } from "@prox/shared";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const DEFAULTS = { chatModel: "claude-sonnet-4-6", captionModel: "claude-sonnet-4-6", effort: "medium" };
+const DEFAULTS = { chatModel: DEFAULT_CHAT_MODEL, captionModel: DEFAULT_CAPTION_MODEL, effort: DEFAULT_EFFORT };
 
 export function GET() {
   return NextResponse.json({ ...DEFAULTS, ...getAllSettings() });

@@ -25,8 +25,3 @@ export function getDb(): Database.Database {
   db = handle;
   return db;
 }
-
-export function closeDb() {
-  db?.close();
-  db = null;
-}

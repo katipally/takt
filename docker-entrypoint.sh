@@ -7,6 +7,10 @@ set -e
 export AGENT_PORT="${AGENT_PORT:-8787}"
 WEB_PORT="${PORT:-7860}"
 
+# Gate the internal agent so the public web app is the only way in. Generate a
+# secret if the host didn't provide one; both processes inherit it from here.
+export PROX_AGENT_SECRET="${PROX_AGENT_SECRET:-$(cat /proc/sys/kernel/random/uuid)}"
+
 exec pnpm exec concurrently -k -n agent,web -c magenta,cyan \
   "pnpm --filter @prox/agent start" \
   "pnpm --filter @prox/web exec next start -H 0.0.0.0 -p ${WEB_PORT}"

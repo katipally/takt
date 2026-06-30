@@ -46,8 +46,10 @@ Re-run `deploy/push-to-hf.sh <user>/prox`; it re-uploads and HF rebuilds.
 - Free Spaces **sleep after ~48h idle**; the first visit afterward cold-starts (~30–60s).
 - Runtime state (a pasted key, chat history) is **ephemeral** — it resets if the Space
   restarts or redeploys. Fine for a demo; judges just re-paste their key.
-- Local clone-and-run is unchanged: `data/` stays gitignored in your GitHub fork, so
-  judges who clone still run `pnpm seed` exactly as before.
+- Local clone-and-run needs no seeding: the key-free `data/seed.db` plus the rendered
+  page images are committed, and `packages/db` copies the seed to the runtime DB on
+  first boot. The runtime DB (`data/prox.db`, holding the pasted key + chats) stays
+  gitignored. Re-index or add a product with `pnpm ingest`, then `scripts/bake-seed-db.sh`.
 
 ## Local smoke test (optional, needs Docker)
 ```bash

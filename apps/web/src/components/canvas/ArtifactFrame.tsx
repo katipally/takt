@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTheme } from "next-themes";
-import { Loader2, RotateCw, WifiOff } from "lucide-react";
+import { Loader2, RotateCw, WifiOff, Boxes } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 
@@ -109,14 +109,29 @@ export function InlineArtifactFrame({
   );
 }
 
-// A small, non-interactive live preview of an artifact, for the rail. Renders
-// the real artifact at a virtual width and scales it down into a fixed box.
+// A small, non-interactive live preview of an artifact, for the rail. Each live
+// preview is a full iframe (Babel + Tailwind + esm.sh), so we mount it ONLY
+// while it's on screen — offscreen thumbs show a cheap placeholder. This keeps a
+// long rail from spinning up N iframes at once.
 export function ArtifactThumb({ artifactId }: { artifactId: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const io = new IntersectionObserver(([e]) => setVisible(!!e?.isIntersecting), { rootMargin: "120px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
   return (
-    <div className="pointer-events-none h-[72px] w-full overflow-hidden rounded-md border border-border bg-card">
-      <div style={{ width: "250%", transform: "scale(0.4)", transformOrigin: "top left" }}>
-        <ArtifactFrame artifactId={artifactId} />
-      </div>
+    <div ref={ref} className="pointer-events-none h-[72px] w-full overflow-hidden rounded-md border border-border bg-card">
+      {visible ? (
+        <div style={{ width: "250%", transform: "scale(0.4)", transformOrigin: "top left" }}>
+          <ArtifactFrame artifactId={artifactId} />
+        </div>
+      ) : (
+        <div className="grid h-full place-items-center"><Boxes className="size-4 text-muted-foreground" /></div>
+      )}
     </div>
   );
 }

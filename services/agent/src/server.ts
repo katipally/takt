@@ -4,10 +4,9 @@ import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import type { ChatRequest, MessageBlock, SseEvent } from "@prox/shared";
 import { askAnswerPayloadSchema } from "@prox/shared";
-import { getProductBySlug, createChat, listChats, addMessage, renameChat, getSetting } from "@prox/db";
+import { getProductBySlug, createChat, listChats, addMessage, renameChat, getSetting, loadEnv } from "@prox/db";
 import { ingestProduct } from "@prox/ingest";
 import { extname } from "node:path";
-import { loadEnv } from "./env.js";
 import { ensureSeedProviders } from "./providers.js";
 import { runAgent } from "./agent.js";
 import { resolveAnswers } from "./pending.js";
@@ -15,8 +14,21 @@ import { resolveAnswers } from "./pending.js";
 loadEnv();
 ensureSeedProviders();
 
+// Shared-secret gate + locked CORS. The agent is meant to sit behind the Next
+// proxy on localhost / inside the container; this closes the hole if :8787 is
+// ever reachable. The secret is opt-in: when unset (pure local dev) the gate is
+// skipped; the Next proxy forwards PROX_AGENT_SECRET on every call when set, and
+// the container always sets one (docker-entrypoint).
+const AGENT_SECRET = process.env.PROX_AGENT_SECRET?.trim() || "";
+const WEB_ORIGIN = process.env.WEB_PUBLIC_URL?.trim() || "http://localhost:3000";
+
 const app = new Hono();
-app.use("*", cors());
+app.use("*", cors({ origin: WEB_ORIGIN }));
+app.use("*", async (c, next) => {
+  if (!AGENT_SECRET || c.req.path === "/health") return next();
+  if (c.req.header("x-prox-secret") !== AGENT_SECRET) return c.json({ error: "unauthorized" }, 401);
+  return next();
+});
 
 app.get("/health", (c) => c.json({ ok: true }));
 
@@ -40,14 +52,21 @@ app.post("/chat", async (c) => {
     const emit = async (e: SseEvent) => {
       if (e.type === "text_delta") appendText("text", e.text);
       else if (e.type === "reasoning_delta") appendText("reasoning", e.text);
-      else if (e.type === "tool_start") blocks.push({ type: "tool", tool: e.tool, summary: e.summary, status: "done" });
+      else if (e.type === "tool_start") blocks.push({ type: "tool", id: e.id, tool: e.tool, summary: e.summary, status: "done" });
       else if (e.type === "tool_done") {
-        const t = [...blocks].reverse().find((b) => b.type === "tool" && !b.detail);
+        // Match by tool-use id so concurrent tools attach to the right row.
+        const t = blocks.find((b) => b.type === "tool" && b.id === e.id);
         if (t && t.type === "tool") t.detail = e.detail;
       } else if (e.type === "page_image")
-        blocks.push({ type: "page_image", citationId: e.citationId, url: e.url, page: e.page, manualKind: e.manualKind as any, caption: e.caption ?? null });
+        blocks.push({ type: "page_image", citationId: e.citationId, url: e.url, page: e.page, manualKind: e.manualKind as any, manualTitle: e.manualTitle ?? null, caption: e.caption ?? null });
       else if (e.type === "artifact")
         blocks.push({ type: "artifact", artifactId: e.artifactId, title: e.title, kind: e.kind, groupKey: e.groupKey, version: e.version });
+      else if (e.type === "ask_user")
+        blocks.push({ type: "ask_user", askId: e.askId, questions: e.questions });
+      else if (e.type === "ask_answer") {
+        const a = blocks.find((b) => b.type === "ask_user" && b.askId === e.askId);
+        if (a && a.type === "ask_user") { a.answers = e.answers; a.cancelled = e.cancelled; }
+      }
       await stream.writeSSE({ data: JSON.stringify(e) });
     };
 
@@ -58,10 +77,15 @@ app.post("/chat", async (c) => {
         renameChat(req.chatId, title);
         await emit({ type: "title", title });
       }
-      await runAgent(req, emit);
-      if (req.chatId && blocks.length) addMessage(req.chatId, "assistant", blocks);
+      await runAgent(req, emit, c.req.raw.signal);
     } catch (err: any) {
-      await stream.writeSSE({ data: JSON.stringify({ type: "error", message: String(err?.message ?? err) }) });
+      // Stop is not an error — runAgent swallows aborts. Anything else is real.
+      if (!c.req.raw.signal.aborted && err?.name !== "AbortError")
+        await stream.writeSSE({ data: JSON.stringify({ type: "error", message: String(err?.message ?? err) }) });
+    } finally {
+      // Persist the assistant turn even on Stop, so reopening the chat shows the
+      // partial reply, ask_user panel, and page images exactly as they streamed.
+      if (req.chatId && blocks.length) addMessage(req.chatId, "assistant", blocks);
     }
   });
 });

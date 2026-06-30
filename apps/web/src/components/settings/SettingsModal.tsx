@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useUi } from "@/lib/uiStore";
-import ModelsSettings from "@/app/settings/providers/page";
-import ProductsSettings from "@/app/settings/products/page";
+import { ModelsSettings } from "./ModelsSettings";
+import { ProductsSettings } from "./ProductsSettings";
 import { overlay, modal } from "@/lib/motion";
+import { useFocusTrap } from "@/lib/useFocusTrap";
 import { cn } from "@/lib/cn";
 
 const TABS = [
@@ -23,18 +24,16 @@ export function SettingsModal() {
   // Honor the tab requested by openSettings(tab) each time the modal opens.
   useEffect(() => { if (open) setTab(settingsTab); }, [open, settingsTab]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
-    if (open) document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, close]);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, open, close);
 
   return (
     <AnimatePresence>
       {open && (
         <motion.div variants={overlay} initial="hidden" animate="show" exit="exit"
           className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onClick={close}>
-          <motion.div variants={modal} className="flex h-[80vh] w-full max-w-4xl overflow-hidden rounded-2xl border border-border bg-background shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <motion.div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Settings" tabIndex={-1}
+            variants={modal} className="flex h-[80vh] w-full max-w-4xl overflow-hidden rounded-2xl border border-border bg-background shadow-2xl outline-none" onClick={(e) => e.stopPropagation()}>
             <nav className="flex w-48 shrink-0 flex-col gap-0.5 border-r border-border bg-surface p-3">
           <div className="px-2 pb-2 text-[14px] font-semibold">Settings</div>
           {TABS.map((t) => (

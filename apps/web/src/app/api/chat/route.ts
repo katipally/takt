@@ -12,7 +12,7 @@ export async function POST(req: Request) {
   // tears down the upstream agent stream instead of letting it run on.
   const upstream = await fetch(`${AGENT_URL}/chat`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-prox-secret": process.env.PROX_AGENT_SECRET ?? "" },
     body,
     signal: req.signal,
   });

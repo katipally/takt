@@ -8,9 +8,17 @@ import { resolveChat } from "./providers.js";
 // Drive one chat turn through the Claude Agent SDK, mapping its stream events to
 // our SSE frames. Text deltas come from partial messages; multimodal frames
 // (page_image, artifact) are emitted by the tools themselves.
-export async function runAgent(req: ChatRequest, emit: Emit): Promise<void> {
+export async function runAgent(req: ChatRequest, emit: Emit, signal?: AbortSignal): Promise<void> {
   const product = getProductBySlug(req.productSlug);
   if (!product) { await emit({ type: "error", message: `Unknown product "${req.productSlug}"` }); return; }
+
+  // Tear down the Claude turn when the user presses Stop (or navigates away):
+  // the web proxy forwards its request abort signal all the way here.
+  const ac = new AbortController();
+  if (signal) {
+    if (signal.aborted) ac.abort();
+    else signal.addEventListener("abort", () => ac.abort(), { once: true });
+  }
 
   const manuals = getManualsByProduct(product.id);
   const resolved = resolveChat();
@@ -62,6 +70,7 @@ export async function runAgent(req: ChatRequest, emit: Emit): Promise<void> {
         settingSources: [],
         maxTurns: 16,
         cwd: DATA_DIR,
+        abortController: ac,
         env: { ...process.env, ANTHROPIC_API_KEY: resolved.apiKey },
       },
     })) {
@@ -90,6 +99,8 @@ export async function runAgent(req: ChatRequest, emit: Emit): Promise<void> {
     }
     await emit({ type: "done" });
   } catch (err: any) {
+    // User pressed Stop — not an error. The partial turn is persisted upstream.
+    if (ac.signal.aborted || err?.name === "AbortError") return;
     await emit({ type: "error", message: String(err?.message ?? err) });
   }
 }

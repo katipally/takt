@@ -19,6 +19,7 @@ export function Composer({
   const [value, setValue] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [listening, setListening] = useState(false);
+  const [micNote, setMicNote] = useState<string | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const recogRef = useRef<any>(null);
@@ -49,7 +50,7 @@ export function Composer({
 
   function toggleMic() {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) { alert("Voice input needs Chrome or Edge."); return; }
+    if (!SR) { setMicNote("Voice input needs Chrome or Edge."); setTimeout(() => setMicNote(null), 4000); return; }
     if (listening) { recogRef.current?.stop(); return; }
     const r = new SR();
     r.lang = "en-US"; r.interimResults = true; r.continuous = false;
@@ -78,6 +79,8 @@ export function Composer({
         )}
         <textarea
           ref={taRef}
+          name="message"
+          aria-label="Ask anything about this product"
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !(e.nativeEvent as any).isComposing) { e.preventDefault(); submit(); } }}
@@ -86,31 +89,33 @@ export function Composer({
           className="prox-scroll block max-h-[200px] w-full resize-none bg-transparent px-4 pt-3.5 text-chat text-foreground outline-none placeholder:text-faint"
         />
         <div className="flex items-center justify-between gap-2 px-2.5 pb-2.5">
-          <button onClick={() => fileRef.current?.click()} title="Attach an image"
+          <button onClick={() => fileRef.current?.click()} title="Attach an image" aria-label="Attach an image"
             className="grid size-8 place-items-center rounded-full text-muted-foreground transition hover:bg-foreground/10 hover:text-foreground">
             <Plus className="size-4" />
           </button>
           <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
 
           <div className="flex items-center gap-1.5">
-            <button onClick={() => setVoiceEnabled(!voiceEnabled)} title={voiceEnabled ? "Spoken replies on" : "Spoken replies off"}
+            <button onClick={() => setVoiceEnabled(!voiceEnabled)} title={voiceEnabled ? "Spoken replies on" : "Spoken replies off"} aria-label={voiceEnabled ? "Turn spoken replies off" : "Turn spoken replies on"} aria-pressed={voiceEnabled}
               className={cn("grid size-8 place-items-center rounded-full text-muted-foreground transition hover:bg-foreground/10", voiceEnabled && "text-accent")}>
               {voiceEnabled ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
             </button>
-            <button onClick={toggleMic} title="Speak your question"
+            <button onClick={toggleMic} title="Speak your question" aria-label="Speak your question" aria-pressed={listening}
               className={cn("grid size-8 place-items-center rounded-full text-muted-foreground transition hover:bg-foreground/10", listening && "bg-arc-soft text-arc animate-pulse-dot")}>
               <Mic className="size-4" />
             </button>
             {isStreaming ? (
-              <button onClick={onStop} title="Stop" className="grid size-8 place-items-center rounded-full bg-foreground text-background transition hover:opacity-90"><Square className="size-3 fill-current" /></button>
+              <button onClick={onStop} title="Stop" aria-label="Stop generating" className="grid size-8 place-items-center rounded-full bg-foreground text-background transition hover:opacity-90"><Square className="size-3 fill-current" /></button>
             ) : (
-              <button onClick={submit} disabled={!value.trim() && !attachments.length} title="Send"
+              <button onClick={submit} disabled={!value.trim() && !attachments.length} title="Send" aria-label="Send message"
                 className="grid size-8 place-items-center rounded-full bg-foreground text-background transition enabled:hover:opacity-90 disabled:opacity-30"><ArrowUp className="size-4" /></button>
             )}
           </div>
         </div>
       </div>
-      <p className="mt-2 text-center text-[11px] text-faint">Grounded in the manual · cited to the page · runs in the background</p>
+      <p className={cn("mt-2 text-center text-[11px]", micNote ? "text-muted-foreground" : "text-faint")} role={micNote ? "status" : undefined}>
+        {micNote ?? "Grounded in the manual · cited to the page · runs in the background"}
+      </p>
     </div>
   );
 }

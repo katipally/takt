@@ -29,6 +29,7 @@ export function Workbench({ slug, productName }: { slug: string; productName: st
   const reduce = useReducedMotion();
   const [maximized, setMaximized] = useState(false);
   const [resizing, setResizing] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false); // mobile sidebar (off-canvas under md)
   const closeCanvas = () => { wb.closeCanvas(); setMaximized(false); };
   const panelOpen = wb.canvas.open && !maximized;
   // While dragging a resizer: bypass the width spring so the panel tracks the
@@ -71,7 +72,7 @@ export function Workbench({ slug, productName }: { slug: string; productName: st
         initial={false}
         animate={{ width: sidebarCollapsed ? 0 : sidebarWidth }}
         transition={widthTransition}
-        className="relative h-full shrink-0 overflow-hidden">
+        className="relative hidden h-full shrink-0 overflow-hidden md:block">
         <div style={{ width: sidebarWidth }} className="h-full">
           <Sidebar currentSlug={slug} onNewChat={wb.newChat} onSelectChat={wb.loadChat} activeChatId={wb.chatId} />
         </div>
@@ -81,19 +82,23 @@ export function Workbench({ slug, productName }: { slug: string; productName: st
       <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[var(--shadow-card)]">
         <div className="flex h-12 shrink-0 items-center justify-between gap-2 px-3">
           <div className="flex min-w-0 items-center gap-1.5">
+            <button onClick={() => setDrawerOpen(true)} title="Menu" aria-label="Open menu"
+              className="grid size-8 place-items-center rounded-full text-muted-foreground transition hover:bg-foreground/10 hover:text-foreground md:hidden">
+              <PanelLeftOpen className="size-4" />
+            </button>
             {sidebarCollapsed && (
-              <>
+              <span className="hidden items-center gap-1.5 md:flex">
                 <button onClick={toggleSidebar} title="Open sidebar" className="grid size-8 place-items-center rounded-full text-muted-foreground transition hover:bg-foreground/10 hover:text-foreground">
                   <PanelLeftOpen className="size-4" />
                 </button>
                 <Link href="/" title="All products" className="transition hover:opacity-70"><Wordmark size="sm" /></Link>
                 <span className="h-4 w-px bg-border" />
-              </>
+              </span>
             )}
             <ProductSwitcher currentSlug={slug} variant="bar" />
           </div>
           <div className="flex items-center gap-2">
-            <ContextMeter usage={wb.usage} />
+            <div className="hidden sm:block"><ContextMeter usage={wb.usage} /></div>
             <ThemeToggle />
             <button onClick={wb.toggleCanvas} title={wb.canvas.open ? "Hide artifacts" : "Show artifacts"}
               className={cn("flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-[12px] transition hover:bg-foreground/[0.06]",
@@ -167,6 +172,22 @@ export function Workbench({ slug, productName }: { slug: string; productName: st
       {/* While resizing, this overlay sits above the artifact iframe so pointer
           events reach the window listeners instead of being swallowed by it. */}
       {resizing && <div className="fixed inset-0 z-[60] cursor-col-resize" />}
+
+      {/* Mobile sidebar drawer (off-canvas; desktop sidebar is hidden under md). */}
+      <AnimatePresence>
+        {drawerOpen && (
+          <motion.div key="drawer" className="fixed inset-0 z-50 md:hidden" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={quick}>
+            <div className="absolute inset-0 bg-black/50" onClick={() => setDrawerOpen(false)} />
+            <motion.div initial={{ x: "-100%" }} animate={{ x: 0 }} exit={{ x: "-100%" }} transition={{ type: "spring", stiffness: 380, damping: 40 }}
+              className="absolute left-0 top-0 h-full w-[82%] max-w-[320px] border-r border-border bg-background shadow-2xl">
+              <Sidebar currentSlug={slug}
+                onNewChat={() => { wb.newChat(); setDrawerOpen(false); }}
+                onSelectChat={(id) => { wb.loadChat(id); setDrawerOpen(false); }}
+                activeChatId={wb.chatId} />
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <SourceModal source={wb.source} onClose={wb.closeSource}
         onNavigate={(p) => wb.openCitation(p, wb.source?.manualKind)} />

@@ -13,7 +13,8 @@ export interface ArtifactPart { id: string; kind: "artifact"; artifactId: string
 export interface ReasoningPart { id: string; kind: "reasoning"; text: string; }
 export interface ToolPart { id: string; kind: "tool"; tool: string; summary?: string; detail?: string; status: "running" | "done"; }
 export interface TextPart { id: string; kind: "text"; text: string; }
-export type Part = ReasoningPart | ToolPart | TextPart | PageImagePart | ArtifactPart;
+export interface AskPart { id: string; kind: "ask"; askId: string; questions: AskQuestion[]; answers?: AskAnswer[]; cancelled?: boolean; }
+export type Part = ReasoningPart | ToolPart | TextPart | PageImagePart | ArtifactPart | AskPart;
 
 export interface Attachment { id: string; mediaType: string; dataUrl: string; }
 
@@ -157,12 +158,22 @@ async function runStream(chatId: string, productSlug: string, userNodeId: string
         const withPart = patchAssistant(s, assistantId, (p) => [...p, { id: uid(), kind: "artifact", artifactId: e.artifactId, title: e.title, artifactKind: e.kind, groupKey: e.groupKey, version: e.version }]);
         return { ...setStatus(withPart, assistantId, null), canvas: { open: true, artifactId: e.artifactId } };
       });
-      else if (e.type === "ask_user") update(chatId, (s) => ({ ...s, ask: { askId: e.askId, questions: e.questions } }));
+      // ask_user opens the interactive panel AND drops an inline part so the
+      // question (and the chosen answer, once it streams back) survive reload.
+      else if (e.type === "ask_user") update(chatId, (s) => {
+        const withPart = patchAssistant(s, assistantId, (p) =>
+          p.some((q) => q.kind === "ask" && q.askId === e.askId) ? p : [...p, { id: uid(), kind: "ask", askId: e.askId, questions: e.questions }]);
+        return { ...withPart, ask: { askId: e.askId, questions: e.questions } };
+      });
+      else if (e.type === "ask_answer") update(chatId, (s) => patchAssistant(s, assistantId, (p) =>
+        p.map((q) => (q.kind === "ask" && q.askId === e.askId ? { ...q, answers: e.answers, cancelled: e.cancelled } : q))));
       else if (e.type === "usage") update(chatId, (s) => ({ ...s, usage: { contextTokens: e.contextTokens || s.usage.contextTokens, outputTokens: s.usage.outputTokens + e.outputTokens, costUsd: s.usage.costUsd + e.costUsd } }));
       else if (e.type === "error") update(chatId, (s) => patchAssistant(s, assistantId, (p) => appendText(p, "text", `\n\n_${e.message}_`)));
     }, abort.signal);
   } catch (err) {
-    update(chatId, (s) => patchAssistant(s, assistantId, (p) => appendText(p, "text", `\n\n_Connection error: ${String(err)}_`)));
+    // User pressed Stop → clean stop, keep the partial reply (also persisted
+    // server-side). Only surface genuine network errors.
+    if (!abort.signal.aborted) update(chatId, (s) => patchAssistant(s, assistantId, (p) => appendText(p, "text", `\n\n_Connection error: ${String(err)}_`)));
   } finally {
     let finalText = "";
     update(chatId, (s) => {
@@ -253,8 +264,9 @@ export const chatStore = {
             if (b.type === "text" && b.text) parts.push({ id: uid(), kind: "text", text: b.text });
             else if (b.type === "reasoning" && b.text) parts.push({ id: uid(), kind: "reasoning", text: b.text });
             else if (b.type === "tool") parts.push({ id: uid(), kind: "tool", tool: b.tool, summary: b.summary, detail: b.detail, status: "done" });
-            else if (b.type === "page_image") parts.push({ id: uid(), kind: "page_image", citationId: b.citationId, url: b.url, page: b.page, manualKind: b.manualKind, caption: b.caption });
+            else if (b.type === "page_image") parts.push({ id: uid(), kind: "page_image", citationId: b.citationId, url: b.url, page: b.page, manualKind: b.manualKind, manualTitle: b.manualTitle ?? undefined, caption: b.caption });
             else if (b.type === "artifact") parts.push({ id: uid(), kind: "artifact", artifactId: b.artifactId, title: b.title, artifactKind: b.kind, groupKey: b.groupKey ?? b.artifactId, version: b.version ?? 1 });
+            else if (b.type === "ask_user") parts.push({ id: uid(), kind: "ask", askId: b.askId, questions: b.questions, answers: b.answers, cancelled: b.cancelled });
           }
           next = addNode(next, { id, parentId, role: "assistant", parts, streaming: false });
         }

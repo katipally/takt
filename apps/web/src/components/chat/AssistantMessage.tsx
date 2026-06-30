@@ -3,14 +3,14 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import {
   Boxes, ImageIcon, Search, FileText, Check, Loader2,
-  ChevronRight, Brain, Copy, RefreshCw, Volume2, Square,
+  ChevronRight, Brain, Copy, RefreshCw, Volume2, Square, HelpCircle,
 } from "lucide-react";
 import { StreamingMarkdown } from "@/components/markdown/StreamingMarkdown";
 import { CitationChip } from "./CitationChip";
 import { BranchNav } from "./BranchNav";
 import { Carousel } from "./Carousel";
 import { speech } from "@/lib/speech";
-import type { Node, Part, PageImagePart, ArtifactPart, BranchInfo } from "@/lib/chatStore";
+import type { Node, Part, PageImagePart, ArtifactPart, AskPart, BranchInfo } from "@/lib/chatStore";
 import { cn } from "@/lib/cn";
 
 // `active` shows while the tool runs (gerund + shimmer), `label` once it's done —
@@ -57,7 +57,7 @@ export function AssistantMessage({
   const images = node.parts.filter((p): p is PageImagePart => p.kind === "page_image");
   const artifacts = node.parts.filter((p): p is ArtifactPart => p.kind === "artifact");
 
-  type Segment = { kind: "work"; parts: Part[] } | { kind: "text"; part: Part };
+  type Segment = { kind: "work"; parts: Part[] } | { kind: "text"; part: Part } | { kind: "ask"; part: AskPart };
   const segments: Segment[] = [];
   for (const part of node.parts) {
     if (part.kind === "reasoning" || part.kind === "tool") {
@@ -66,6 +66,8 @@ export function AssistantMessage({
       else segments.push({ kind: "work", parts: [part] });
     } else if (part.kind === "text") {
       segments.push({ kind: "text", part });
+    } else if (part.kind === "ask") {
+      segments.push({ kind: "ask", part });
     }
   }
 
@@ -77,6 +79,8 @@ export function AssistantMessage({
         {segments.map((seg, i) =>
           seg.kind === "work" ? (
             <WorkBlock key={`work-${i}`} parts={seg.parts} active={node.streaming && i === segments.length - 1} />
+          ) : seg.kind === "ask" ? (
+            <AskRecap key={seg.part.id} part={seg.part} />
           ) : (
             <StreamingMarkdown key={seg.part.id} content={linkify((seg.part as { text: string }).text)} isStreaming={node.streaming} renderLink={renderLink} />
           ),
@@ -186,6 +190,34 @@ function WorkBlock({ parts, active }: { parts: Part[]; active: boolean }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// Inline read-only recap of an ask_user round — the interactive input is the Ask
+// panel; this keeps the question (and chosen answer) in the transcript so a
+// reopened chat reads exactly as it did live.
+function AskRecap({ part }: { part: AskPart }) {
+  const answered = !!part.answers && part.answers.length > 0;
+  const status = part.cancelled ? "Clarifying questions · dismissed" : answered ? "You clarified" : "Awaiting your answer…";
+  return (
+    <div className="rounded-lg border border-border bg-card/40 px-3 py-2.5 text-[12.5px]">
+      <div className="mb-1.5 flex items-center gap-1.5 text-faint">
+        <HelpCircle className="size-3.5" />
+        <span className="font-medium text-muted-foreground">{status}</span>
+      </div>
+      <div className="flex flex-col gap-2">
+        {part.questions.map((q, i) => {
+          const a = part.answers?.find((x) => x.questionId === (q.id ?? `q${i}`));
+          const ans = a ? (a.skipped ? "Skipped" : Array.isArray(a.answer) ? a.answer.join(", ") : a.answer) : null;
+          return (
+            <div key={q.id ?? i}>
+              <div className="text-foreground/80">{q.question}</div>
+              {ans && <div className="mt-0.5 text-arc">→ {ans}</div>}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

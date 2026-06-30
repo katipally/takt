@@ -2,13 +2,14 @@ import {
   listProviders, createProvider, updateProvider,
   getProviderApiKey, getSetting, setSetting,
 } from "@prox/db";
+import { DEFAULT_CHAT_MODEL, DEFAULT_CAPTION_MODEL, DEFAULT_EFFORT } from "@prox/shared";
 
 // Anthropic-only. The .env ANTHROPIC_API_KEY seeds the provider on first boot;
 // model choice + reasoning effort + the caption (vision) model live in settings.
 const DEFAULTS = {
-  chatModel: "claude-sonnet-4-6",
-  captionModel: "claude-sonnet-4-6",
-  effort: "medium",
+  chatModel: DEFAULT_CHAT_MODEL,
+  captionModel: DEFAULT_CAPTION_MODEL,
+  effort: DEFAULT_EFFORT,
 };
 
 export function ensureSeedProviders() {

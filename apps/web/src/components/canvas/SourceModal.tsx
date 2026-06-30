@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from "lucide-react";
 import type { CanvasSource } from "@/lib/chatStore";
 import { overlay, modal } from "@/lib/motion";
+import { useFocusTrap } from "@/lib/useFocusTrap";
 import { cn } from "@/lib/cn";
 
 const MANUAL_LABEL: Record<string, string> = {
@@ -19,13 +20,16 @@ export function SourceModal({ source, onClose, onNavigate }: {
   onNavigate: (page: number) => void;
 }) {
   const [zoom, setZoom] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, !!source, onClose);
   return (
     <AnimatePresence>
       {source && (
         <motion.div variants={overlay} initial="hidden" animate="show" exit="exit"
           className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-6" onClick={onClose}>
-          <motion.div variants={modal} onClick={(e) => e.stopPropagation()}
-            className="flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[var(--shadow-card)]">
+          <motion.div ref={dialogRef} role="dialog" aria-modal="true" aria-label={`Manual page ${source.page}`} tabIndex={-1}
+            variants={modal} onClick={(e) => e.stopPropagation()}
+            className="flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[var(--shadow-card)] outline-none">
             <header className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
               <div className="min-w-0">
                 <div className="truncate text-[13px] font-medium text-foreground">{MANUAL_LABEL[source.manualKind] ?? source.manualTitle ?? "Manual"}</div>

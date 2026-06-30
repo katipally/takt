@@ -10,7 +10,7 @@ import { cn } from "@/lib/cn";
 
 const inputCls = "w-full rounded-lg border border-border bg-card px-3 py-2 text-[13px] text-foreground outline-none placeholder:text-faint focus:border-border-heavy";
 
-export default function ProductsSettings() {
+export function ProductsSettings() {
   const { data: products = [] } = useQuery({ queryKey: ["products"], queryFn: api.products });
   return (
     <div className="flex flex-col gap-9">
@@ -92,8 +92,8 @@ function AddProduct() {
         Upload the product&apos;s manuals (PDF). Prox renders every page, reads diagrams and tables with the ingestion model, and builds the search index — then it shows up here, no redeploy.
       </p>
       <div className="mt-4 grid grid-cols-2 gap-2">
-        <input className={inputCls} placeholder="Product name" value={name} onChange={(e) => setName(e.target.value)} />
-        <input className={inputCls} placeholder="Manufacturer (optional)" value={manufacturer} onChange={(e) => setManufacturer(e.target.value)} />
+        <input className={inputCls} name="product-name" placeholder="Product name" aria-label="Product name" value={name} onChange={(e) => setName(e.target.value)} />
+        <input className={inputCls} name="manufacturer" placeholder="Manufacturer (optional)" aria-label="Manufacturer" value={manufacturer} onChange={(e) => setManufacturer(e.target.value)} />
       </div>
 
       <div className="mt-2 flex flex-wrap items-center gap-2">

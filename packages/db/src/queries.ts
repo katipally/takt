@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type {
-  Product, Manual, PageImage, SearchResult, Provider, Model,
+  Product, Manual, PageImage, SearchResult, Provider,
   Artifact, ChatSummary, ChatMessage, ManualKind, ChunkKind,
   ProviderKind, ArtifactKind, MessageBlock, MessageRole,
 } from "@prox/shared";
@@ -40,10 +40,6 @@ export function upsertProduct(p: {
     `INSERT INTO products (id, slug, name, manufacturer, summary, hero_path) VALUES (?,?,?,?,?,?)`,
   ).run(id, p.slug, p.name, p.manufacturer ?? null, p.summary ?? null, p.heroPath ?? null);
   return getProductBySlug(p.slug)!;
-}
-
-export function deleteProduct(slug: string): void {
-  db().prepare(`DELETE FROM products WHERE slug = ?`).run(slug);
 }
 
 // ─── Manuals ───────────────────────────────────────────────────────────────
@@ -165,38 +161,37 @@ export function matchChunks(
 // ─── Providers ─────────────────────────────────────────────────────────────
 function rowToProvider(r: any): Provider {
   return {
-    id: r.id, name: r.name, kind: r.kind, baseUrl: r.baseUrl,
+    id: r.id, name: r.name, kind: r.kind,
     keyLast4: r.keyLast4, hasKey: !!r.hasKey, isDefault: !!r.isDefault,
   };
 }
 
 export function listProviders(): Provider[] {
   return (db().prepare(
-    `SELECT id, name, kind, base_url AS baseUrl, key_last4 AS keyLast4,
+    `SELECT id, name, kind, key_last4 AS keyLast4,
             (api_key_ciphertext IS NOT NULL) AS hasKey, is_default AS isDefault
      FROM providers ORDER BY is_default DESC, name`,
   ).all() as any[]).map(rowToProvider);
 }
 
 export function createProvider(p: {
-  name: string; kind: ProviderKind; baseUrl?: string | null; apiKey?: string | null; isDefault?: boolean;
+  name: string; kind: ProviderKind; apiKey?: string | null; isDefault?: boolean;
 }): Provider {
   const id = randomUUID();
   const ciphertext = p.apiKey ? encryptSecret(p.apiKey) : null;
   const last4 = p.apiKey ? p.apiKey.slice(-4) : null;
   if (p.isDefault) db().prepare(`UPDATE providers SET is_default = 0`).run();
   db().prepare(
-    `INSERT INTO providers (id, name, kind, base_url, api_key_ciphertext, key_last4, is_default)
-     VALUES (?,?,?,?,?,?,?)`,
-  ).run(id, p.name, p.kind, p.baseUrl ?? null, ciphertext, last4, p.isDefault ? 1 : 0);
+    `INSERT INTO providers (id, name, kind, api_key_ciphertext, key_last4, is_default)
+     VALUES (?,?,?,?,?,?)`,
+  ).run(id, p.name, p.kind, ciphertext, last4, p.isDefault ? 1 : 0);
   return listProviders().find((x) => x.id === id)!;
 }
 
 export function updateProvider(id: string, p: {
-  name?: string; baseUrl?: string | null; apiKey?: string | null; isDefault?: boolean;
+  name?: string; apiKey?: string | null; isDefault?: boolean;
 }): Provider | undefined {
   if (p.name !== undefined) db().prepare(`UPDATE providers SET name=? WHERE id=?`).run(p.name, id);
-  if (p.baseUrl !== undefined) db().prepare(`UPDATE providers SET base_url=? WHERE id=?`).run(p.baseUrl, id);
   if (p.apiKey) {
     db().prepare(`UPDATE providers SET api_key_ciphertext=?, key_last4=? WHERE id=?`)
       .run(encryptSecret(p.apiKey), p.apiKey.slice(-4), id);
@@ -208,78 +203,10 @@ export function updateProvider(id: string, p: {
   return listProviders().find((x) => x.id === id);
 }
 
-export function deleteProvider(id: string): void {
-  db().prepare(`DELETE FROM providers WHERE id=?`).run(id);
-}
-
-export function getProviderById(id: string): Provider | undefined {
-  return listProviders().find((x) => x.id === id);
-}
-
-export function getDefaultProvider(): Provider | undefined {
-  const rows = listProviders();
-  return rows.find((p) => p.isDefault) ?? rows[0];
-}
-
 /** Server-only: decrypt a provider's API key. Never exposed over HTTP. */
 export function getProviderApiKey(id: string): string | null {
   const row = db().prepare(`SELECT api_key_ciphertext AS c FROM providers WHERE id=?`).get(id) as { c: string | null } | undefined;
   return row?.c ? decryptSecret(row.c) : null;
-}
-
-// ─── Models ────────────────────────────────────────────────────────────────
-function rowToModel(r: any): Model {
-  return {
-    id: r.id, providerId: r.providerId, modelId: r.modelId, displayName: r.displayName,
-    supportsVision: !!r.supportsVision, isDefault: !!r.isDefault, enabled: !!r.enabled,
-  };
-}
-
-export function listModels(): Model[] {
-  return (db().prepare(
-    `SELECT id, provider_id AS providerId, model_id AS modelId, display_name AS displayName,
-            supports_vision AS supportsVision, is_default AS isDefault, enabled
-     FROM models ORDER BY is_default DESC, display_name`,
-  ).all() as any[]).map(rowToModel);
-}
-
-export function getModelById(id: string): Model | undefined {
-  return listModels().find((m) => m.id === id);
-}
-
-export function getDefaultModel(): Model | undefined {
-  const rows = listModels().filter((m) => m.enabled);
-  return rows.find((m) => m.isDefault) ?? rows[0];
-}
-
-export function createModel(m: {
-  providerId: string; modelId: string; displayName: string;
-  supportsVision?: boolean; isDefault?: boolean; enabled?: boolean;
-}): Model {
-  const id = randomUUID();
-  if (m.isDefault) db().prepare(`UPDATE models SET is_default = 0`).run();
-  db().prepare(
-    `INSERT INTO models (id, provider_id, model_id, display_name, supports_vision, is_default, enabled)
-     VALUES (?,?,?,?,?,?,?)`,
-  ).run(id, m.providerId, m.modelId, m.displayName, m.supportsVision === false ? 0 : 1, m.isDefault ? 1 : 0, m.enabled === false ? 0 : 1);
-  return getModelById(id)!;
-}
-
-export function updateModel(id: string, m: {
-  displayName?: string; enabled?: boolean; isDefault?: boolean; supportsVision?: boolean;
-}): Model | undefined {
-  if (m.displayName !== undefined) db().prepare(`UPDATE models SET display_name=? WHERE id=?`).run(m.displayName, id);
-  if (m.enabled !== undefined) db().prepare(`UPDATE models SET enabled=? WHERE id=?`).run(m.enabled ? 1 : 0, id);
-  if (m.supportsVision !== undefined) db().prepare(`UPDATE models SET supports_vision=? WHERE id=?`).run(m.supportsVision ? 1 : 0, id);
-  if (m.isDefault) {
-    db().prepare(`UPDATE models SET is_default = 0`).run();
-    db().prepare(`UPDATE models SET is_default = 1 WHERE id=?`).run(id);
-  }
-  return getModelById(id);
-}
-
-export function deleteModel(id: string): void {
-  db().prepare(`DELETE FROM models WHERE id=?`).run(id);
 }
 
 // ─── Chats + messages ──────────────────────────────────────────────────────

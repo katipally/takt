@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { askQuestionSchema } from "./ask-spec";
+import { askQuestionSchema, askAnswerSchema } from "./ask-spec";
 
 // The wire protocol between the agent service and the browser. One JSON object
 // per SSE `data:` line. The agent emits these; the web `/api/chat` route is a
@@ -35,6 +35,7 @@ export const sseEventSchema = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("title"), title: z.string() }),
   z.object({ type: z.literal("ask_user"), askId: z.string(), questions: z.array(askQuestionSchema) }),
+  z.object({ type: z.literal("ask_answer"), askId: z.string(), answers: z.array(askAnswerSchema).optional(), cancelled: z.boolean().optional() }),
   z.object({
     type: z.literal("usage"),
     contextTokens: z.number(),
