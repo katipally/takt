@@ -1,12 +1,13 @@
 "use client";
 
-import { use, useState } from "react";
+import { use, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Boxes, X, PanelLeftOpen } from "lucide-react";
 import { overlay, modal } from "@/lib/motion";
+import { useFocusTrap } from "@/lib/useFocusTrap";
 import { api } from "@/lib/api";
 import { ArtifactFrame } from "@/components/canvas/ArtifactFrame";
 import { Sidebar } from "@/components/app/Sidebar";
@@ -21,6 +22,8 @@ export default function Gallery({ params }: { params: Promise<{ productSlug: str
   const [open, setOpen] = useState<{ id: string; title: string } | null>(null);
   const { sidebarWidth, sidebarCollapsed, toggleSidebar } = useUi();
   const reduce = useReducedMotion();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, !!open, () => setOpen(null));
 
   return (
     <div className="flex h-dvh w-full gap-2 overflow-hidden bg-background p-2">
@@ -53,8 +56,14 @@ export default function Gallery({ params }: { params: Promise<{ productSlug: str
         <div className="prox-scroll min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto max-w-5xl px-6 py-8">
             {artifacts.length === 0 ? (
-              <div className="rounded-2xl border border-border bg-card p-8 text-center text-[13px] text-muted-foreground">
-                No artifacts yet. Ask the agent something that needs a calculator, configurator, or diagram and it&apos;ll build one here.
+              <div className="rounded-2xl border border-border bg-card p-8 text-center">
+                <Boxes className="mx-auto size-6 text-muted-foreground" />
+                <p className="mt-3 text-[13px] font-medium text-foreground">No artifacts yet</p>
+                <p className="mt-1 text-[12.5px] text-muted-foreground">
+                  Ask the agent something that needs a calculator, configurator, or diagram — say
+                  {" "}<Link href={`/${productSlug}?q=${encodeURIComponent("Build me a duty-cycle calculator for MIG on 240V")}`} className="text-accent underline-offset-2 hover:underline">&ldquo;build a duty-cycle calculator&rdquo;</Link>{" "}
+                  — and it&apos;ll render here, live.
+                </p>
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -78,10 +87,11 @@ export default function Gallery({ params }: { params: Promise<{ productSlug: str
         {open && (
           <motion.div variants={overlay} initial="hidden" animate="show" exit="exit"
             className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-6" onClick={() => setOpen(null)}>
-            <motion.div variants={modal} className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-surface" onClick={(e) => e.stopPropagation()}>
+            <motion.div ref={dialogRef} role="dialog" aria-modal="true" aria-label={open.title} tabIndex={-1}
+              variants={modal} className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-surface outline-none" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center justify-between border-b border-border px-4 py-3">
                 <div className="text-[13px] font-medium">{open.title}</div>
-                <button onClick={() => setOpen(null)} className="grid size-8 place-items-center rounded-lg text-muted-foreground transition hover:bg-foreground/10 hover:text-foreground"><X className="size-4" /></button>
+                <button onClick={() => setOpen(null)} aria-label="Close" className="grid size-8 place-items-center rounded-lg text-muted-foreground transition hover:bg-foreground/10 hover:text-foreground"><X className="size-4" /></button>
               </div>
               <div className="prox-scroll overflow-y-auto p-4"><ArtifactFrame artifactId={open.id} /></div>
             </motion.div>

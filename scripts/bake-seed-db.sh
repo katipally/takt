@@ -6,9 +6,11 @@
 # packages/db/src/connection.ts copies data/seed.db -> data/prox.db on first
 # boot, so judges get instant answers with no `pnpm seed`.
 #
-# What it strips: the provider API key (api_key_ciphertext + key_last4) and all
-# runtime chat data (chats / messages / artifacts). It keeps the valuable seed:
-# products, manuals, page_images, chunks, models. Run it after re-seeding.
+# What it strips: the provider API key (api_key_ciphertext + key_last4), all
+# runtime chat data (chats / messages / artifacts), and the per-machine model
+# settings (so a fresh boot applies the shared DEFAULT_* models, not whatever a
+# dev last picked). It keeps the valuable seed: products, manuals, page_images,
+# chunks. Run it after re-seeding.
 #
 # Usage:  scripts/bake-seed-db.sh
 # Prereqs: sqlite3.  Commits: data/seed.db, data/pages/, data/heroes/.
@@ -26,13 +28,15 @@ cp "$SRC" "$OUT"
 [ -f "$SRC-wal" ] && cp "$SRC-wal" "$OUT-wal" || true
 [ -f "$SRC-shm" ] && cp "$SRC-shm" "$OUT-shm" || true
 
-echo "▸ Folding WAL, stripping key, clearing chat history…"
+echo "▸ Folding WAL, stripping key, clearing chats + model settings…"
 sqlite3 "$OUT" "
   PRAGMA wal_checkpoint(TRUNCATE);
   UPDATE providers SET api_key_ciphertext=NULL, key_last4=NULL;
   DELETE FROM artifacts;
   DELETE FROM messages;
   DELETE FROM chats;
+  DELETE FROM settings WHERE key IN ('chatModel','captionModel','effort');
+  DROP TABLE IF EXISTS models;
   PRAGMA journal_mode=DELETE;
 "
 rm -f "$OUT-wal" "$OUT-shm"

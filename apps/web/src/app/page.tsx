@@ -19,6 +19,7 @@ import { cn } from "@/lib/cn";
 
 export default function Home() {
   const { data: products = [], isLoading } = useQuery({ queryKey: ["products"], queryFn: api.products });
+  const openSettings = useUi((s) => s.openSettings);
   const [active, setActive] = useState(0);
   // The "+ Add product" pill already signals more can be uploaded, so show each
   // product once (no duplicate pill for a single-product catalog).
@@ -31,9 +32,9 @@ export default function Home() {
         <Link href="/" className="transition hover:opacity-70"><Wordmark size="md" /></Link>
         <div className="flex items-center gap-1">
           <ThemeToggle />
-          <Link href="/settings/providers" className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-muted-foreground transition hover:bg-foreground/[0.06] hover:text-foreground">
+          <button onClick={() => openSettings("models")} className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-muted-foreground transition hover:bg-foreground/[0.06] hover:text-foreground">
             <Settings className="size-4" /> Settings
-          </Link>
+          </button>
         </div>
       </header>
 
@@ -170,7 +171,7 @@ function AskBar({ onAsk }: { onAsk: (q: string) => void }) {
   return (
     <form onSubmit={(e) => { e.preventDefault(); if (value.trim()) onAsk(value.trim()); }}
       className="group flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 transition focus-within:border-border-heavy hover:border-border-heavy">
-      <input value={value} onChange={(e) => setValue(e.target.value)} placeholder="Or ask your own question…"
+      <input value={value} onChange={(e) => setValue(e.target.value)} name="question" aria-label="Ask your own question" placeholder="Or ask your own question…"
         className="min-w-0 flex-1 bg-transparent text-[14px] text-foreground outline-none placeholder:text-faint" />
       <button type="submit" aria-label="Ask" className="grid size-7 shrink-0 place-items-center rounded-lg text-muted-foreground transition hover:bg-foreground/10 hover:text-foreground">
         <ArrowRight className="size-4" />

@@ -1,8 +1,10 @@
 // Domain types shared across the web app, agent service, and ingest pipeline.
 
+import type { AskQuestion, AskAnswer } from "./ask-spec";
+
 export type ManualKind = "owner" | "quick_start" | "selection_chart" | "other";
-export type ChunkKind = "text" | "table" | "image_caption";
-export type ProviderKind = "anthropic" | "openai_compat";
+export type ChunkKind = "text" | "image_caption";
+export type ProviderKind = "anthropic";
 export type ArtifactKind = "react" | "html";
 export type MessageRole = "user" | "assistant" | "tool";
 
@@ -49,21 +51,10 @@ export interface Provider {
   id: string;
   name: string;
   kind: ProviderKind;
-  baseUrl: string | null;
   /** Masked for display — never the plaintext key. */
   keyLast4: string | null;
   hasKey: boolean;
   isDefault: boolean;
-}
-
-export interface Model {
-  id: string;
-  providerId: string;
-  modelId: string;
-  displayName: string;
-  supportsVision: boolean;
-  isDefault: boolean;
-  enabled: boolean;
 }
 
 export interface Artifact {
@@ -98,9 +89,10 @@ export interface ChatMessage {
 export type MessageBlock =
   | { type: "text"; text: string }
   | { type: "reasoning"; text: string }
-  | { type: "tool"; tool: string; summary?: string; detail?: string; status: "running" | "done" }
-  | { type: "page_image"; citationId: string; url: string; page: number; manualKind: ManualKind; caption: string | null }
+  | { type: "tool"; id?: string; tool: string; summary?: string; detail?: string; status: "running" | "done" }
+  | { type: "page_image"; citationId: string; url: string; page: number; manualKind: ManualKind; manualTitle?: string | null; caption: string | null }
   | { type: "artifact"; artifactId: string; title: string; kind: ArtifactKind; groupKey?: string; version?: number }
+  | { type: "ask_user"; askId: string; questions: AskQuestion[]; answers?: AskAnswer[]; cancelled?: boolean }
   | { type: "citation"; citationId: string; page: number; manualKind: ManualKind };
 
 /** Request body the web app POSTs to /api/chat (and the agent service). */

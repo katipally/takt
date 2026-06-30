@@ -9,7 +9,7 @@ import { cn } from "@/lib/cn";
 
 const inputCls = "w-full rounded-lg border border-border bg-card px-3 py-2 text-[13px] text-foreground outline-none placeholder:text-faint focus:border-border-heavy";
 
-export default function ModelsSettings() {
+export function ModelsSettings() {
   const qc = useQueryClient();
   const { data: providers = [] } = useQuery({ queryKey: ["providers"], queryFn: api.providers });
   const { data: models = [] } = useQuery({ queryKey: ["models"], queryFn: api.models });
@@ -38,7 +38,7 @@ export default function ModelsSettings() {
           <div className="flex-1 rounded-lg border border-border bg-card px-3 py-2 text-[12.5px] text-muted-foreground">
             {anthropic?.hasKey ? <>Key set · ••••{anthropic.keyLast4}</> : "No key set"}
           </div>
-          <input value={key} onChange={(e) => setKey(e.target.value)} type="password" placeholder="Paste new key"
+          <input value={key} onChange={(e) => setKey(e.target.value)} type="password" name="anthropic-api-key" placeholder="Paste new key" aria-label="Anthropic API key"
             className="w-56 rounded-lg border border-border bg-card px-3 py-2 text-[12.5px] outline-none focus:border-border-heavy" />
           <button onClick={() => saveKey.mutate()} disabled={!key || !anthropic}
             className="flex items-center gap-1.5 rounded-lg bg-foreground px-3 py-2 text-[13px] font-medium text-background transition hover:opacity-90 disabled:opacity-30">
@@ -48,9 +48,9 @@ export default function ModelsSettings() {
       </section>
 
       <section>
-        <h2 className="text-[15px] font-semibold">Chat model</h2>
+        <label htmlFor="chat-model" className="text-[15px] font-semibold">Chat model</label>
         <p className="mt-1 text-[12.5px] text-muted-foreground">Fetched live from your Anthropic account. Used to answer questions.</p>
-        <select className={cn(inputCls, "mt-3 max-w-md")} value={settings?.chatModel ?? ""}
+        <select id="chat-model" className={cn(inputCls, "mt-3 max-w-md")} value={settings?.chatModel ?? ""}
           onChange={(e) => saveSetting.mutate({ chatModel: e.target.value })}>
           {models.map((m) => <option key={m.id} value={m.id}>{m.display_name}</option>)}
         </select>
@@ -77,11 +77,11 @@ export default function ModelsSettings() {
       </section>
 
       <section>
-        <h2 className="text-[15px] font-semibold">Ingestion model</h2>
+        <label htmlFor="caption-model" className="text-[15px] font-semibold">Ingestion model</label>
         <p className="mt-1 text-[12.5px] text-muted-foreground">
           The vision model that reads each manual page when you add a product — transcribing tables and describing diagrams so they become searchable.
         </p>
-        <select className={cn(inputCls, "mt-3 max-w-md")} value={settings?.captionModel ?? ""}
+        <select id="caption-model" className={cn(inputCls, "mt-3 max-w-md")} value={settings?.captionModel ?? ""}
           onChange={(e) => saveSetting.mutate({ captionModel: e.target.value })}>
           {models.map((m) => <option key={m.id} value={m.id}>{m.display_name}</option>)}
         </select>

@@ -60,22 +60,10 @@ CREATE TABLE IF NOT EXISTS providers (
   id                 TEXT PRIMARY KEY,
   name               TEXT NOT NULL,
   kind               TEXT NOT NULL,
-  base_url           TEXT,
   api_key_ciphertext TEXT,
   key_last4          TEXT,
   is_default         INTEGER NOT NULL DEFAULT 0
 );
-
-CREATE TABLE IF NOT EXISTS models (
-  id            TEXT PRIMARY KEY,
-  provider_id   TEXT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
-  model_id      TEXT NOT NULL,
-  display_name  TEXT NOT NULL,
-  supports_vision INTEGER NOT NULL DEFAULT 1,
-  is_default    INTEGER NOT NULL DEFAULT 0,
-  enabled       INTEGER NOT NULL DEFAULT 1
-);
-CREATE INDEX IF NOT EXISTS idx_models_provider ON models(provider_id);
 
 CREATE TABLE IF NOT EXISTS chats (
   id         TEXT PRIMARY KEY,

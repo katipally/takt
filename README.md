@@ -7,7 +7,7 @@ product is the Vulcan OmniPro 220 multiprocess welder, whose 48-page owner's
 manual, quick-start guide, and selection chart live in `files/`.
 
 - Live demo (no setup): https://yash3471-prox.hf.space
-- Video walkthrough: _<!-- TODO: paste your video link here -->_
+- Video walkthrough: _coming soon_
 
 ## What this is
 
@@ -100,9 +100,11 @@ renders live in a sandboxed frame. Examples it produces: a duty-cycle calculator
 settings configurator (process plus material plus thickness gives wire speed and
 voltage), a troubleshooting flowchart, a polarity and socket diagram. Artifacts can
 import real packages (`react`, `lucide-react`, `framer-motion`, `recharts`, `d3`,
-`three`) and embed actual manual images. They're also versioned: ask for a change
-and you get a new version to flip between (this is one of the parts past the brief).
-The renderer is described in [docs/artifacts.md](docs/artifacts.md).
+`three`) via an import map and embed actual manual images. They're also versioned:
+ask for a change and you get a new version to flip between (this is one of the
+parts past the brief). The code is pushed into a sandboxed iframe by `postMessage`
+and runs with `allow-scripts` only (no same-origin), so model-written code can't
+reach the app's cookies, DOM, or storage.
 
 ### 4. Ask: clarify before guessing (beyond the brief)
 
@@ -128,9 +130,9 @@ product is a drop-in with no code change.
 - Streamed reasoning and live tool activity, with a context and cost meter each turn.
 - Chat history with branching. Conversations persist, and editing a message forks
   the thread so you can compare answers.
-- Provider and model management. Add an Anthropic- or OpenAI-compatible provider in
-  the UI, register models, set a default, and choose which appear in the composer.
-  Keys are AES-encrypted at rest and the browser only ever sees the last four digits.
+- Model management. Set your Anthropic key and pick the chat and ingestion models
+  from the UI; the picker lists your account's live models. Keys are AES-encrypted
+  at rest and the browser only ever sees the last four digits.
 
 ## Architecture
 
@@ -164,7 +166,7 @@ The agent runs as a separate Node service because the Claude Agent SDK spawns a
 `claude` subprocess, which needs a real Node runtime rather than a serverless
 function. The web app proxies to it over SSE, which keeps the agent endpoint one
 environment variable away from being swapped for a hosted container later (see
-[docs/deployment.md](docs/deployment.md)). Locally, `pnpm dev` runs both with one
+[deploy/HOSTING.md](deploy/HOSTING.md)). Locally, `pnpm dev` runs both with one
 command.
 
 The web layer and the agent share one SQLite file. That single file holds the whole
@@ -220,7 +222,8 @@ away. To refresh the committed key-free catalog after seeding, run
 The whole thing is local-first. SQLite and local embeddings keep setup to a single
 key, with the cost that the index is one file on disk. For multi-user hosting you'd
 move to Turso or Postgres and object storage; the code sits behind a thin seam for
-that and [docs/deployment.md](docs/deployment.md) covers the swap.
+that (the agent is one env var away from being a separate container). Hosting on a
+free Docker Space is covered in [deploy/HOSTING.md](deploy/HOSTING.md).
 
 A few other choices worth calling out:
 
@@ -250,9 +253,6 @@ A few other choices worth calling out:
 ├── scripts/          bake-seed-db.sh (rebuilds the key-free catalog), smoke.mjs (accuracy check)
 ├── data/             committed seed.db plus page and hero images (runtime db ignored)
 ├── files/            the Vulcan OmniPro 220 manuals
-├── docs/             architecture, artifacts, voice, deployment, video walkthrough
+├── docs/             architecture (SSE protocol), adding-a-product
 └── challenge/        the original Prox challenge brief, archived
 ```
-
-The demo script behind the video lives in
-[docs/video-walkthrough.md](docs/video-walkthrough.md).

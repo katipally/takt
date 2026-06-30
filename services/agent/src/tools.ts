@@ -25,10 +25,10 @@ export function buildProxServer(ctx: { product: Product; manuals: Manual[]; emit
 
   const searchManual = tool(
     "search_manual",
-    "Search this product's manuals (text, tables, and image/diagram captions) for relevant passages. Returns page-cited snippets. Call this before stating any spec, setting, or procedure.",
+    "Search this product's manuals (text and image/diagram/table captions) for relevant passages. Returns page-cited snippets. Call this before stating any spec, setting, or procedure.",
     {
       query: z.string().describe("What to look up, in natural language"),
-      kinds: z.array(z.enum(["text", "table", "image_caption"])).optional()
+      kinds: z.array(z.enum(["text", "image_caption"])).optional()
         .describe("Restrict to chunk kinds; omit for all"),
       k: z.number().int().min(1).max(12).optional().describe("How many results (default 6)"),
     },
@@ -120,6 +120,9 @@ export function buildProxServer(ctx: { product: Product; manuals: Manual[]; emit
       const questions = args.questions.map((q, i) => ({ ...q, id: q.id ?? `q${i}` }));
       await emit({ type: "ask_user", askId, questions });
       const payload = await awaitAnswers(askId);
+      // Echo the chosen answers back so they persist onto the ask_user block and
+      // the inline panel updates from "awaiting" to the recap.
+      await emit({ type: "ask_answer", askId, answers: payload.answers, cancelled: payload.cancelled });
       if (payload.cancelled || !payload.answers?.length) {
         return text("The user dismissed the questions without answering. Proceed with reasonable best-effort defaults and clearly state the assumptions you made.");
       }
