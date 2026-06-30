@@ -35,3 +35,15 @@ export function formatCost(usd: number): string {
   if (usd < 0.01) return `$${usd.toFixed(4)}`;
   return `$${usd.toFixed(2)}`;
 }
+
+export function costFromTokens(input: number, output: number, model: string | undefined): number {
+  const m = metaFor(model);
+  return (input * m.inputPrice + output * m.outputPrice) / 1_000_000;
+}
+
+// Rough pre-ingest estimate: one vision call per page. A 2x manual page ~ a
+// capped image (~1.6k input tokens) + ~0.7k output tokens of transcription.
+// ponytail: a heuristic, labelled "~"; the actual spend is shown after.
+export function estimateIngestCost(pages: number, model: string | undefined): number {
+  return costFromTokens(pages * 1600, pages * 700, model);
+}

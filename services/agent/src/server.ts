@@ -5,9 +5,9 @@ import { streamSSE } from "hono/streaming";
 import type { ChatRequest, MessageBlock, SseEvent } from "@prox/shared";
 import { askAnswerPayloadSchema } from "@prox/shared";
 import { getProductBySlug, createChat, listChats, addMessage, renameChat, getSetting, loadEnv } from "@prox/db";
-import { ingestProduct } from "@prox/ingest";
+import { ingestProduct, countPdfPages } from "@prox/ingest";
 import { extname } from "node:path";
-import { ensureSeedProviders } from "./providers.js";
+import { ensureSeedProviders, getAnthropicKey } from "./providers.js";
 import { runAgent } from "./agent.js";
 import { resolveAnswers } from "./pending.js";
 
@@ -104,6 +104,24 @@ app.get("/chats", (c) => {
   return c.json(product ? listChats(product.id) : []);
 });
 
+// Pre-ingest estimate: count pages (cheap, no captioning) so the UI can show
+// page count + model + an estimated cost and let the user confirm before spend.
+app.post("/ingest/estimate", async (c) => {
+  const form = await c.req.formData();
+  const pdfFiles = form.getAll("pdfs").filter((f) => typeof f !== "string") as unknown as File[];
+  if (!pdfFiles.length) return c.json({ error: "At least one PDF is required." }, 400);
+  const perFile = await Promise.all(pdfFiles.map(async (f) => {
+    try { return { name: f.name, pages: countPdfPages(new Uint8Array(await f.arrayBuffer())) }; }
+    catch { return { name: f.name, pages: 0 }; }
+  }));
+  return c.json({
+    perFile,
+    totalPages: perFile.reduce((n, f) => n + f.pages, 0),
+    model: getSetting("captionModel") ?? "claude-sonnet-5",
+    hasKey: !!getAnthropicKey(),
+  });
+});
+
 // Add a product by uploading its manuals. Streams progress as SSE.
 app.post("/ingest", async (c) => {
   const form = await c.req.formData();
@@ -116,17 +134,19 @@ app.post("/ingest", async (c) => {
   return streamSSE(c, async (stream) => {
     const emit = (e: SseEvent) => stream.writeSSE({ data: JSON.stringify(e) });
     if (!name || !slug || !pdfFiles.length) { await emit({ type: "error", message: "Name and at least one PDF are required." }); return; }
+    const apiKey = getAnthropicKey();
+    if (!apiKey) { await emit({ type: "error", message: "No Anthropic API key set. Add your key in Settings → Models before adding a product." }); return; }
     try {
       const pdfs = await Promise.all(pdfFiles.map(async (f) => ({ filename: f.name, data: new Uint8Array(await f.arrayBuffer()) })));
       const hero = heroFile && typeof heroFile !== "string"
         ? { ext: extname((heroFile as File).name) || ".png", data: new Uint8Array(await (heroFile as File).arrayBuffer()) }
         : undefined;
-      await ingestProduct({
+      const result = await ingestProduct({
         slug, name, manufacturer, pdfs, hero,
-        captionModel: getSetting("captionModel"),
+        captionModel: getSetting("captionModel"), apiKey,
         onProgress: (m) => emit({ type: "tool_start", id: "ingest", tool: "ingest", summary: m }),
       });
-      await emit({ type: "done" });
+      await emit({ type: "done", inputTokens: result.inputTokens, outputTokens: result.outputTokens, pages: result.pages });
     } catch (err: any) {
       await emit({ type: "error", message: String(err?.message ?? err) });
     }

@@ -3,11 +3,11 @@ import { join, basename } from "node:path";
 import {
   PAGES_DIR, PDF_DIR, HERO_DIR,
   upsertProduct, upsertManual, upsertPageImage, getPageImage,
-  setPageCaption, chunkExists, insertChunk,
+  setPageCaption, chunkExists, insertChunk, setSetting,
 } from "@prox/db";
 import { embedPassages } from "@prox/embed";
 import { renderPdf } from "./pdf.js";
-import { captionPage } from "./caption.js";
+import { captionPage, generateStarters } from "./caption.js";
 import { chunkPage } from "./chunk.js";
 import type { ManualKind, Product } from "@prox/shared";
 
@@ -19,8 +19,16 @@ export interface IngestInput {
   pdfs: { filename: string; data: Uint8Array }[];
   hero?: { ext: string; data: Uint8Array };
   captionModel?: string;
+  apiKey?: string;
   concurrency?: number;
   onProgress?: (msg: string) => void | Promise<void>;
+}
+
+export interface IngestResult {
+  product: Product;
+  inputTokens: number;
+  outputTokens: number;
+  pages: number;
 }
 
 export function manualKindFromName(file: string): ManualKind {
@@ -43,7 +51,7 @@ async function pMap<T>(items: T[], concurrency: number, fn: (item: T) => Promise
 }
 
 /** Ingest a product end to end: render → caption → chunk → embed → index. */
-export async function ingestProduct(input: IngestInput): Promise<Product> {
+export async function ingestProduct(input: IngestInput): Promise<IngestResult> {
   const report = async (m: string) => { await input.onProgress?.(m); };
 
   let heroPath: string | null = null;
@@ -59,6 +67,10 @@ export async function ingestProduct(input: IngestInput): Promise<Product> {
   });
   await report(`Indexing ${input.name}…`);
 
+  let inputTokens = 0, outputTokens = 0, totalPages = 0;
+  const manualTitles: string[] = [];
+  let sampleText = "";
+
   for (const file of input.pdfs) {
     const kind = manualKindFromName(file.filename);
     await report(`Rendering ${file.filename}…`);
@@ -70,6 +82,8 @@ export async function ingestProduct(input: IngestInput): Promise<Product> {
       productId: product.id, kind, title: titleFromName(file.filename),
       pdfPath: `pdfs/${file.filename}`, pageCount: pages.length,
     });
+    manualTitles.push(manual.title);
+    totalPages += pages.length;
     mkdirSync(join(PAGES_DIR, manual.id), { recursive: true });
 
     for (const page of pages) {
@@ -86,12 +100,22 @@ export async function ingestProduct(input: IngestInput): Promise<Product> {
       const existing = getPageImage(product.id, kind, page.pageNumber);
       let caption = existing?.caption ?? "";
       if (!caption) {
-        caption = await captionPage(page.png, input.captionModel);
+        const cap = await captionPage(page.png, input.captionModel, input.apiKey);
+        caption = cap.text;
+        inputTokens += cap.inputTokens; outputTokens += cap.outputTokens;
         setPageCaption(manual.id, page.pageNumber, caption);
       }
       captions.set(page.pageNumber, caption);
       await report(`Reading ${file.filename}: ${++done}/${pages.length} pages`);
     });
+
+    if (sampleText.length < 4000) {
+      for (const page of pages) {
+        const c = captions.get(page.pageNumber);
+        if (c) sampleText += c.slice(0, 600) + "\n";
+        if (sampleText.length >= 4000) break;
+      }
+    }
 
     const drafts = pages.flatMap((page) =>
       chunkPage({ productSlug: input.slug, manualKind: kind, pageNumber: page.pageNumber, text: page.text, caption: captions.get(page.pageNumber) ?? "" }),
@@ -105,6 +129,18 @@ export async function ingestProduct(input: IngestInput): Promise<Product> {
       }));
     }
   }
+  // Product-specific starter questions: one cheap text call, stored for reuse.
+  // Best-effort — a failure here must never fail the whole ingest.
+  try {
+    await report("Writing starter questions…");
+    const starters = await generateStarters({
+      model: input.captionModel ?? "claude-sonnet-5", apiKey: input.apiKey,
+      name: input.name, manufacturer: input.manufacturer, summary: input.summary,
+      manualTitles, sampleText,
+    });
+    if (starters.length) setSetting(`starters:${product.id}`, JSON.stringify(starters));
+  } catch { /* keep the generic fallback */ }
+
   await report(`Indexed ${input.name}`);
-  return product;
+  return { product, inputTokens, outputTokens, pages: totalPages };
 }

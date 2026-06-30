@@ -8,6 +8,12 @@ export interface RenderedPage {
   text: string;
 }
 
+// Count pages without rendering — cheap, for the pre-ingest cost estimate.
+export function countPdfPages(data: Uint8Array): number {
+  const doc = mupdf.Document.openDocument(data, "application/pdf");
+  return doc.countPages();
+}
+
 // Render every page to a PNG and pull its embedded text via mupdf (wasm, no
 // native build). Scale 2x for crisp diagrams/labels in the page viewer.
 export function renderPdf(data: Uint8Array, scale = 2): RenderedPage[] {

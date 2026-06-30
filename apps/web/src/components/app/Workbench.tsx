@@ -22,9 +22,10 @@ import { STARTERS } from "@/lib/starters";
 import { quick } from "@/lib/motion";
 import { cn } from "@/lib/cn";
 
-export function Workbench({ slug, productName }: { slug: string; productName: string }) {
+export function Workbench({ slug, productName, starters }: { slug: string; productName: string; starters?: string[] }) {
   const wb = useWorkbench(slug);
   const empty = wb.messages.length === 0;
+  const prompts = starters?.length ? starters : STARTERS;
   const { sidebarWidth, canvasWidth, setSidebarWidth, setCanvasWidth, sidebarCollapsed, toggleSidebar } = useUi();
   const reduce = useReducedMotion();
   const [maximized, setMaximized] = useState(false);
@@ -116,7 +117,7 @@ export function Workbench({ slug, productName }: { slug: string; productName: st
               <h1 className="text-[22px] font-semibold tracking-tight">{productName}</h1>
               <p className="mt-1.5 text-[13px] text-muted-foreground">Ask anything — answers are grounded in the manual, cited to the page, and drawn when words aren&apos;t enough.</p>
               <div className="mt-6 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {STARTERS.map((s) => (
+                {prompts.map((s) => (
                   <button key={s} onClick={() => wb.send(s)}
                     className="rounded-2xl border border-border bg-surface px-4 py-3 text-left text-[13px] text-foreground transition hover:-translate-y-0.5 hover:border-border-heavy">
                     {s}

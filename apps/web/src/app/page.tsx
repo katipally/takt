@@ -79,6 +79,7 @@ function Showcase({ products, active, setActive, product }: {
   }, []);
 
   const ask = (q: string) => router.push(`/${product.slug}?q=${encodeURIComponent(q)}`);
+  const prompts = product.starters?.length ? product.starters : STARTERS;
 
   return (
     <div ref={scope} className="flex flex-1 flex-col pb-12">
@@ -122,18 +123,29 @@ function Showcase({ products, active, setActive, product }: {
           </Link>
         </div>
         <Link href={`/${product.slug}`} className="block">
-          <div className="grid h-[340px] place-items-center bg-surface p-8">
+          {/* Adaptive hero: a blurred fill of the same image sits behind a
+              contained foreground, so ANY aspect ratio reads as intentional
+              (no flat-gray letterbox bars). Square, wide, or tall all work. */}
+          <div className="relative h-[340px] overflow-hidden bg-surface">
             <AnimatePresence mode="wait" initial={false}>
               <motion.div key={active}
                 initial={{ opacity: 0, scale: reduce ? 1 : 0.96 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: reduce ? 1 : 0.98 }}
                 transition={easeOut}
-                className="grid size-full place-items-center">
-                {product.heroPath
-                  // eslint-disable-next-line @next/next/no-img-element
-                  ? <img src={`/assets/${product.heroPath}`} alt={product.name} className="max-h-full max-w-full object-contain" />
-                  : <span className="text-[64px] font-semibold text-faint">{product.name.charAt(0)}</span>}
+                className="absolute inset-0">
+                {product.heroPath ? (
+                  <>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={`/assets/${product.heroPath}`} alt="" aria-hidden
+                      className="absolute inset-0 size-full scale-125 object-cover opacity-35 blur-2xl" />
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={`/assets/${product.heroPath}`} alt={product.name}
+                      className="relative z-10 mx-auto h-full w-full object-contain p-8" />
+                  </>
+                ) : (
+                  <span className="grid size-full place-items-center text-[64px] font-semibold text-faint">{product.name.charAt(0)}</span>
+                )}
               </motion.div>
             </AnimatePresence>
           </div>
@@ -152,7 +164,7 @@ function Showcase({ products, active, setActive, product }: {
           <Sparkles className="size-3.5" /> Suggested questions
         </div>
         <div className="flex flex-col gap-2">
-          {STARTERS.map((q) => (
+          {prompts.map((q) => (
             <button key={q} onClick={() => ask(q)}
               className="group flex items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3 text-left text-[14px] text-foreground transition hover:-translate-y-0.5 hover:border-border-heavy hover:shadow-[var(--shadow-card)]">
               <span>{q}</span>
@@ -181,11 +193,17 @@ function AskBar({ onAsk }: { onAsk: (q: string) => void }) {
 }
 
 function EmptyState() {
+  const openSettings = useUi((s) => s.openSettings);
   return (
     <div className="mt-10 max-w-xl">
       <h1 className="text-[24px] font-semibold tracking-tight">No products yet</h1>
-      <p className="mt-2 text-[14px] text-muted-foreground">Index a product and it shows up here instantly:</p>
-      <pre className="mt-4 overflow-x-auto rounded-xl border border-border bg-surface p-4 font-mono text-[12px] text-foreground prox-scroll">pnpm ingest --product vulcan-omnipro-220 --name &quot;Vulcan OmniPro 220&quot; --manufacturer &quot;Vulcan&quot; --dir ../files</pre>
+      <p className="mt-2 text-[14px] text-muted-foreground">Add a product by uploading its manuals — Prox indexes them and it shows up here instantly.</p>
+      <button onClick={() => openSettings("products")}
+        className="mt-4 flex items-center gap-1.5 rounded-full bg-foreground px-4 py-2.5 text-[13px] font-medium text-background transition hover:opacity-90">
+        <Plus className="size-4" /> Add product
+      </button>
+      <p className="mt-6 text-[12.5px] text-muted-foreground">Or from the command line:</p>
+      <pre className="mt-2 overflow-x-auto rounded-xl border border-border bg-surface p-4 font-mono text-[12px] text-foreground prox-scroll">pnpm ingest --product vulcan-omnipro-220 --name &quot;Vulcan OmniPro 220&quot; --manufacturer &quot;Vulcan&quot; --dir ../files</pre>
     </div>
   );
 }

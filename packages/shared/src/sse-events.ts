@@ -43,7 +43,13 @@ export const sseEventSchema = z.discriminatedUnion("type", [
     costUsd: z.number(),
   }),
   z.object({ type: z.literal("status"), text: z.string().nullable() }),
-  z.object({ type: z.literal("done") }),
+  z.object({
+    type: z.literal("done"),
+    // ingest only: token totals so the UI can show the actual spend.
+    inputTokens: z.number().optional(),
+    outputTokens: z.number().optional(),
+    pages: z.number().optional(),
+  }),
   z.object({ type: z.literal("error"), message: z.string() }),
 ]);
 

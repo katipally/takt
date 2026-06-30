@@ -16,6 +16,8 @@ export interface Product {
   summary: string | null;
   heroPath: string | null;
   createdAt: string;
+  /** Product-specific starter questions (from settings KV); generic fallback if absent. */
+  starters?: string[];
 }
 
 export interface Manual {
