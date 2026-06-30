@@ -20,10 +20,9 @@ import { cn } from "@/lib/cn";
 export default function Home() {
   const { data: products = [], isLoading } = useQuery({ queryKey: ["products"], queryFn: api.products });
   const [active, setActive] = useState(0);
-  // Show the catalog as a multi-product gallery. With a single seeded product we
-  // echo it once so the picker reads as multi-product and the "+ Add" affordance
-  // makes it obvious more can be uploaded.
-  const display = products.length === 1 && products[0] ? [products[0], products[0]] : products;
+  // The "+ Add product" pill already signals more can be uploaded, so show each
+  // product once (no duplicate pill for a single-product catalog).
+  const display = products;
   const product = display[Math.min(active, display.length - 1)];
 
   return (

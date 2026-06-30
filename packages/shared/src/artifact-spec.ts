@@ -20,7 +20,7 @@ export const artifactInputSchema = z.object({
    * as globals; code may `return <App/>` style or define `function App(){...}`.
    * For kind "html": a full or partial HTML fragment.
    */
-  code: z.string().min(1).max(60_000),
+  code: z.string().min(1).max(100_000),
 });
 
 export type ArtifactInput = z.infer<typeof artifactInputSchema>;

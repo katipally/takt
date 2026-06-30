@@ -74,6 +74,7 @@ export function Canvas({ artifacts, selectedId, onSelect, onClose, maximized, on
   onToggleMaximize: () => void;
 }) {
   const groups = useMemo(() => groupArtifacts(artifacts), [artifacts]);
+  const shortTitle = useMemo(() => stripCommonPrefix(groups.map((g) => g[g.length - 1]!.title)), [groups]);
   const selected = artifacts.find((a) => a.artifactId === selectedId) ?? artifacts[artifacts.length - 1];
   const selGroup = groups.find((g) => g.some((a) => a.artifactId === selected?.artifactId));
 
@@ -93,6 +94,22 @@ export function Canvas({ artifacts, selectedId, onSelect, onClose, maximized, on
           </button>
         </div>
       </header>
+
+      {groups.length > 1 && (
+        <div className="prox-scroll flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border px-2 py-1.5">
+          {groups.map((g) => {
+            const latest = g[g.length - 1]!;
+            const active = g.some((a) => a.artifactId === selected?.artifactId);
+            return (
+              <button key={latest.groupKey} onClick={() => onSelect(latest.artifactId)}
+                className={cn("shrink-0 rounded-full px-2.5 py-1 text-[11px] transition",
+                  active ? "bg-foreground text-background" : "text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground")}>
+                {shortTitle(latest.title)}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {!selected ? (
         <div className="grid flex-1 place-items-center p-8 text-center text-[12px] text-muted-foreground">
@@ -115,11 +132,11 @@ export function Canvas({ artifacts, selectedId, onSelect, onClose, maximized, on
               ))}
             </div>
           )}
-          <div className="prox-scroll min-h-0 flex-1 overflow-y-auto">
+          <div className="min-h-0 flex-1 overflow-hidden">
             <AnimatePresence mode="wait">
-              <motion.div key={selected.artifactId}
+              <motion.div key={selected.artifactId} className="h-full"
                 initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={quick}>
-                <ArtifactFrame artifactId={selected.artifactId} />
+                <ArtifactFrame artifactId={selected.artifactId} fill />
               </motion.div>
             </AnimatePresence>
           </div>

@@ -47,6 +47,7 @@ export async function runAgent(req: ChatRequest, emit: Emit): Promise<void> {
       })()
     : promptText;
 
+  let building = false;
   try {
     for await (const msg of query({
       prompt,
@@ -69,6 +70,17 @@ export async function runAgent(req: ChatRequest, emit: Emit): Promise<void> {
         if (ev?.type === "content_block_delta") {
           if (ev.delta?.type === "text_delta") await emit({ type: "text_delta", text: ev.delta.text });
           else if (ev.delta?.type === "thinking_delta") await emit({ type: "reasoning_delta", text: ev.delta.thinking ?? "" });
+        } else if (ev?.type === "content_block_start") {
+          // emit_artifact streams a large code input before the tool runs — that
+          // long gap looks frozen in chat. Surface a "Building…" status for it.
+          const cb = ev.content_block;
+          if (cb?.type === "tool_use" && String(cb.name ?? "").includes("emit_artifact")) {
+            building = true;
+            await emit({ type: "status", text: "Building the artifact…" });
+          }
+        } else if (ev?.type === "content_block_stop" && building) {
+          building = false;
+          await emit({ type: "status", text: null });
         }
       } else if (msg.type === "result") {
         const u: any = (msg as any).usage ?? {};

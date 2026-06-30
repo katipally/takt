@@ -19,7 +19,7 @@ export interface Attachment { id: string; mediaType: string; dataUrl: string; }
 
 export type Node =
   | { id: string; parentId: string | null; role: "user"; text: string; attachments?: Attachment[] }
-  | { id: string; parentId: string | null; role: "assistant"; parts: Part[]; streaming: boolean };
+  | { id: string; parentId: string | null; role: "assistant"; parts: Part[]; streaming: boolean; status?: string | null };
 
 export interface CanvasSource { url: string; page: number; manualKind: string; manualTitle?: string; caption?: string | null; }
 // The right-hand canvas holds artifacts only. Manual pages (sources) open in a
@@ -114,6 +114,11 @@ function patchAssistant(s: Session, id: string, fn: (parts: Part[]) => Part[]): 
   if (!n || n.role !== "assistant") return s;
   return { ...s, nodes: { ...s.nodes, [id]: { ...n, parts: fn(n.parts.slice()) } } };
 }
+function setStatus(s: Session, id: string, status: string | null): Session {
+  const n = s.nodes[id];
+  if (!n || n.role !== "assistant") return s;
+  return { ...s, nodes: { ...s.nodes, [id]: { ...n, status } } };
+}
 function appendText(parts: Part[], key: "reasoning" | "text", text: string): Part[] {
   const last = parts[parts.length - 1];
   if (last && last.kind === key) { parts[parts.length - 1] = { ...last, text: (last as TextPart).text + text }; return parts; }
@@ -140,7 +145,8 @@ async function runStream(chatId: string, productSlug: string, userNodeId: string
     await streamChat(req, (e) => {
       if (e.type === "text_delta") update(chatId, (s) => patchAssistant(s, assistantId, (p) => appendText(p, "text", e.text)));
       else if (e.type === "reasoning_delta") update(chatId, (s) => patchAssistant(s, assistantId, (p) => appendText(p, "reasoning", e.text)));
-      else if (e.type === "tool_start") update(chatId, (s) => patchAssistant(s, assistantId, (p) => [...p, { id: e.id, kind: "tool", tool: e.tool, summary: e.summary, status: "running" }]));
+      else if (e.type === "status") update(chatId, (s) => setStatus(s, assistantId, e.text));
+      else if (e.type === "tool_start") update(chatId, (s) => setStatus(patchAssistant(s, assistantId, (p) => [...p, { id: e.id, kind: "tool", tool: e.tool, summary: e.summary, status: "running" }]), assistantId, null));
       else if (e.type === "tool_done") update(chatId, (s) => patchAssistant(s, assistantId, (p) => p.map((q) => (q.kind === "tool" && q.id === e.id ? { ...q, status: "done", detail: e.detail } : q))));
       // Sources just appear in the answer footer — no auto-open. The user opens
       // the page in a modal by clicking it.
@@ -149,7 +155,7 @@ async function runStream(chatId: string, productSlug: string, userNodeId: string
       );
       else if (e.type === "artifact") update(chatId, (s) => {
         const withPart = patchAssistant(s, assistantId, (p) => [...p, { id: uid(), kind: "artifact", artifactId: e.artifactId, title: e.title, artifactKind: e.kind, groupKey: e.groupKey, version: e.version }]);
-        return { ...withPart, canvas: { open: true, artifactId: e.artifactId } };
+        return { ...setStatus(withPart, assistantId, null), canvas: { open: true, artifactId: e.artifactId } };
       });
       else if (e.type === "ask_user") update(chatId, (s) => ({ ...s, ask: { askId: e.askId, questions: e.questions } }));
       else if (e.type === "usage") update(chatId, (s) => ({ ...s, usage: { contextTokens: e.contextTokens || s.usage.contextTokens, outputTokens: s.usage.outputTokens + e.outputTokens, costUsd: s.usage.costUsd + e.costUsd } }));
@@ -162,7 +168,7 @@ async function runStream(chatId: string, productSlug: string, userNodeId: string
     update(chatId, (s) => {
       const n = s.nodes[assistantId];
       if (n && n.role === "assistant") finalText = n.parts.filter((p) => p.kind === "text").map((p) => (p as TextPart).text).join("");
-      return { ...s, streaming: false, abort: undefined, nodes: n && n.role === "assistant" ? { ...s.nodes, [assistantId]: { ...n, streaming: false } } : s.nodes };
+      return { ...s, streaming: false, abort: undefined, nodes: n && n.role === "assistant" ? { ...s.nodes, [assistantId]: { ...n, streaming: false, status: null } } : s.nodes };
     });
     if (finalText) onFinalText?.(finalText);
   }

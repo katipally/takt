@@ -9,5 +9,7 @@ export default async function ProductWorkbench({ params }: { params: Promise<{ p
   const { productSlug } = await params;
   const product = getProductBySlug(productSlug);
   if (!product) notFound();
-  return <Workbench slug={product.slug} productName={product.name} />;
+  // key by slug: switching products remounts the Workbench so its chat session
+  // resets to the new product instead of keeping the previous conversation.
+  return <Workbench key={product.slug} slug={product.slug} productName={product.name} />;
 }

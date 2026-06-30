@@ -19,7 +19,7 @@ import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { useWorkbench } from "@/hooks/useWorkbench";
 import { useUi } from "@/lib/uiStore";
 import { STARTERS } from "@/lib/starters";
-import { panelFromRight, quick } from "@/lib/motion";
+import { quick } from "@/lib/motion";
 import { cn } from "@/lib/cn";
 
 export function Workbench({ slug, productName }: { slug: string; productName: string }) {
@@ -28,7 +28,18 @@ export function Workbench({ slug, productName }: { slug: string; productName: st
   const { sidebarWidth, canvasWidth, setSidebarWidth, setCanvasWidth, sidebarCollapsed, toggleSidebar } = useUi();
   const reduce = useReducedMotion();
   const [maximized, setMaximized] = useState(false);
+  const [resizing, setResizing] = useState(false);
   const closeCanvas = () => { wb.closeCanvas(); setMaximized(false); };
+  const panelOpen = wb.canvas.open && !maximized;
+  // While dragging a resizer: bypass the width spring so the panel tracks the
+  // pointer 1:1 (the spring made it lag), and honor reduced-motion.
+  const widthTransition = reduce || resizing ? { duration: 0 } : { type: "spring" as const, stiffness: 380, damping: 40 };
+
+  // On phones the side panel is hidden, so opening an artifact there shows the
+  // full-screen overlay instead — the artifact is the deliverable, it must be reachable.
+  useEffect(() => {
+    if (wb.canvas.open && !maximized && window.matchMedia("(max-width: 767px)").matches) setMaximized(true);
+  }, [wb.canvas.open, wb.canvas.artifactId]); // eslint-disable-line react-hooks/exhaustive-deps
   // Every artifact generated in this chat (across the visible transcript).
   const artifacts = wb.messages.flatMap((m) =>
     m.role === "assistant" ? m.parts.filter((p): p is ArtifactPart => p.kind === "artifact") : []);
@@ -59,12 +70,12 @@ export function Workbench({ slug, productName }: { slug: string; productName: st
       <motion.div
         initial={false}
         animate={{ width: sidebarCollapsed ? 0 : sidebarWidth }}
-        transition={reduce ? { duration: 0 } : { type: "spring", stiffness: 380, damping: 40 }}
+        transition={widthTransition}
         className="relative h-full shrink-0 overflow-hidden">
         <div style={{ width: sidebarWidth }} className="h-full">
           <Sidebar currentSlug={slug} onNewChat={wb.newChat} onSelectChat={wb.loadChat} activeChatId={wb.chatId} />
         </div>
-        {!sidebarCollapsed && <Resizer side="right" min={200} max={360} value={sidebarWidth} onChange={setSidebarWidth} />}
+        {!sidebarCollapsed && <Resizer side="right" min={200} max={360} value={sidebarWidth} onChange={setSidebarWidth} onActive={setResizing} />}
       </motion.div>
 
       <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[var(--shadow-card)]">
@@ -138,16 +149,24 @@ export function Workbench({ slug, productName }: { slug: string; productName: st
         </AnimatePresence>
       </section>
 
-      <AnimatePresence>
-        {wb.canvas.open && !maximized && (
-          <motion.div key="canvas" variants={panelFromRight} initial="hidden" animate="show" exit="exit"
-            style={{ width: canvasWidth }} className="relative hidden h-full shrink-0 md:block">
-            <Resizer side="left" min={360} max={760} value={canvasWidth} onChange={setCanvasWidth} />
-            <Canvas artifacts={artifacts} selectedId={wb.canvas.artifactId} onSelect={wb.openArtifact}
-              onClose={closeCanvas} maximized={false} onToggleMaximize={() => setMaximized(true)} />
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Artifacts panel — width-collapse spring, matching the sidebar. Stays
+          mounted so the iframe doesn't re-spin on every open. Hidden on mobile;
+          there the artifact opens as the full-screen overlay above. */}
+      <motion.div
+        initial={false}
+        animate={{ width: panelOpen ? canvasWidth : 0 }}
+        transition={widthTransition}
+        className="relative hidden h-full shrink-0 overflow-hidden md:block">
+        <div style={{ width: canvasWidth }} className="h-full">
+          <Canvas artifacts={artifacts} selectedId={wb.canvas.artifactId} onSelect={wb.openArtifact}
+            onClose={closeCanvas} maximized={false} onToggleMaximize={() => setMaximized(true)} />
+        </div>
+        {panelOpen && <Resizer side="left" min={360} max={760} value={canvasWidth} onChange={setCanvasWidth} onActive={setResizing} />}
+      </motion.div>
+
+      {/* While resizing, this overlay sits above the artifact iframe so pointer
+          events reach the window listeners instead of being swallowed by it. */}
+      {resizing && <div className="fixed inset-0 z-[60] cursor-col-resize" />}
 
       <SourceModal source={wb.source} onClose={wb.closeSource}
         onNavigate={(p) => wb.openCitation(p, wb.source?.manualKind)} />
@@ -156,16 +175,22 @@ export function Workbench({ slug, productName }: { slug: string; productName: st
   );
 }
 
-function Resizer({ side, min, max, value, onChange }: { side: "left" | "right"; min: number; max: number; value: number; onChange: (w: number) => void }) {
+function Resizer({ side, min, max, value, onChange, onActive }: { side: "left" | "right"; min: number; max: number; value: number; onChange: (w: number) => void; onActive?: (active: boolean) => void }) {
   const onPointerDown = (e: React.PointerEvent) => {
     e.preventDefault();
+    onActive?.(true);
     const startX = e.clientX, startW = value;
     const move = (ev: PointerEvent) => {
       const d = ev.clientX - startX;
       const next = side === "left" ? startW - d : startW + d;
       onChange(Math.max(min, Math.min(max, next)));
     };
-    const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); document.body.style.cursor = ""; document.body.style.userSelect = ""; };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      document.body.style.cursor = ""; document.body.style.userSelect = "";
+      onActive?.(false);
+    };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
     document.body.style.cursor = "col-resize";
@@ -173,6 +198,6 @@ function Resizer({ side, min, max, value, onChange }: { side: "left" | "right"; 
   };
   return (
     <div onPointerDown={onPointerDown}
-      className={cn("absolute top-0 z-20 h-full w-1.5 cursor-col-resize transition hover:bg-accent/40", side === "right" ? "-right-0.5" : "-left-0.5")} />
+      className={cn("absolute top-0 z-20 h-full w-1.5 cursor-col-resize transition hover:bg-accent/40 active:bg-accent/60", side === "right" ? "-right-0.5" : "left-0")} />
   );
 }

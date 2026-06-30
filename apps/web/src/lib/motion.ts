@@ -25,12 +25,6 @@ export const overlay: Variants = {
   exit: { opacity: 0, transition: quick },
 };
 
-export const panelFromRight: Variants = {
-  hidden: { opacity: 0, x: 16 },
-  show: { opacity: 1, x: 0, transition: springSoft },
-  exit: { opacity: 0, x: 16, transition: quick },
-};
-
 export const modal: Variants = {
   hidden: { opacity: 0, scale: 0.96, y: 10 },
   show: { opacity: 1, scale: 1, y: 0, transition: spring },
