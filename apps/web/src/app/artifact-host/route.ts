@@ -11,10 +11,29 @@ export const runtime = "nodejs";
 // also exposed as globals for back-compat with older import-less artifacts, and
 // any undefined capitalized tag falls back to a neutral icon so a stray name
 // never crashes the whole view.
-const HTML = `<!doctype html>
+// CSP injected as a <meta> tag — inside a sandboxed (null-origin) iframe it
+// cannot be escaped by the artifact's own JS, so it's a real egress lock:
+// scripts/styles only from the known CDNs, and IMAGES only from our own origin
+// (manual pages + crops) + data:. The model can no longer pull in arbitrary
+// external images/trackers/fetch even though the prompt is the first defense.
+function buildHtml() {
+  const appOrigin = (() => {
+    try { return new URL(process.env.WEB_PUBLIC_URL ?? "http://localhost:3000").origin; }
+    catch { return "http://localhost:3000"; }
+  })();
+  const csp = [
+    "default-src 'none'",
+    "script-src 'unsafe-inline' 'unsafe-eval' blob: https://esm.sh https://cdn.jsdelivr.net https://cdn.tailwindcss.com",
+    "style-src 'unsafe-inline' https://cdn.tailwindcss.com",
+    `img-src 'self' data: blob: ${appOrigin}`,
+    `connect-src https://esm.sh https://cdn.jsdelivr.net ${appOrigin}`,
+    "font-src data: https://esm.sh https://cdn.jsdelivr.net",
+  ].join("; ");
+  return `<!doctype html>
 <html>
 <head>
 <meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="${csp}" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <script type="importmap">
 {
@@ -304,9 +323,10 @@ const HTML = `<!doctype html>
 </script>
 </body>
 </html>`;
+}
 
 export function GET() {
-  return new Response(HTML, {
+  return new Response(buildHtml(), {
     headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
   });
 }

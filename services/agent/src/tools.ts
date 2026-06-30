@@ -1,6 +1,8 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, existsSync, mkdirSync } from "node:fs";
+import { resolve, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
+import sharp from "sharp";
+import { transform as esbuildTransform } from "esbuild";
 import { z } from "zod";
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import type { Product, Manual, ManualKind, SseEvent, AskAnswer } from "@prox/shared";
@@ -48,7 +50,7 @@ export function buildProxServer(ctx: { product: Product; manuals: Manual[]; emit
 
   const getPageImageTool = tool(
     "get_page_image",
-    "Fetch a specific manual page as an image and SHOW it to the user. Use for diagrams, schematics, control-panel layouts, duty-cycle tables, the selection chart, and weld-diagnosis pages. The page is displayed in the user's Canvas and also returned so you can read it.",
+    "Fetch a specific manual page as an image and SHOW it to the user. Use for diagrams, schematics, control-panel layouts, duty-cycle tables, the selection chart, and weld-diagnosis pages. The page is displayed in the user's Canvas and also returned so you can read it. To put a figure in an artifact, prefer calling crop_page_image next to embed just the relevant region rather than the whole page.",
     {
       page: z.number().int().min(1).describe("Page number"),
       manual: z.enum(["owner", "quick_start", "selection_chart", "other"]).optional()
@@ -73,7 +75,60 @@ export function buildProxServer(ctx: { product: Product; manuals: Manual[]; emit
       } catch { /* fall through to text-only */ }
       // Give the model the real URL so it can embed this exact image in an
       // artifact (it must never invent an image URL).
-      const meta = `Showing ${pi.manualTitle} p.${pi.pageNumber}. To embed this exact page image in an artifact, use this URL verbatim as the <img> src: ${url}${pi.caption ? `\nPage content:\n${pi.caption}` : ""}`;
+      const meta = `Showing ${pi.manualTitle} p.${pi.pageNumber}. For an artifact, prefer crop_page_image to embed just the relevant region; or use this full-page URL verbatim as the <img> src: ${url}${pi.caption ? `\nPage content:\n${pi.caption}` : ""}`;
+      return { content: imageBlock ? [imageBlock, { type: "text" as const, text: meta }] : [{ type: "text" as const, text: meta }] };
+    },
+  );
+
+  const cropPageImage = tool(
+    "crop_page_image",
+    "Crop a manual page to the exact region that matters and SHOW that crop — use this AFTER get_page_image so you've seen the full page and can pick the region. Give the region as fractions of the page (0=left/top, 1=right/bottom): x,y = top-left corner, w,h = width,height. The cropped image is displayed in the user's Canvas and returned so you can confirm it, and you get a verbatim URL to embed in an artifact. Prefer this over embedding a whole page (whole pages have tab-strips/footers/whitespace and look broken).",
+    {
+      page: z.number().int().min(1).describe("Page number"),
+      manual: z.enum(["owner", "quick_start", "selection_chart", "other"]).optional()
+        .describe("Which manual (omit to use any)"),
+      x: z.number().min(0).max(1).describe("Left edge of the crop, as a fraction of page width (0-1)"),
+      y: z.number().min(0).max(1).describe("Top edge of the crop, as a fraction of page height (0-1)"),
+      w: z.number().min(0.02).max(1).describe("Crop width, as a fraction of page width (0-1)"),
+      h: z.number().min(0.02).max(1).describe("Crop height, as a fraction of page height (0-1)"),
+    },
+    async (args) => {
+      const id = randomUUID();
+      await emit({ type: "tool_start", id, tool: "crop_page_image", summary: `page ${args.page}` });
+      const pi = getPageImage(product.id, (args.manual as ManualKind) ?? null, args.page);
+      if (!pi) { await emit({ type: "tool_done", id, detail: "not found" }); return text(`No page ${args.page} found for ${args.manual ?? "this product"}.`); }
+      const src = resolve(DATA_DIR, pi.pngPath);
+      // Read real pixel dims from the file — don't trust the DB column.
+      let imgW = 0, imgH = 0;
+      try { const m = await sharp(src).metadata(); imgW = m.width ?? 0; imgH = m.height ?? 0; } catch { /* missing file */ }
+      if (!imgW || !imgH) { await emit({ type: "tool_done", id, detail: "unreadable" }); return text(`Page ${args.page} image could not be read; embed the full page via get_page_image instead.`); }
+      // Fractions → pixels, clamped so the box always stays inside the page.
+      const left = Math.min(Math.max(Math.round(args.x * imgW), 0), imgW - 1);
+      const top = Math.min(Math.max(Math.round(args.y * imgH), 0), imgH - 1);
+      const cw = Math.min(Math.max(Math.round(args.w * imgW), 1), imgW - left);
+      const ch = Math.min(Math.max(Math.round(args.h * imgH), 1), imgH - top);
+      const r = (n: number) => Math.round(n * 1000);
+      const cropRel = `crops/${pi.manualId}/${pi.pageNumber}_${r(args.x)}_${r(args.y)}_${r(args.w)}_${r(args.h)}.png`;
+      const dest = resolve(DATA_DIR, cropRel);
+      try {
+        if (!existsSync(dest)) {
+          mkdirSync(dirname(dest), { recursive: true });
+          await sharp(src).extract({ left, top, width: cw, height: ch }).png().toFile(dest);
+        }
+      } catch (e) {
+        await emit({ type: "tool_done", id, detail: "crop failed" });
+        return text(`Could not crop page ${args.page}: ${(e as Error).message}. Embed the full page via get_page_image instead.`);
+      }
+      const citationId = randomUUID();
+      const url = `${WEB_URL()}/assets/${cropRel}`;
+      await emit({
+        type: "page_image", citationId, url,
+        page: pi.pageNumber, manualKind: pi.manualKind, manualTitle: pi.manualTitle, caption: pi.caption,
+      });
+      await emit({ type: "tool_done", id, detail: `p.${pi.pageNumber} crop` });
+      let imageBlock: { type: "image"; data: string; mimeType: string } | null = null;
+      try { imageBlock = { type: "image", data: readFileSync(dest).toString("base64"), mimeType: "image/png" }; } catch { /* text-only */ }
+      const meta = `Cropped ${pi.manualTitle} p.${pi.pageNumber}. To embed this exact crop in an artifact, use this URL verbatim as the <img> src: ${url}`;
       return { content: imageBlock ? [imageBlock, { type: "text" as const, text: meta }] : [{ type: "text" as const, text: meta }] };
     },
   );
@@ -82,13 +137,25 @@ export function buildProxServer(ctx: { product: Product; manuals: Manual[]; emit
     "emit_artifact",
     "Publish the answer as a designed artifact in the user's Artifacts panel — the primary deliverable for substantive questions. You have full design freedom over layout, components and interactions; design what best fits THIS question. Kinds: 'html' for designed/explanatory answers, 'react' for interactive ones (`export default function App(){...}`, real ES module imports from react, lucide-react, framer-motion, recharts, d3, three).\n" +
     "ONE HARD RULE — theme consistency: the artifact must read perfectly in BOTH light and dark. For ANY color/background/border/text-color use ONLY the theme tokens var(--prox-fg/-muted/-card/-surface/-border/-accent/-arc/-success/-danger) and their -soft tints — NEVER bg-white, bg-gray-50, bg-blue-50, text-black, #fff, color:#000 (they break dark mode). Tailwind for LAYOUT only.\n" +
-    "Practical: size to content (no min-h-screen/h-screen/100vh); stay readable narrow AND wide. Images: don't embed a whole manual page — crop to the relevant region (e.g. `.prox-crop` scaling/translating the img). Only use an `<img>` src get_page_image returned; never invent one. Cite pages `[p.NN]`. Optional kit helpers exist (.prox-doc/.prox-card/.prox-callout/.prox-table/.prox-steps/.prox-stat/.prox-crop/.prox-figure/.prox-pin/.prox-reflist) but rolling your own is fine as long as colors come from the theme tokens. To revise an artifact, call emit_artifact again with the SAME `key` (new VERSION); use a NEW `key` for a different artifact.",
+    "Practical: size to content (no min-h-screen/h-screen/100vh); stay readable narrow AND wide. Images: don't embed a whole manual page — call crop_page_image first and embed the tight crop URL it returns. Only use an `<img>` src that get_page_image or crop_page_image returned; never invent one. Cite pages `[p.NN]`. Optional kit helpers exist (.prox-doc/.prox-card/.prox-callout/.prox-table/.prox-steps/.prox-stat/.prox-crop/.prox-figure/.prox-pin/.prox-reflist) but rolling your own is fine as long as colors come from the theme tokens. To revise an artifact, call emit_artifact again with the SAME `key` (new VERSION); use a NEW `key` for a different artifact.",
     artifactInputSchema.shape,
     async (args) => {
       const id = randomUUID();
       await emit({ type: "tool_start", id, tool: "emit_artifact", summary: args.title });
       const parsed = artifactInputSchema.safeParse(args);
       if (!parsed.success) { await emit({ type: "tool_done", id, detail: "invalid" }); return text(`Artifact rejected: ${parsed.error.message}`); }
+      // Compile gate: catch syntax/parse errors BEFORE the user sees a broken
+      // frame, and hand the error back so the model self-corrects.
+      // ponytail: esbuild catches the 80% (parse/syntax); runtime errors still
+      // surface in the iframe .prox-err box.
+      if (parsed.data.kind === "react") {
+        try {
+          await esbuildTransform(parsed.data.code, { loader: "tsx", jsx: "automatic" });
+        } catch (e) {
+          await emit({ type: "tool_done", id, detail: "won't compile" });
+          return text(`Artifact rejected — the React code does not compile: ${(e as Error).message}\nFix the syntax and call emit_artifact again.`);
+        }
+      }
       const groupKey = parsed.data.key ? slugify(parsed.data.key) : slugify(parsed.data.title);
       const version = nextArtifactVersion(chatId, groupKey);
       const artifact = createArtifact({
@@ -136,13 +203,14 @@ export function buildProxServer(ctx: { product: Product; manuals: Manual[]; emit
   return createSdkMcpServer({
     name: "prox",
     version: "1.0.0",
-    tools: [searchManual, getPageImageTool, emitArtifact, listProductsTool, askUser],
+    tools: [searchManual, getPageImageTool, cropPageImage, emitArtifact, listProductsTool, askUser],
   });
 }
 
 export const PROX_TOOL_NAMES = [
   "mcp__prox__search_manual",
   "mcp__prox__get_page_image",
+  "mcp__prox__crop_page_image",
   "mcp__prox__emit_artifact",
   "mcp__prox__list_products",
   "mcp__prox__ask_user",

@@ -15,7 +15,9 @@
     "@prox/embed": "workspace:*",
     "@prox/ingest": "workspace:*",
     "@prox/shared": "workspace:*",
+    "esbuild": "^0.28.1",
     "hono": "^4.12.27",
+    "sharp": "^0.34.5",
     "zod": "^3.24.1"
   },
   "devDependencies": {
