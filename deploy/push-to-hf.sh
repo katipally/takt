@@ -61,7 +61,9 @@ echo "▸ Ensuring Space $REPO exists (Docker SDK)…"
 hf repos create "$REPO" --type space --space-sdk docker --exist-ok
 
 echo "▸ Uploading…"
-hf upload "$REPO" "$STAGE" . --type space --commit-message "Deploy Prox (web + agent, seeded data, no key)"
+# --delete "*" makes this a SYNC: files removed from the repo since the last
+# deploy are pruned on the Space too (hf upload otherwise only adds/updates).
+hf upload "$REPO" "$STAGE" . --type space --delete "*" --commit-message "Deploy Prox (web + agent, seeded data, no key)"
 
 USER="${REPO%%/*}"; NAME="${REPO##*/}"
 PUBLIC_URL="https://${USER}-${NAME}.hf.space"
