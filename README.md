@@ -64,6 +64,12 @@ Questions from the brief to try:
 - *"I'm getting porosity in my flux-cored welds. What should I check?"*
 - *"What polarity setup do I need for TIG? Which socket does the ground clamp go in?"*
 
+Those three plus a handful of harder ones (an exact-amperage lookup, the wiring
+schematic, an ambiguous question that should make it ask first) live in
+`seed/golden-questions.json`. With the app running, `pnpm smoke` fires them at the
+agent and checks each answer comes back grounded, cited, and not a refusal. It's a
+quick confidence check, not a test suite.
+
 ## How the agent works
 
 Prox is built around five tools the agent calls on its own. The system prompt
@@ -241,7 +247,7 @@ A few other choices worth calling out:
 │   ├── shared/       types, the SSE event protocol, ask and artifact specs
 │   ├── db/           SQLite, sqlite-vec, encrypted provider keys
 │   └── embed/        local Transformers.js embeddings
-├── scripts/          bake-seed-db.sh, rebuilds the committed key-free catalog
+├── scripts/          bake-seed-db.sh (rebuilds the key-free catalog), smoke.mjs (accuracy check)
 ├── data/             committed seed.db plus page and hero images (runtime db ignored)
 ├── files/            the Vulcan OmniPro 220 manuals
 ├── docs/             architecture, artifacts, voice, deployment, video walkthrough

@@ -1,0 +1,13 @@
+{
+  "_comment": "Lightweight accuracy smoke set. expect: 'cited' = answer must carry a [p.N] citation; 'image' = must surface a manual page; 'ask' = must ask a clarifying question; 'answer' = must give a non-empty, non-refusal reply. Run with `pnpm smoke` while `pnpm dev` is up.",
+  "questions": [
+    { "product": "vulcan-omnipro-220", "q": "What's the duty cycle for MIG welding at 200A on 240V?", "expect": "cited" },
+    { "product": "vulcan-omnipro-220", "q": "I'm getting porosity in my flux-cored welds. What should I check?", "expect": "cited" },
+    { "product": "vulcan-omnipro-220", "q": "What polarity setup do I need for TIG welding? Which socket does the ground clamp go in?", "expect": "cited" },
+    { "product": "vulcan-omnipro-220", "q": "Show me the wiring schematic for this welder.", "expect": "image" },
+    { "product": "vulcan-omnipro-220", "q": "How do I adjust the wire feed tensioner, and what tension should I set it to?", "expect": "cited" },
+    { "product": "vulcan-omnipro-220", "q": "What's the maximum stick welding amperage when running on 120V input?", "expect": "cited" },
+    { "product": "vulcan-omnipro-220", "q": "What settings should I use to weld?", "expect": "ask" },
+    { "product": "vulcan-omnipro-220", "q": "Configure the machine for welding 1/8 inch mild steel with flux-cored wire.", "expect": "answer" }
+  ]
+}

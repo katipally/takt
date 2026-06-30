@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTheme } from "next-themes";
-import { Loader2 } from "lucide-react";
+import { Loader2, RotateCw, WifiOff } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 
@@ -26,6 +26,8 @@ export function InlineArtifactFrame({
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(240);
   const [rendered, setRendered] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const renderedRef = useRef(false);
   const { resolvedTheme } = useTheme();
   const theme = resolvedTheme === "dark" ? "dark" : "light";
@@ -34,7 +36,7 @@ export function InlineArtifactFrame({
     frameRef.current?.contentWindow?.postMessage({ __prox: true, type: "render", code, kind, theme }, "*");
   }, [code, kind, theme]);
 
-  const markRendered = () => { renderedRef.current = true; setRendered(true); };
+  const markRendered = () => { renderedRef.current = true; setRendered(true); setFailed(false); };
 
   useEffect(() => {
     function onMessage(e: MessageEvent) {
@@ -56,29 +58,51 @@ export function InlineArtifactFrame({
   useEffect(() => {
     renderedRef.current = false;
     setRendered(false);
+    setFailed(false);
     let n = 0;
     push();
     const id = setInterval(() => {
-      if (renderedRef.current || n++ > 40) { clearInterval(id); return; }
+      if (renderedRef.current) { clearInterval(id); return; }
+      // ~20s of pushes covers a cold CDN load + the ready/ack race. If the host
+      // still hasn't acked, its runtime deps (esm.sh/Babel/Tailwind) likely
+      // failed to fetch — surface a retry instead of an infinite spinner.
+      if (n++ > 100) { clearInterval(id); setFailed(true); return; }
       push();
     }, 200);
     return () => clearInterval(id);
-  }, [push]);
+  }, [push, reloadKey]);
+
+  // Reload the iframe (new src) so it re-fetches the CDN runtime, then re-push.
+  const retry = () => { setFailed(false); setReloadKey((k) => k + 1); };
 
   return (
     <div className={cn("relative w-full", fill && "h-full")}>
       <iframe
         ref={frameRef}
-        src={`/artifact-host?t=${theme}${fill ? "&m=fill" : ""}`}
+        src={`/artifact-host?t=${theme}${fill ? "&m=fill" : ""}&r=${reloadKey}`}
         sandbox="allow-scripts"
         onLoad={push}
         title={title ?? "artifact"}
         style={fill ? undefined : { height }}
         className={cn("block w-full", fill && "h-full", className)}
       />
-      {!rendered && (
+      {!rendered && !failed && (
         <div className="absolute inset-0 grid place-items-center bg-background">
           <ArtifactSpinner label="Rendering artifact…" />
+        </div>
+      )}
+      {failed && (
+        <div className="absolute inset-0 grid place-items-center gap-3 bg-background p-6 text-center">
+          <WifiOff className="size-5 text-muted-foreground" />
+          <div className="text-[12px] text-muted-foreground">
+            Couldn&apos;t load the artifact runtime.<br />Check your connection and retry.
+          </div>
+          <button
+            onClick={retry}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-[12px] font-medium hover:bg-muted"
+          >
+            <RotateCw className="size-3.5" /> Retry
+          </button>
         </div>
       )}
     </div>

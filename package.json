@@ -13,6 +13,7 @@
     "ingest": "pnpm --filter @prox/ingest start --",
     "db:reset": "pnpm --filter @prox/db reset",
     "warm": "pnpm --filter @prox/embed warm",
+    "smoke": "node scripts/smoke.mjs",
     "seed": "pnpm ingest --product vulcan-omnipro-220 --name \"Vulcan OmniPro 220\" --manufacturer \"Vulcan\" --summary \"Multiprocess welder (MIG, Flux-Cored, TIG, Stick) with synergic LCD control, 120V/240V input.\" --dir ./files --hero ./assets/vulcan-omnipro-220.webp",
     "typecheck": "pnpm -r typecheck"
   },
