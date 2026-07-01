@@ -1,32 +1,33 @@
 # Prox: an AI product specialist
 
-Prox answers deep technical questions about a physical product, grounded in its
-manuals, cited to the page, and drawn as interactive views when text isn't the
-clearest way to explain something. It's built on the Claude Agent SDK. The seed
-product is the Vulcan OmniPro 220 multiprocess welder, whose 48-page owner's
-manual, quick-start guide, and selection chart live in `files/`.
 
-- Live demo (no setup): https://yash3471-prox.hf.space
-- Video walkthrough: https://drive.google.com/file/d/1-kyqqg_7HIGBpc-uVfyB76p8DjTFWzoc/view?usp=sharing
+## What this is
 
-## What the brief asked for, and where it lives
+This is my submission for the Prox founding engineer challenge. The brief asked
+for a multimodal agent that answers questions about the welder accurately and not
+only in text. I treated it as a chance to reconstruct how a product like Prox
+might actually work from end to end, based on what I understood of it, rather than
+only satisfying the brief.
 
-The challenge brief is archived in [`challenge/`](challenge/README.md). Here's each
-thing it tests, mapped to how Prox does it.
+So beyond the required parts (grounded answers, surfaced manual pages, generated
+interactive artifacts), I built several agentic features the brief didn't ask for:
 
-| The brief asks for | How Prox does it |
-| --- | --- |
-| **Deep technical accuracy**, incl. cross-referencing sections and handling ambiguous questions | `search_manual` does vector search over the manual text *and* over vision-written captions of every table and diagram, so cross-section lookups work. Every fact is cited to the page. Ambiguous questions trigger `ask_user` instead of a guess. `pnpm smoke` checks the brief's questions come back grounded and cited. |
-| **Multimodal responses** (the most important part): draw diagrams, surface the exact manual image, generate interactive tools | `get_page_image` + `crop_page_image` pull the real page and crop to the region that matters. `emit_artifact` writes live React (a duty-cycle calculator, a settings configurator, a troubleshooting flowchart, a polarity/socket diagram) in a sandboxed frame. Every artifact is checked before it's shown (below). |
-| **Tone**: a garage owner, not a pro welder | The system prompt answers plainly and practically, explains the "why" only when it helps do the task safely. |
-| **Knowledge extraction** from text, tables, diagrams, schematics, and image-only content | The ingest pipeline renders each page, then Claude vision transcribes the text, rebuilds tables as markdown, and describes each diagram with the question it answers. That's what makes the selection chart, wiring schematic, and weld-defect photos searchable. |
-| **Tech**: Claude Agent SDK, runs locally on one `.env` key, own API cost | Built on the Agent SDK. `cp .env.example .env && pnpm install && pnpm dev`. Ships with no key, so you (or the judge) plug in your own. |
-| **Presentation**: a frontend, hosting, a clear README, a video | A full workbench UI, hosted on a free Hugging Face Space, this README, and the video linked above. |
+- The agent asks clarifying questions before answering when a choice would change
+  the result, and those questions can carry their own little diagrams.
+- Artifacts are interactive and revisable. Ask for a change and the agent
+  republishes a new version you can flip between, so the conversation drives the
+  tool.
+- Chat history is saved, and you can edit an earlier message to branch the
+  conversation without losing the original.
+- Voice input and spoken answers, image attachments, a per-product artifact
+  gallery, multi-product support, and provider/model management from the UI.
+
 
 ## Demos
 
-Full walkthrough is on [Google Drive](https://drive.google.com/file/d/1-kyqqg_7HIGBpc-uVfyB76p8DjTFWzoc/view?usp=sharing).
-Click a thumbnail below to play the feature clip.
+Full walkthrough (click to play):
+
+[![Full walkthrough](https://lh3.googleusercontent.com/d/1-kyqqg_7HIGBpc-uVfyB76p8DjTFWzoc=w960)](https://drive.google.com/file/d/1-kyqqg_7HIGBpc-uVfyB76p8DjTFWzoc/view)
 
 ### Clarifying questions
 
@@ -35,8 +36,6 @@ When a choice would change the answer, the agent asks first, with a diagram to h
 [![Clarifying-questions demo](https://lh3.googleusercontent.com/d/1uFOVwR8SjcfLGmuLmBLKoa4Zaal4aGXF=w960)](https://drive.google.com/file/d/1uFOVwR8SjcfLGmuLmBLKoa4Zaal4aGXF/view)
 
 ### Interactive artifacts
-
-Calculation and settings questions come back as live tools you can change, with the exact manual region cropped into the answer.
 
 [![Interactive-artifact demo](https://lh3.googleusercontent.com/d/1Wu5gr2_W6qkGN5zoCSkDjtBdysmenNpn=w960)](https://drive.google.com/file/d/1Wu5gr2_W6qkGN5zoCSkDjtBdysmenNpn/view)
 
@@ -80,7 +79,7 @@ quick confidence check, not a test suite.
 
 ## How the agent works
 
-Prox is built around five tools the agent calls on its own. The system prompt
+Prox is built around six tools the agent calls on its own. The system prompt
 gives it four standing rules, Ground, Show, Draw, and Ask, so it behaves like a
 cited specialist rather than a chatbot answering from memory.
 
@@ -135,7 +134,7 @@ stated defaults.
 catalog, the retrieval index, and the tools are all keyed by product, so a new
 product is a drop-in with no code change.
 
-### Around the agent (beyond the brief)
+### Around the agent
 
 - Voice. Talk to it and have answers read back, using the browser's built-in
   speech APIs (best in Chrome and Edge, degrades to text elsewhere). No extra keys.
@@ -165,10 +164,10 @@ flowchart LR
     end
     subgraph agent["Agent service · Hono (:8787)"]
         Loop["Claude Agent SDK query() loop"]
-        Tools["Tools: search_manual,<br/>get_page_image, emit_artifact,<br/>ask_user, list_products"]
+        Tools["Tools: search_manual, get_page_image,<br/>crop_page_image, emit_artifact,<br/>ask_user, list_products"]
     end
     DB[("SQLite + sqlite-vec<br/>data/prox.db")]
-    PNG[/"data/pages/*.png"/]
+    PNG[/"data/pages/&lt;product&gt;/*.png"/]
     Claude["Claude API"]
 
     B <-->|"fetch + SSE"| web
@@ -180,16 +179,6 @@ flowchart LR
     UI --> PNG
 ```
 
-The agent runs as a separate Node service because the Claude Agent SDK spawns a
-`claude` subprocess, which needs a real Node runtime rather than a serverless
-function. The web app proxies to it over SSE, which keeps the agent endpoint one
-environment variable away from being swapped for a hosted container later (see
-[deploy/HOSTING.md](deploy/HOSTING.md)). Locally, `pnpm dev` runs both with one
-command.
-
-The web layer and the agent share one SQLite file. That single file holds the whole
-datastore: the product catalog, providers and models, chats, artifacts, and the
-`sqlite-vec` vector index. Rendered manual pages are PNGs in `data/pages/`.
 
 Stack: Next.js 16, React 19, and Tailwind v4 for the web; the Claude Agent SDK with
 Hono for the agent; better-sqlite3 with sqlite-vec for storage; Transformers.js for
@@ -230,47 +219,8 @@ pnpm ingest \
   --hero ./path/to/photo.webp
 ```
 
-Re-running is idempotent, since captions and chunks are cached and unchanged pages
-are skipped, so a re-run costs nothing. The product appears in the picker right
+Re-running is idempotent for cost: captions and chunks are cached, so unchanged
+pages skip the paid vision and embedding calls and a re-run costs nothing (pages
+are still re-rendered locally). The product appears in the picker right
 away. To refresh the committed key-free catalog after seeding, run
 `scripts/bake-seed-db.sh`.
-
-## Design decisions and tradeoffs
-
-The whole thing is local-first. SQLite and local embeddings keep setup to a single
-key, with the cost that the index is one file on disk. For multi-user hosting you'd
-move to Turso or Postgres and object storage; the code sits behind a thin seam for
-that (the agent is one env var away from being a separate container). Hosting on a
-free Docker Space is covered in [deploy/HOSTING.md](deploy/HOSTING.md).
-
-A few other choices worth calling out:
-
-- The welder index ships pre-built as a key-free `data/seed.db`, copied to the
-  runtime database on first boot, so a judge never waits on ingest or pays for it.
-  The encrypted key and chat history live only in the gitignored runtime database,
-  never in the repo or the deployed image.
-- Hosting is a free Hugging Face Docker Space and costs nothing to run. It ships
-  with no API key, so you paste your own.
-- Voice uses the browser's Web Speech APIs, which work best in Chrome and Edge. A
-  cloud speech service could slot in behind the same provider system.
-- Artifacts run model-written code, so they render in a sandboxed iframe with
-  `allow-scripts` only and no same-origin access. That code can't reach the app's
-  cookies, DOM, or storage.
-
-## Project layout
-
-```
-.                     repo root (the submission)
-├── apps/web/         Next.js app: workbench, settings, gallery, API routes
-├── services/agent/   Claude Agent SDK service (Hono, SSE) and the five tools
-├── pipeline/ingest/  PDF to pages to captions to chunks to vector index
-├── packages/
-│   ├── shared/       types, the SSE event protocol, ask and artifact specs
-│   ├── db/           SQLite, sqlite-vec, encrypted provider keys
-│   └── embed/        local Transformers.js embeddings
-├── scripts/          bake-seed-db.sh (rebuilds the key-free catalog), smoke.mjs (accuracy check), test-artifact-gate.mjs (artifact self-check)
-├── data/             committed seed.db plus page and hero images (runtime db ignored)
-├── files/            the Vulcan OmniPro 220 manuals
-├── docs/             architecture (SSE protocol), adding-a-product
-└── challenge/        the original Prox challenge brief, archived
-```

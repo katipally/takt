@@ -1,7 +1,7 @@
 import type { Product, Manual } from "@prox/shared";
 
-// Product-aware system prompt. Three forcing rules — Ground, Show, Draw — turn
-// Claude into a cited, multimodal product specialist instead of a chatbot.
+// Product-aware system prompt. Four forcing rules — Ground, Show, Draw, Ask —
+// turn Claude into a cited, multimodal product specialist instead of a chatbot.
 export function buildSystemPrompt(
   product: Product,
   manuals: Manual[],
