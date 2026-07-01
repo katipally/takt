@@ -33,9 +33,9 @@ out
 /data/.enc-key
 /data/pdfs/
 
-# local demo videos — embedded in the README via GitHub attachment URLs and
-# Google Drive, not committed (walkthrough.mp4 alone is >100MB, over GitHub's limit)
-/assets/Vids/
+# the full walkthrough is 144MB (over GitHub's 100MB limit) — it lives on Google
+# Drive, linked from the README. The short feature clips are committed and embedded.
+/assets/Vids/walkthrough.mp4
 
 # caches
 .turbo

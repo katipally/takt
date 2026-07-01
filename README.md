@@ -7,7 +7,30 @@ product is the Vulcan OmniPro 220 multiprocess welder, whose 48-page owner's
 manual, quick-start guide, and selection chart live in `files/`.
 
 - Live demo (no setup): https://yash3471-prox.hf.space
-- Video walkthrough: https://drive.google.com/file/d/10RoRK_yHBMftDejvpgv8pxUXfHk1jel0/view?usp=drive_link
+- Video walkthrough: https://drive.google.com/file/d/1-kyqqg_7HIGBpc-uVfyB76p8DjTFWzoc/view?usp=sharing
+
+## Demos
+
+The full [video walkthrough](https://drive.google.com/file/d/1-kyqqg_7HIGBpc-uVfyB76p8DjTFWzoc/view?usp=sharing)
+is on Google Drive. Short clips of individual features:
+
+**Interactive artifacts** — a settings or calculation question becomes a live tool that renders in the panel.
+
+<video src="https://github.com/katipally/prox-challenge/raw/main/assets/Vids/interactive_artifact.mp4" controls muted width="100%"></video>
+
+▶ [Watch on GitHub](https://github.com/katipally/prox-challenge/blob/main/assets/Vids/interactive_artifact.mp4) if the player above doesn't load.
+
+**Manual cropped into the answer** — the exact region of the page is cropped into the artifact, not the whole scan.
+
+<video src="https://github.com/katipally/prox-challenge/raw/main/assets/Vids/crop_image.mp4" controls muted width="100%"></video>
+
+▶ [Watch on GitHub](https://github.com/katipally/prox-challenge/blob/main/assets/Vids/crop_image.mp4) if the player above doesn't load.
+
+**Clarifying questions** (a feature added on top of the brief) — when a choice would change the answer, the agent asks first, with a diagram to help you pick.
+
+<video src="https://github.com/katipally/prox-challenge/raw/main/assets/Vids/ask_user.mp4" controls muted width="100%"></video>
+
+▶ [Watch on GitHub](https://github.com/katipally/prox-challenge/blob/main/assets/Vids/ask_user.mp4) if the player above doesn't load.
 
 ## What this is
 
