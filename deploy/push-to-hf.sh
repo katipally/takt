@@ -70,5 +70,17 @@ PUBLIC_URL="https://${USER}-${NAME}.hf.space"
 echo "▸ Setting WEB_PUBLIC_URL=$PUBLIC_URL …"
 hf spaces variables add "$REPO" --env "WEB_PUBLIC_URL=$PUBLIC_URL"
 
+# Stable encryption key for provider API keys at rest. Set ONCE and kept: it
+# makes both container processes (web + agent) use the same key and lets a
+# pasted key survive app restarts (no per-boot .enc-key race). Generated here,
+# never printed to logs, never regenerated if already present.
+echo "▸ Ensuring a stable PROX_ENC_KEY secret…"
+if hf spaces secrets ls "$REPO" 2>/dev/null | grep -q "PROX_ENC_KEY"; then
+  echo "  PROX_ENC_KEY already set (kept)"
+else
+  hf spaces secrets add "$REPO" -s "PROX_ENC_KEY=$(openssl rand -hex 32)" >/dev/null
+  echo "  set a new PROX_ENC_KEY"
+fi
+
 echo "✓ Done. Live (after build): $PUBLIC_URL"
 echo "  Watch the build:  hf spaces logs $REPO --build --follow"

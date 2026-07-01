@@ -178,8 +178,9 @@ export function createProvider(p: {
   name: string; kind: ProviderKind; apiKey?: string | null; isDefault?: boolean;
 }): Provider {
   const id = randomUUID();
-  const ciphertext = p.apiKey ? encryptSecret(p.apiKey) : null;
-  const last4 = p.apiKey ? p.apiKey.slice(-4) : null;
+  const key = p.apiKey?.trim() || null; // trim: pasted keys often carry a stray space/newline → 401
+  const ciphertext = key ? encryptSecret(key) : null;
+  const last4 = key ? key.slice(-4) : null;
   if (p.isDefault) db().prepare(`UPDATE providers SET is_default = 0`).run();
   db().prepare(
     `INSERT INTO providers (id, name, kind, api_key_ciphertext, key_last4, is_default)
@@ -192,9 +193,10 @@ export function updateProvider(id: string, p: {
   name?: string; apiKey?: string | null; isDefault?: boolean;
 }): Provider | undefined {
   if (p.name !== undefined) db().prepare(`UPDATE providers SET name=? WHERE id=?`).run(p.name, id);
-  if (p.apiKey) {
+  const key = p.apiKey?.trim(); // trim: pasted keys often carry a stray space/newline → 401
+  if (key) {
     db().prepare(`UPDATE providers SET api_key_ciphertext=?, key_last4=? WHERE id=?`)
-      .run(encryptSecret(p.apiKey), p.apiKey.slice(-4), id);
+      .run(encryptSecret(key), key.slice(-4), id);
   }
   if (p.isDefault) {
     db().prepare(`UPDATE providers SET is_default = 0`).run();
@@ -203,10 +205,19 @@ export function updateProvider(id: string, p: {
   return listProviders().find((x) => x.id === id);
 }
 
-/** Server-only: decrypt a provider's API key. Never exposed over HTTP. */
+/** Remove a provider's stored key (so a wrong/stale one can be cleared). */
+export function clearProviderKey(id: string): Provider | undefined {
+  db().prepare(`UPDATE providers SET api_key_ciphertext=NULL, key_last4=NULL WHERE id=?`).run(id);
+  return listProviders().find((x) => x.id === id);
+}
+
+/** Server-only: decrypt a provider's API key. Never exposed over HTTP.
+ * Tolerant of a decrypt failure (e.g. the enc-key changed after a restart):
+ * returns null so the app degrades to "no key set" instead of throwing. */
 export function getProviderApiKey(id: string): string | null {
   const row = db().prepare(`SELECT api_key_ciphertext AS c FROM providers WHERE id=?`).get(id) as { c: string | null } | undefined;
-  return row?.c ? decryptSecret(row.c) : null;
+  if (!row?.c) return null;
+  try { return decryptSecret(row.c); } catch { return null; }
 }
 
 // ─── Chats + messages ──────────────────────────────────────────────────────

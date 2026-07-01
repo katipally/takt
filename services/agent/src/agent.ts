@@ -101,6 +101,11 @@ export async function runAgent(req: ChatRequest, emit: Emit, signal?: AbortSigna
   } catch (err: any) {
     // User pressed Stop — not an error. The partial turn is persisted upstream.
     if (ac.signal.aborted || err?.name === "AbortError") return;
-    await emit({ type: "error", message: String(err?.message ?? err) });
+    const raw = String(err?.message ?? err);
+    // Turn the SDK's opaque "Invalid API key" into an actionable message.
+    const msg = /invalid api key|authentication|401|x-api-key/i.test(raw)
+      ? "Anthropic rejected the API key. Open Settings → Models and paste a valid key (it should start with sk-ant-)."
+      : raw;
+    await emit({ type: "error", message: msg });
   }
 }

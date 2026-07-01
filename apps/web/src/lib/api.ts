@@ -13,6 +13,8 @@ export const api = {
   providers: () => fetch("/api/providers").then(j<Provider[]>),
   updateProviderKey: (id: string, apiKey: string) =>
     fetch(`/api/providers/${id}`, { method: "PATCH", body: JSON.stringify({ apiKey }) }).then(j<Provider>),
+  removeProviderKey: (id: string) =>
+    fetch(`/api/providers/${id}`, { method: "PATCH", body: JSON.stringify({ clear: true }) }).then(j<Provider>),
   models: () => fetch("/api/models").then(j<ModelInfo[]>),
   settings: () => fetch("/api/settings").then(j<AppSettings>),
   updateSettings: (b: Partial<AppSettings>) =>
