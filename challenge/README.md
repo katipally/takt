@@ -4,7 +4,7 @@
 > **The submission — the actual solution — lives at the repo root. Start with [`../README.md`](../README.md).**
 >
 > - **🔗 Live demo (zero setup):** https://yash3471-prox.hf.space — Settings → Providers → paste your Anthropic key → ask.
-> - **▶️ Video walkthrough:** _coming soon_
+> - **▶️ Video walkthrough:** https://drive.google.com/file/d/10RoRK_yHBMftDejvpgv8pxUXfHk1jel0/view?usp=drive_link
 > - **💻 Run locally (under 2 min):** from the repo root, `cp .env.example .env && pnpm install && pnpm dev`
 >
 > The original challenge brief is preserved below.

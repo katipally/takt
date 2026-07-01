@@ -7,7 +7,7 @@ product is the Vulcan OmniPro 220 multiprocess welder, whose 48-page owner's
 manual, quick-start guide, and selection chart live in `files/`.
 
 - Live demo (no setup): https://yash3471-prox.hf.space
-- Video walkthrough: _coming soon_
+- Video walkthrough: https://drive.google.com/file/d/10RoRK_yHBMftDejvpgv8pxUXfHk1jel0/view?usp=drive_link
 
 ## What this is
 
@@ -33,6 +33,25 @@ interactive artifacts), I built several agentic features the brief didn't ask fo
 I've marked which capabilities go past the brief in the sections below. The point
 was to see how far a single API key and a local-first stack could go toward a
 genuinely useful product specialist.
+
+## What the brief asked for, and where it lives
+
+The challenge brief is archived in [`challenge/`](challenge/README.md). Here's each
+thing it tests, mapped to how Prox does it.
+
+| The brief asks for | How Prox does it |
+| --- | --- |
+| **Deep technical accuracy**, incl. cross-referencing sections and handling ambiguous questions | `search_manual` does vector search over the manual text *and* over vision-written captions of every table and diagram, so cross-section lookups work. Every fact is cited to the page. Ambiguous questions trigger `ask_user` instead of a guess. `pnpm smoke` checks the brief's questions come back grounded and cited. |
+| **Multimodal responses** (the most important part): draw diagrams, surface the exact manual image, generate interactive tools | `get_page_image` + `crop_page_image` pull the real page and crop to the region that matters. `emit_artifact` writes live React (a duty-cycle calculator, a settings configurator, a troubleshooting flowchart, a polarity/socket diagram) in a sandboxed frame. Every artifact is checked before it's shown (below). |
+| **Tone**: a garage owner, not a pro welder | The system prompt answers plainly and practically, explains the "why" only when it helps do the task safely. |
+| **Knowledge extraction** from text, tables, diagrams, schematics, and image-only content | The ingest pipeline renders each page, then Claude vision transcribes the text, rebuilds tables as markdown, and describes each diagram with the question it answers. That's what makes the selection chart, wiring schematic, and weld-defect photos searchable. |
+| **Tech**: Claude Agent SDK, runs locally on one `.env` key, own API cost | Built on the Agent SDK. `cp .env.example .env && pnpm install && pnpm dev`. Ships with no key, so you (or the judge) plug in your own. |
+| **Presentation**: a frontend, hosting, a clear README, a video | A full workbench UI, hosted on a free Hugging Face Space, this README, and the video linked above. |
+
+Beyond that, the agent asks clarifying questions with their own diagrams, revises
+artifacts on request, takes voice and image input, remembers and branches chats,
+handles multiple products, and lets you add a new one from the UI with a cost
+estimate first. Those are called out where they appear below.
 
 ## Run it
 
@@ -90,7 +109,10 @@ When an answer leans on a diagram, schematic, control-panel photo, duty-cycle
 matrix, or the process-selection chart, the agent calls `get_page_image`. The page
 opens in the Canvas next to the chat, and the same image goes back to the model so
 it can read charts the embedded text misses. This is how image-only content like
-the wiring schematic and the weld-defect photos becomes answerable.
+the wiring schematic and the weld-defect photos becomes answerable. When it puts a
+figure inside an artifact, `crop_page_image` cuts a pixel-accurate crop of just the
+relevant region on the server, so you see the polarity sockets or the panel control,
+not a whole page with tab strips and white space.
 
 ### 3. Draw: generate live interactive tools
 
@@ -104,7 +126,10 @@ import real packages (`react`, `lucide-react`, `framer-motion`, `recharts`, `d3`
 ask for a change and you get a new version to flip between (this is one of the
 parts past the brief). The code is pushed into a sandboxed iframe by `postMessage`
 and runs with `allow-scripts` only (no same-origin), so model-written code can't
-reach the app's cookies, DOM, or storage.
+reach the app's cookies, DOM, or storage. Before an artifact is shown it has to
+compile and pass a set of checks (real manual-image URLs, no CSS-clipped crops,
+citations inline rather than boxed, no broken markup). If it fails, the agent gets
+the exact problems back and re-emits, so a broken artifact never reaches you.
 
 ### 4. Ask: clarify before guessing (beyond the brief)
 
@@ -133,6 +158,10 @@ product is a drop-in with no code change.
 - Model management. Set your Anthropic key and pick the chat and ingestion models
   from the UI; the picker lists your account's live models. Keys are AES-encrypted
   at rest and the browser only ever sees the last four digits.
+- Add a product from the UI. Upload a manual's PDFs and Prox indexes them in place.
+  Before it spends anything it shows the page count, the model it'll use, and an
+  estimated cost to confirm. Each new product also gets its own starter questions,
+  written from its manuals.
 
 ## Architecture
 
@@ -250,7 +279,7 @@ A few other choices worth calling out:
 │   ├── shared/       types, the SSE event protocol, ask and artifact specs
 │   ├── db/           SQLite, sqlite-vec, encrypted provider keys
 │   └── embed/        local Transformers.js embeddings
-├── scripts/          bake-seed-db.sh (rebuilds the key-free catalog), smoke.mjs (accuracy check)
+├── scripts/          bake-seed-db.sh (rebuilds the key-free catalog), smoke.mjs (accuracy check), test-artifact-gate.mjs (artifact self-check)
 ├── data/             committed seed.db plus page and hero images (runtime db ignored)
 ├── files/            the Vulcan OmniPro 220 manuals
 ├── docs/             architecture (SSE protocol), adding-a-product
