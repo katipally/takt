@@ -11,26 +11,12 @@ manual, quick-start guide, and selection chart live in `files/`.
 
 ## Demos
 
-The full [video walkthrough](https://drive.google.com/file/d/1-kyqqg_7HIGBpc-uVfyB76p8DjTFWzoc/view?usp=sharing)
-is on Google Drive. Short clips of individual features:
+Full [video walkthrough](https://drive.google.com/file/d/1-kyqqg_7HIGBpc-uVfyB76p8DjTFWzoc/view?usp=sharing)
+on Google Drive. Short clips of individual features (click to play):
 
-**Interactive artifacts** — a settings or calculation question becomes a live tool that renders in the panel.
-
-<video src="https://github.com/katipally/prox-challenge/raw/main/assets/Vids/interactive_artifact.mp4" controls muted width="100%"></video>
-
-▶ [Watch on GitHub](https://github.com/katipally/prox-challenge/blob/main/assets/Vids/interactive_artifact.mp4) if the player above doesn't load.
-
-**Manual cropped into the answer** — the exact region of the page is cropped into the artifact, not the whole scan.
-
-<video src="https://github.com/katipally/prox-challenge/raw/main/assets/Vids/crop_image.mp4" controls muted width="100%"></video>
-
-▶ [Watch on GitHub](https://github.com/katipally/prox-challenge/blob/main/assets/Vids/crop_image.mp4) if the player above doesn't load.
-
-**Clarifying questions** (a feature added on top of the brief) — when a choice would change the answer, the agent asks first, with a diagram to help you pick.
-
-<video src="https://github.com/katipally/prox-challenge/raw/main/assets/Vids/ask_user.mp4" controls muted width="100%"></video>
-
-▶ [Watch on GitHub](https://github.com/katipally/prox-challenge/blob/main/assets/Vids/ask_user.mp4) if the player above doesn't load.
+- **Interactive artifacts** — a settings or calculation question becomes a live tool in the panel. ▶ [Watch](https://github.com/katipally/prox-challenge/blob/main/assets/Vids/interactive_artifact.mp4)
+- **Manual cropped into the answer** — the exact region of the page, not the whole scan. ▶ [Watch](https://github.com/katipally/prox-challenge/blob/main/assets/Vids/crop_image.mp4)
+- **Clarifying questions** (added on top of the brief) — the agent asks first when a choice would change the answer, with a diagram to help you pick. ▶ [Watch](https://github.com/katipally/prox-challenge/blob/main/assets/Vids/ask_user.mp4)
 
 ## What this is
 
