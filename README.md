@@ -9,31 +9,6 @@ manual, quick-start guide, and selection chart live in `files/`.
 - Live demo (no setup): https://yash3471-prox.hf.space
 - Video walkthrough: https://drive.google.com/file/d/1-kyqqg_7HIGBpc-uVfyB76p8DjTFWzoc/view?usp=sharing
 
-## What this is
-
-This is my submission for the Prox founding engineer challenge. The brief asked
-for a multimodal agent that answers questions about the welder accurately and not
-only in text. I treated it as a chance to reconstruct how a product like Prox
-might actually work from end to end, based on what I understood of it, rather than
-only satisfying the brief.
-
-So beyond the required parts (grounded answers, surfaced manual pages, generated
-interactive artifacts), I built several agentic features the brief didn't ask for:
-
-- The agent asks clarifying questions before answering when a choice would change
-  the result, and those questions can carry their own little diagrams.
-- Artifacts are interactive and revisable. Ask for a change and the agent
-  republishes a new version you can flip between, so the conversation drives the
-  tool.
-- Chat history is saved, and you can edit an earlier message to branch the
-  conversation without losing the original.
-- Voice input and spoken answers, image attachments, a per-product artifact
-  gallery, multi-product support, and provider/model management from the UI.
-
-I've marked which capabilities go past the brief in the sections below. The point
-was to see how far a single API key and a local-first stack could go toward a
-genuinely useful product specialist.
-
 ## What the brief asked for, and where it lives
 
 The challenge brief is archived in [`challenge/`](challenge/README.md). Here's each
@@ -48,30 +23,24 @@ thing it tests, mapped to how Prox does it.
 | **Tech**: Claude Agent SDK, runs locally on one `.env` key, own API cost | Built on the Agent SDK. `cp .env.example .env && pnpm install && pnpm dev`. Ships with no key, so you (or the judge) plug in your own. |
 | **Presentation**: a frontend, hosting, a clear README, a video | A full workbench UI, hosted on a free Hugging Face Space, this README, and the video linked above. |
 
-Beyond that, the agent asks clarifying questions with their own diagrams, revises
-artifacts on request, takes voice and image input, remembers and branches chats,
-handles multiple products, and lets you add a new one from the UI with a cost
-estimate first. Those are called out where they appear below.
-
 ## Demos
 
-The full walkthrough is on [Google Drive](https://drive.google.com/file/d/1-kyqqg_7HIGBpc-uVfyB76p8DjTFWzoc/view?usp=sharing).
-Below are short clips of individual features (they play inline on GitHub).
+Full walkthrough is on [Google Drive](https://drive.google.com/file/d/1-kyqqg_7HIGBpc-uVfyB76p8DjTFWzoc/view?usp=sharing).
+Click a thumbnail below to play the feature clip.
 
-### Interactive artifacts
-A settings or calculation question comes back as a live tool you can change, rendered in the panel.
+### Clarifying questions
 
-<video src="https://github.com/katipally/prox-challenge/releases/download/demo-media/interactive_artifact.mp4" controls muted width="720"></video>
-
-### The manual cropped into the answer
-The agent crops the exact region of a manual page into the artifact instead of dropping in a whole page.
-
-<video src="https://github.com/katipally/prox-challenge/releases/download/demo-media/crop_image.mp4" controls muted width="720"></video>
-
-### Clarifying questions (added on top of the brief)
 When a choice would change the answer, the agent asks first, with a diagram to help you choose.
 
-<video src="https://github.com/katipally/prox-challenge/releases/download/demo-media/ask_user.mp4" controls muted width="720"></video>
+[![Clarifying-questions demo](https://lh3.googleusercontent.com/d/1uFOVwR8SjcfLGmuLmBLKoa4Zaal4aGXF=w960)](https://drive.google.com/file/d/1uFOVwR8SjcfLGmuLmBLKoa4Zaal4aGXF/view)
+
+### Interactive artifacts
+
+Calculation and settings questions come back as live tools you can change, with the exact manual region cropped into the answer.
+
+[![Interactive-artifact demo](https://lh3.googleusercontent.com/d/1Wu5gr2_W6qkGN5zoCSkDjtBdysmenNpn=w960)](https://drive.google.com/file/d/1Wu5gr2_W6qkGN5zoCSkDjtBdysmenNpn/view)
+
+[![Interactive-artifact demo 2](https://lh3.googleusercontent.com/d/1n1-T3GdAyQ19OZ7sXwOsGpWnQjlBYjeC=w960)](https://drive.google.com/file/d/1n1-T3GdAyQ19OZ7sXwOsGpWnQjlBYjeC/view)
 
 ## Run it
 
