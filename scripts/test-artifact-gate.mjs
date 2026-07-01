@@ -29,4 +29,26 @@ const b = clampBox(0.9, 0.9, 0.5, 0.5, 1000, 800);
 assert.ok(b.left + b.cw <= 1000 && b.top + b.ch <= 800, "overflowing crop stays in bounds");
 assert.ok(b.cw >= 1 && b.ch >= 1, "crop has positive size");
 
+// 3. Artifact lint — mirrors lintArtifact() in services/agent/src/tools.ts.
+function lintArtifact(code) {
+  const issues = [];
+  if (/\bprox-crop\b/.test(code) || /<img[^>]*style=["'][^"']*transform\s*:[^"']*(scale|translate)\s*\(/i.test(code))
+    issues.push("css-crop");
+  const badImg = [...code.matchAll(/<img[^>]*\bsrc=["'](https?:\/\/[^"']+)["']/gi)].map((m) => m[1]).find((u) => !u.includes("/assets/"));
+  if (badImg) issues.push("bad-img");
+  if (/<(div|p|li)\b[^>]*>\s*\[p\.?\s*\d+[^<]*\]\s*<\/\1>/i.test(code)) issues.push("boxed-citation");
+  if (/<(div|p|li)\b[^>]*>\s*[.:;,]+\s*<\/\1>/i.test(code)) issues.push("stray-punct");
+  return issues;
+}
+// clean artifact → no issues
+assert.deepEqual(lintArtifact('<div class="prox-doc"><p>Shade 10 helmet [p.18].</p><figure class="prox-figure"><img src="/assets/crops/x.png"/></figure></div>'), [], "clean artifact passes");
+// each bad pattern is caught
+assert.ok(lintArtifact('<div class="prox-crop"><img src="/assets/x.png"/></div>').includes("css-crop"), "css-crop caught");
+assert.ok(lintArtifact('<img src="/assets/x.png" style="transform:scale(2) translate(-18%,-22%)"/>').includes("css-crop"), "transform crop caught");
+assert.ok(lintArtifact('<img src="https://example.com/x.png"/>').includes("bad-img"), "external image caught");
+assert.ok(lintArtifact('<div class="prox-callout">[p.18]</div>').includes("boxed-citation"), "boxed citation caught");
+assert.ok(lintArtifact('<p>.</p>').includes("stray-punct"), "stray punctuation caught");
+// a real full-page URL and inline citation must NOT trip the lint
+assert.deepEqual(lintArtifact('<p>Use <b>DCEP</b> for stainless [p.14].</p>'), [], "inline citation is fine");
+
 console.log("artifact-gate tests passed");

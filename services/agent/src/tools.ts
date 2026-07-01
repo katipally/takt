@@ -19,6 +19,31 @@ const WEB_URL = () => process.env.WEB_PUBLIC_URL ?? "http://localhost:3000";
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 64) || "artifact";
 
+// Verify an artifact against the mistakes we've actually seen in production
+// (clipped CSS-transform crops, invented image URLs, citations boxed on their
+// own line, stray-punctuation blocks). Returning issues makes emit_artifact
+// REJECT so the model fixes them BEFORE the user ever sees the artifact.
+export function lintArtifact(code: string): string[] {
+  const issues: string[] = [];
+  // 1. CSS-transform / .prox-crop cropping clips labels — the crop tool already crops.
+  if (/\bprox-crop\b/.test(code) || /<img[^>]*style=["'][^"']*transform\s*:[^"']*(scale|translate)\s*\(/i.test(code)) {
+    issues.push("An image is cropped/positioned with a CSS transform or .prox-crop, which clips its labels. Remove that and instead call crop_page_image for the exact region, then embed the returned URL at full width in a .prox-figure.");
+  }
+  // 2. Invented / external image URLs — only manual images (/assets/…) are real.
+  const badImg = [...code.matchAll(/<img[^>]*\bsrc=["'](https?:\/\/[^"']+)["']/gi)]
+    .map((m) => m[1]!).find((u) => !u.includes("/assets/"));
+  if (badImg) issues.push(`Image src "${badImg}" is not a real manual image. Use crop_page_image / get_page_image and embed the exact URL it returns (it contains /assets/).`);
+  // 3. A citation as the sole content of a block element renders as an empty box.
+  if (/<(div|p|li)\b[^>]*>\s*\[p\.?\s*\d+[^<]*\]\s*<\/\1>/i.test(code)) {
+    issues.push("A page citation is boxed on its own line. Put citations inline as plain text right after the sentence, e.g. `Shade 10 helmet minimum [p.18].` — never in their own box/card/callout.");
+  }
+  // 4. Stray punctuation-only block.
+  if (/<(div|p|li)\b[^>]*>\s*[.:;,]+\s*<\/\1>/i.test(code)) {
+    issues.push("Remove stray punctuation elements (a block whose only content is '.' or ':').");
+  }
+  return issues;
+}
+
 const formatAnswer = (a: AskAnswer) =>
   a.skipped ? "(skipped — no preference)" : Array.isArray(a.answer) ? a.answer.join(", ") : a.answer;
 
@@ -137,7 +162,7 @@ export function buildProxServer(ctx: { product: Product; manuals: Manual[]; emit
     "emit_artifact",
     "Publish the answer as a designed artifact in the user's Artifacts panel — the primary deliverable for substantive questions. You have full design freedom over layout, components and interactions; design what best fits THIS question. Kinds: 'html' for designed/explanatory answers, 'react' for interactive ones (`export default function App(){...}`, real ES module imports from react, lucide-react, framer-motion, recharts, d3, three).\n" +
     "ONE HARD RULE — theme consistency: the artifact must read perfectly in BOTH light and dark. For ANY color/background/border/text-color use ONLY the theme tokens var(--prox-fg/-muted/-card/-surface/-border/-accent/-arc/-success/-danger) and their -soft tints — NEVER bg-white, bg-gray-50, bg-blue-50, text-black, #fff, color:#000 (they break dark mode). Tailwind for LAYOUT only.\n" +
-    "Practical: size to content (no min-h-screen/h-screen/100vh); stay readable narrow AND wide. Images: don't embed a whole manual page — call crop_page_image first and embed the tight crop URL it returns. Only use an `<img>` src that get_page_image or crop_page_image returned; never invent one. Cite pages `[p.NN]`. Optional kit helpers exist (.prox-doc/.prox-card/.prox-callout/.prox-table/.prox-steps/.prox-stat/.prox-crop/.prox-figure/.prox-pin/.prox-reflist) but rolling your own is fine as long as colors come from the theme tokens. To revise an artifact, call emit_artifact again with the SAME `key` (new VERSION); use a NEW `key` for a different artifact.",
+    "Practical: size to content (no min-h-screen/h-screen/100vh); stay readable narrow AND wide. Images: embed ONLY a real crop_page_image/get_page_image URL (contains /assets/) at FULL WIDTH inside a .prox-figure — NEVER crop or shift an image with a CSS transform (scale/translate) or .prox-crop (it clips labels); if a label is cut off, call crop_page_image again with a wider region. Never invent an image URL. Citations: inline plain text right after the claim (e.g. `... [p.18].`) — NEVER put a citation alone in a box/card/callout/border (it renders as an empty box). No empty elements or stray punctuation. The artifact is checked before it's shown; if it's rejected, fix exactly what's listed and re-emit with the SAME `key`. To revise, call emit_artifact again with the SAME `key` (new VERSION); use a NEW `key` for a different artifact.",
     artifactInputSchema.shape,
     async (args) => {
       const id = randomUUID();
@@ -155,6 +180,13 @@ export function buildProxServer(ctx: { product: Product; manuals: Manual[]; emit
           await emit({ type: "tool_done", id, detail: "won't compile" });
           return text(`Artifact rejected — the React code does not compile: ${(e as Error).message}\nFix the syntax and call emit_artifact again.`);
         }
+      }
+      // Quality gate: reject known-bad patterns so the model fixes them before
+      // the artifact is ever shown (crops, image URLs, boxed citations, cruft).
+      const issues = lintArtifact(parsed.data.code);
+      if (issues.length) {
+        await emit({ type: "tool_done", id, detail: "needs fixing" });
+        return text(`Artifact rejected — fix these and call emit_artifact again with the SAME key:\n- ${issues.join("\n- ")}`);
       }
       const groupKey = parsed.data.key ? slugify(parsed.data.key) : slugify(parsed.data.title);
       const version = nextArtifactVersion(chatId, groupKey);
