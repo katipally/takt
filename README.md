@@ -9,15 +9,6 @@ manual, quick-start guide, and selection chart live in `files/`.
 - Live demo (no setup): https://yash3471-prox.hf.space
 - Video walkthrough: https://drive.google.com/file/d/1-kyqqg_7HIGBpc-uVfyB76p8DjTFWzoc/view?usp=sharing
 
-## Demos
-
-Full [video walkthrough](https://drive.google.com/file/d/1-kyqqg_7HIGBpc-uVfyB76p8DjTFWzoc/view?usp=sharing)
-on Google Drive. Short clips of individual features (click to play):
-
-- **Interactive artifacts** — a settings or calculation question becomes a live tool in the panel. ▶ [Watch](https://github.com/katipally/prox-challenge/blob/main/assets/Vids/interactive_artifact.mp4)
-- **Manual cropped into the answer** — the exact region of the page, not the whole scan. ▶ [Watch](https://github.com/katipally/prox-challenge/blob/main/assets/Vids/crop_image.mp4)
-- **Clarifying questions** (added on top of the brief) — the agent asks first when a choice would change the answer, with a diagram to help you pick. ▶ [Watch](https://github.com/katipally/prox-challenge/blob/main/assets/Vids/ask_user.mp4)
-
 ## What this is
 
 This is my submission for the Prox founding engineer challenge. The brief asked
@@ -61,6 +52,26 @@ Beyond that, the agent asks clarifying questions with their own diagrams, revise
 artifacts on request, takes voice and image input, remembers and branches chats,
 handles multiple products, and lets you add a new one from the UI with a cost
 estimate first. Those are called out where they appear below.
+
+## Demos
+
+The full walkthrough is on [Google Drive](https://drive.google.com/file/d/1-kyqqg_7HIGBpc-uVfyB76p8DjTFWzoc/view?usp=sharing).
+Below are short clips of individual features (they play inline on GitHub).
+
+### Interactive artifacts
+A settings or calculation question comes back as a live tool you can change, rendered in the panel.
+
+<video src="https://github.com/katipally/prox-challenge/releases/download/demo-media/interactive_artifact.mp4" controls muted width="720"></video>
+
+### The manual cropped into the answer
+The agent crops the exact region of a manual page into the artifact instead of dropping in a whole page.
+
+<video src="https://github.com/katipally/prox-challenge/releases/download/demo-media/crop_image.mp4" controls muted width="720"></video>
+
+### Clarifying questions (added on top of the brief)
+When a choice would change the answer, the agent asks first, with a diagram to help you choose.
+
+<video src="https://github.com/katipally/prox-challenge/releases/download/demo-media/ask_user.mp4" controls muted width="720"></video>
 
 ## Run it
 
