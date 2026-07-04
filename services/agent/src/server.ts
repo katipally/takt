@@ -4,10 +4,21 @@ import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import type { ChatRequest, MessageBlock, SseEvent } from "@prox/shared";
 import { askAnswerPayloadSchema } from "@prox/shared";
-import { getProductBySlug, createChat, listChats, addMessage, renameChat, getSetting, loadEnv } from "@prox/db";
+import { getProductBySlug, createChat, listChats, addMessage, renameChat, loadEnv } from "@prox/db";
 import { ingestProduct, countPdfPages } from "@prox/ingest";
 import { extname } from "node:path";
-import { ensureSeedProviders, getAnthropicKey } from "./providers.js";
+import { catalogModels } from "@prox/harness";
+import { ensureSeedProviders, resolveCaption } from "./providers.js";
+
+// Per-1M-token prices for a caption model, from the models.dev catalog (cached).
+async function captionCost(provider: any, model: string): Promise<{ input: number; output: number }> {
+  try {
+    const meta = await catalogModels(provider.catalogId);
+    const c = meta[model]?.cost;
+    if (c) return { input: c.input ?? 0, output: c.output ?? 0 };
+  } catch { /* offline / no catalog */ }
+  return { input: 0, output: 0 };
+}
 import { runAgent } from "./agent.js";
 import { resolveAnswers } from "./pending.js";
 
@@ -114,11 +125,15 @@ app.post("/ingest/estimate", async (c) => {
     try { return { name: f.name, pages: countPdfPages(new Uint8Array(await f.arrayBuffer())) }; }
     catch { return { name: f.name, pages: 0 }; }
   }));
+  const cap = resolveCaption();
+  const cost = cap.model ? await captionCost(cap.provider, cap.model) : { input: 0, output: 0 };
   return c.json({
     perFile,
     totalPages: perFile.reduce((n, f) => n + f.pages, 0),
-    model: getSetting("captionModel") ?? "claude-sonnet-5",
-    hasKey: !!getAnthropicKey(),
+    model: cap.model,
+    provider: cap.provider.name,
+    cost: cost.input || cost.output ? cost : null,
+    hasKey: !!cap.apiKey || !!cap.provider.keyless,
   });
 });
 
@@ -134,8 +149,9 @@ app.post("/ingest", async (c) => {
   return streamSSE(c, async (stream) => {
     const emit = (e: SseEvent) => stream.writeSSE({ data: JSON.stringify(e) });
     if (!name || !slug || !pdfFiles.length) { await emit({ type: "error", message: "Name and at least one PDF are required." }); return; }
-    const apiKey = getAnthropicKey();
-    if (!apiKey) { await emit({ type: "error", message: "No Anthropic API key set. Add your key in Settings → Models before adding a product." }); return; }
+    const cap = resolveCaption();
+    if (!cap.model) { await emit({ type: "error", message: "No ingestion model selected. Pick one in Settings → Models before adding a product." }); return; }
+    if (!cap.apiKey && !cap.provider.keyless) { await emit({ type: "error", message: `No API key for ${cap.provider.name}. Add your key in Settings → Models before adding a product.` }); return; }
     try {
       const pdfs = await Promise.all(pdfFiles.map(async (f) => ({ filename: f.name, data: new Uint8Array(await f.arrayBuffer()) })));
       const hero = heroFile && typeof heroFile !== "string"
@@ -143,10 +159,12 @@ app.post("/ingest", async (c) => {
         : undefined;
       const result = await ingestProduct({
         slug, name, manufacturer, pdfs, hero,
-        captionModel: getSetting("captionModel"), apiKey,
+        captionProvider: cap.provider, captionModel: cap.model, apiKey: cap.apiKey ?? undefined,
         onProgress: (m) => emit({ type: "tool_start", id: "ingest", tool: "ingest", summary: m }),
       });
-      await emit({ type: "done", inputTokens: result.inputTokens, outputTokens: result.outputTokens, pages: result.pages });
+      const price = await captionCost(cap.provider, cap.model);
+      const costUsd = (result.inputTokens * price.input + result.outputTokens * price.output) / 1_000_000;
+      await emit({ type: "done", inputTokens: result.inputTokens, outputTokens: result.outputTokens, pages: result.pages, costUsd });
     } catch (err: any) {
       await emit({ type: "error", message: String(err?.message ?? err) });
     }

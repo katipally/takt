@@ -1,28 +1,41 @@
 import { NextResponse } from "next/server";
 import { listProviders, getProviderApiKey } from "@prox/db";
-import { FALLBACK_MODELS as FALLBACK } from "@prox/shared";
+import { BUILTIN_PROVIDERS, fetchModels } from "@prox/harness";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Live model list from the Anthropic API (no hardcoding). Falls back to the
-// shared known set if the key is missing or the call fails.
+// Live model list for a provider, straight from its own endpoint (enriched with
+// models.dev metadata for context/cost). `?provider=<id>` selects which; falls
+// back to the default/first configured provider. No hardcoded vendor list.
+export async function GET(req: Request) {
+  const want = new URL(req.url).searchParams.get("provider");
+  const configured = listProviders();
+  const providerId =
+    (want && BUILTIN_PROVIDERS.some((p) => p.id === want) && want) ||
+    configured.find((p) => p.isDefault)?.kind ||
+    configured[0]?.kind ||
+    BUILTIN_PROVIDERS[0]!.id;
 
-export async function GET() {
-  const anthropic = listProviders().find((p) => p.kind === "anthropic");
-  const key = anthropic ? getProviderApiKey(anthropic.id) : process.env.ANTHROPIC_API_KEY;
-  if (!key) return NextResponse.json(FALLBACK);
+  const provider = BUILTIN_PROVIDERS.find((p) => p.id === providerId)!;
+  const row = configured.find((p) => p.kind === providerId);
+  const key =
+    (row ? getProviderApiKey(row.id) : null) ??
+    provider.envKeys?.map((k) => process.env[k]?.trim()).find(Boolean);
+
   try {
-    const res = await fetch("https://api.anthropic.com/v1/models?limit=100", {
-      headers: { "x-api-key": key, "anthropic-version": "2023-06-01" },
-    });
-    if (!res.ok) return NextResponse.json(FALLBACK);
-    const json = (await res.json()) as { data: { id: string; display_name?: string; created_at?: string }[] };
-    const models = json.data
-      .filter((m) => m.id.startsWith("claude-"))
-      .map((m) => ({ id: m.id, display_name: m.display_name ?? m.id, created_at: m.created_at }));
-    return NextResponse.json(models.length ? models : FALLBACK);
+    const models = await fetchModels(provider, key ?? undefined);
+    return NextResponse.json(
+      models.map((m) => ({
+        id: m.id,
+        display_name: m.name,
+        contextWindow: m.contextWindow,
+        maxOutput: m.maxOutput,
+        reasoning: m.reasoning,
+        cost: m.cost,
+      })),
+    );
   } catch {
-    return NextResponse.json(FALLBACK);
+    return NextResponse.json([]);
   }
 }

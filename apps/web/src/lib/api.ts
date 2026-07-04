@@ -1,7 +1,14 @@
 import type { Product, Provider, Artifact, ChatSummary, ChatMessage, AskAnswerPayload } from "@prox/shared";
 
-export interface ModelInfo { id: string; display_name: string; created_at?: string }
-export interface AppSettings { chatModel: string; captionModel: string; effort: string }
+export interface ModelInfo {
+  id: string; display_name: string; created_at?: string;
+  contextWindow?: number; maxOutput?: number; reasoning?: boolean;
+  cost?: { input: number; output: number };
+}
+export interface AppSettings {
+  chatModel: string; captionModel: string; effort: string;
+  chatProviderId?: string; captionProviderId?: string;
+}
 
 async function j<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error ?? res.statusText);
@@ -15,7 +22,11 @@ export const api = {
     fetch(`/api/providers/${id}`, { method: "PATCH", body: JSON.stringify({ apiKey }) }).then(j<Provider>),
   removeProviderKey: (id: string) =>
     fetch(`/api/providers/${id}`, { method: "PATCH", body: JSON.stringify({ clear: true }) }).then(j<Provider>),
-  models: () => fetch("/api/models").then(j<ModelInfo[]>),
+  // Upsert a key for a provider by its registry id (creates the DB row if new).
+  setProviderKey: (kind: string, apiKey: string) =>
+    fetch("/api/providers", { method: "POST", body: JSON.stringify({ kind, apiKey }) }).then(j<Provider>),
+  models: (provider?: string) =>
+    fetch(`/api/models${provider ? `?provider=${encodeURIComponent(provider)}` : ""}`).then(j<ModelInfo[]>),
   settings: () => fetch("/api/settings").then(j<AppSettings>),
   updateSettings: (b: Partial<AppSettings>) =>
     fetch("/api/settings", { method: "PUT", body: JSON.stringify(b) }).then(j<AppSettings>),

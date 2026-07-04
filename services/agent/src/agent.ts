@@ -1,19 +1,33 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { streamProvider, catalogModels, type Message } from "@prox/harness";
 import type { ChatRequest } from "@prox/shared";
-import { DATA_DIR, getProductBySlug, getManualsByProduct, listArtifactsByChat } from "@prox/db";
-import { buildProxServer, PROX_TOOL_NAMES, type Emit } from "./tools.js";
+import { getProductBySlug, getManualsByProduct, listArtifactsByChat } from "@prox/db";
+import { buildProxTools, type Emit } from "./tools.js";
+import { collectTurn } from "./turn.js";
 import { buildSystemPrompt, formatTranscript } from "./prompt.js";
 import { resolveChat } from "./providers.js";
 
-// Drive one chat turn through the Claude Agent SDK, mapping its stream events to
-// our SSE frames. Text deltas come from partial messages; multimodal frames
-// (page_image, artifact) are emitted by the tools themselves.
+const MAX_STEPS = 16;
+
+// Per-1M-token prices for the chosen model, from the models.dev catalog
+// (cached ~24h). Unknown → zero, so cost just shows $0 rather than breaking.
+async function modelCost(provider: any, model: string): Promise<{ input: number; output: number }> {
+  try {
+    const meta = await catalogModels(provider.catalogId);
+    const c = meta[model]?.cost;
+    if (c) return { input: c.input ?? 0, output: c.output ?? 0 };
+  } catch { /* offline / no catalog */ }
+  return { input: 0, output: 0 };
+}
+
+// Drive one chat turn through our own provider-agnostic loop (replaces the
+// Claude Agent SDK's query()). We own the message list, tool dispatch, and the
+// mapping from the normalized ProviderEvent stream to our SSE frames.
 export async function runAgent(req: ChatRequest, emit: Emit, signal?: AbortSignal): Promise<void> {
   const product = getProductBySlug(req.productSlug);
   if (!product) { await emit({ type: "error", message: `Unknown product "${req.productSlug}"` }); return; }
 
-  // Tear down the Claude turn when the user presses Stop (or navigates away):
-  // the web proxy forwards its request abort signal all the way here.
+  // Tear down the turn when the user presses Stop (or navigates away): the web
+  // proxy forwards its request abort signal all the way here.
   const ac = new AbortController();
   if (signal) {
     if (signal.aborted) ac.abort();
@@ -21,13 +35,15 @@ export async function runAgent(req: ChatRequest, emit: Emit, signal?: AbortSigna
   }
 
   const manuals = getManualsByProduct(product.id);
-  const resolved = resolveChat();
-  if (!resolved.apiKey) {
-    await emit({ type: "error", message: "No API key configured. Add one in Settings or set ANTHROPIC_API_KEY." });
+  const { provider, model, apiKey, effort } = resolveChat();
+  if (!model) { await emit({ type: "error", message: "No model selected. Open Settings → Models and pick a model." }); return; }
+  if (!apiKey && !provider.keyless) {
+    await emit({ type: "error", message: `No API key for ${provider.name}. Add one in Settings → Models.` });
     return;
   }
 
-  const server = buildProxServer({ product, manuals, emit, chatId: req.chatId });
+  const tools = buildProxTools({ product, manuals, emit, chatId: req.chatId });
+  const toolDefs = tools.map(({ name, description, parameters }) => ({ name, description, parameters }));
 
   // Latest version of each artifact already made in this chat, so the model can
   // reuse a key to publish a new version instead of spawning a near-duplicate.
@@ -36,65 +52,54 @@ export async function runAgent(req: ChatRequest, emit: Emit, signal?: AbortSigna
         .map((a) => ({ key: a.groupKey ?? a.id, title: a.title, version: a.version }))
     : [];
 
-  // When the user attached images, send a structured user message (text + image
-  // blocks) so Claude can see them; otherwise a plain string prompt.
-  const promptText = formatTranscript(req.messages);
-  const prompt: any = req.attachments?.length
-    ? (async function* () {
-        yield {
-          type: "user",
-          parent_tool_use_id: null,
-          message: {
-            role: "user",
-            content: [
-              { type: "text", text: promptText },
-              ...req.attachments!.map((a) => ({ type: "image", source: { type: "base64", media_type: a.mediaType, data: a.data } })),
-            ],
-          },
-        };
-      })()
-    : promptText;
+  const messages: Message[] = [
+    { role: "system", text: buildSystemPrompt(product, manuals, priorArtifacts) },
+    {
+      role: "user",
+      text: formatTranscript(req.messages),
+      // When the user attached images, send them so the model can see them.
+      images: req.attachments?.map((a) => ({ data: a.data, mime: a.mediaType })),
+    },
+  ];
 
-  let building = false;
+  const cost = await modelCost(provider, model);
+
   try {
-    for await (const msg of query({
-      prompt,
-      options: {
-        mcpServers: { prox: server },
-        allowedTools: PROX_TOOL_NAMES,
-        systemPrompt: buildSystemPrompt(product, manuals, priorArtifacts),
-        model: resolved.modelId,
-        ...(resolved.thinkingTokens > 0 ? { maxThinkingTokens: resolved.thinkingTokens } : {}),
-        includePartialMessages: true,
-        permissionMode: "bypassPermissions",
-        settingSources: [],
-        maxTurns: 16,
-        cwd: DATA_DIR,
-        abortController: ac,
-        env: { ...process.env, ANTHROPIC_API_KEY: resolved.apiKey },
-      },
-    })) {
-      if (msg.type === "stream_event") {
-        const ev: any = msg.event;
-        if (ev?.type === "content_block_delta") {
-          if (ev.delta?.type === "text_delta") await emit({ type: "text_delta", text: ev.delta.text });
-          else if (ev.delta?.type === "thinking_delta") await emit({ type: "reasoning_delta", text: ev.delta.thinking ?? "" });
-        } else if (ev?.type === "content_block_start") {
-          // emit_artifact streams a large code input before the tool runs — that
-          // long gap looks frozen in chat. Surface a "Building…" status for it.
-          const cb = ev.content_block;
-          if (cb?.type === "tool_use" && String(cb.name ?? "").includes("emit_artifact")) {
-            building = true;
-            await emit({ type: "status", text: "Building the artifact…" });
-          }
-        } else if (ev?.type === "content_block_stop" && building) {
-          building = false;
-          await emit({ type: "status", text: null });
+    for (let step = 0; step < MAX_STEPS; step++) {
+      if (ac.signal.aborted) return;
+      const turn = await collectTurn(
+        streamProvider(provider, apiKey ?? undefined, { model, messages, tools: toolDefs, effort, maxTokens: 8192 }, ac.signal),
+        emit,
+      );
+      messages.push({
+        role: "assistant",
+        text: turn.text,
+        reasoning: turn.reasoning || undefined,
+        reasoningSignature: turn.reasoningSignature,
+        toolCalls: turn.toolCalls.length ? turn.toolCalls : undefined,
+      });
+      await emit({
+        type: "usage",
+        contextTokens: turn.usage.input,
+        outputTokens: turn.usage.output,
+        costUsd: (turn.usage.input * cost.input + turn.usage.output * cost.output) / 1_000_000,
+      });
+      if (!turn.toolCalls.length) break; // no tools requested → the turn is done
+
+      for (const tc of turn.toolCalls) {
+        if (ac.signal.aborted) return;
+        const tool = tools.find((t) => t.name === tc.name);
+        if (!tool) {
+          messages.push({ role: "tool", callId: tc.id, name: tc.name, result: `Unknown tool "${tc.name}".`, isError: true });
+          continue;
         }
-      } else if (msg.type === "result") {
-        const u: any = (msg as any).usage ?? {};
-        const contextTokens = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
-        await emit({ type: "usage", contextTokens, outputTokens: u.output_tokens ?? 0, costUsd: (msg as any).total_cost_usd ?? 0 });
+        let res;
+        try { res = await tool.execute(safeParseArgs(tc.arguments)); }
+        catch (e: any) { res = { output: `Error: ${String(e?.message ?? e)}`, isError: true as const }; }
+        messages.push({
+          role: "tool", callId: tc.id, name: tc.name,
+          result: res.output, images: res.images, isError: res.isError,
+        });
       }
     }
     await emit({ type: "done" });
@@ -102,10 +107,17 @@ export async function runAgent(req: ChatRequest, emit: Emit, signal?: AbortSigna
     // User pressed Stop — not an error. The partial turn is persisted upstream.
     if (ac.signal.aborted || err?.name === "AbortError") return;
     const raw = String(err?.message ?? err);
-    // Turn the SDK's opaque "Invalid API key" into an actionable message.
-    const msg = /invalid api key|authentication|401|x-api-key/i.test(raw)
-      ? "Anthropic rejected the API key. Open Settings → Models and paste a valid key (it should start with sk-ant-)."
+    // Turn an opaque auth failure into an actionable, provider-named message.
+    const msg = /invalid api key|authentication|401|403|unauthor|x-api-key|forbidden/i.test(raw)
+      ? `${provider.name} rejected the API key. Open Settings → Models and paste a valid key.`
       : raw;
     await emit({ type: "error", message: msg });
   }
+}
+
+// Tool args arrive as a streamed JSON string; tolerate an empty/blank one.
+function safeParseArgs(s: string): any {
+  const t = (s ?? "").trim();
+  if (!t) return {};
+  try { return JSON.parse(t); } catch { return {}; }
 }

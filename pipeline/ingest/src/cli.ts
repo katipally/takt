@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from "node:fs";
 import { resolve, join, isAbsolute, extname } from "node:path";
 import { REPO_ROOT, loadEnv } from "@prox/db";
+import { BUILTIN_PROVIDERS } from "@prox/harness";
 import { ingestProduct } from "./ingest.js";
 
 function arg(name: string): string | undefined {
@@ -14,11 +15,30 @@ async function main() {
   const name = arg("name") ?? slug;
   const dir = arg("dir");
   if (!slug || !dir) {
-    console.error('Usage: pnpm ingest --product <slug> --name "Name" --dir <folder> [--manufacturer "X"] [--summary "..."] [--hero <img>]');
+    console.error('Usage: pnpm ingest --product <slug> --name "Name" --dir <folder> [--manufacturer "X"] [--summary "..."] [--hero <img>] [--provider <id>] [--model <id>]');
     process.exit(1);
   }
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.error("ANTHROPIC_API_KEY is required for page captioning. Set it in .env.");
+
+  // Resolve the caption provider: --provider flag, else the first builtin whose
+  // env key is present. --model picks the vision model (required for captioning).
+  const wantProvider = arg("provider");
+  const provider = wantProvider
+    ? BUILTIN_PROVIDERS.find((p) => p.id === wantProvider)
+    : BUILTIN_PROVIDERS.find((p) => p.envKeys?.some((k) => process.env[k]?.trim()));
+  if (!provider) {
+    console.error(wantProvider
+      ? `Unknown provider "${wantProvider}".`
+      : "No provider key found in env. Set one (e.g. ANTHROPIC_API_KEY / OPENAI_API_KEY) or pass --provider.");
+    process.exit(1);
+  }
+  const apiKey = provider.envKeys?.map((k) => process.env[k]?.trim()).find(Boolean);
+  if (!apiKey && !provider.keyless) {
+    console.error(`No API key for ${provider.name}. Set ${provider.envKeys?.join(" or ")} in .env.`);
+    process.exit(1);
+  }
+  const model = arg("model");
+  if (!model) {
+    console.error("--model is required (the vision model to caption pages, e.g. --model claude-sonnet-5 / gpt-5 / gemini-2.5-pro).");
     process.exit(1);
   }
 
@@ -33,6 +53,7 @@ async function main() {
     slug, name: name!, manufacturer: arg("manufacturer") ?? null, summary: arg("summary") ?? null,
     pdfs: pdfFiles.map((f) => ({ filename: f, data: new Uint8Array(readFileSync(join(pdfDir, f))) })),
     hero: heroSrc && existsSync(heroSrc) ? { ext: extname(heroSrc), data: new Uint8Array(readFileSync(heroSrc)) } : undefined,
+    captionProvider: provider, captionModel: model, apiKey,
     onProgress: (m) => { process.stdout.write(`  · ${m}\r`); },
   });
 

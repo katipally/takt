@@ -6,10 +6,25 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, Upload, FileText, Loader2, X, AlertTriangle } from "lucide-react";
 import { createSseDecoder } from "@prox/shared";
 import { api } from "@/lib/api";
-import { estimateIngestCost, costFromTokens, formatCost } from "@/lib/models";
+import { formatCost } from "@/lib/models";
 import { cn } from "@/lib/cn";
 
-interface Estimate { perFile: { name: string; pages: number }[]; totalPages: number; model: string; hasKey: boolean }
+interface Estimate {
+  perFile: { name: string; pages: number }[];
+  totalPages: number;
+  model: string;
+  provider?: string;
+  cost?: { input: number; output: number } | null;
+  hasKey: boolean;
+}
+
+// Rough pre-ingest estimate using the chosen model's live price: ~one vision
+// call per page (~1.6k input + ~0.7k output tokens). Labelled "~"; the real
+// spend is shown after ingest from the actual token counts.
+function estCost(est: Estimate): number | null {
+  if (!est.cost) return null;
+  return (est.totalPages * 1600 * est.cost.input + est.totalPages * 700 * est.cost.output) / 1_000_000;
+}
 
 const inputCls = "w-full rounded-lg border border-border bg-card px-3 py-2 text-[13px] text-foreground outline-none placeholder:text-faint focus:border-border-heavy";
 
@@ -56,6 +71,7 @@ function AddProduct() {
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [progress, setProgress] = useState<string>("");
   const fileRef = useRef<HTMLInputElement>(null);
+  const folderRef = useRef<HTMLInputElement>(null);
 
   const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
   const busy = phase === "estimating" || phase === "ingesting";
@@ -88,7 +104,6 @@ function AddProduct() {
     fd.set("name", name.trim()); fd.set("slug", slug); fd.set("manufacturer", manufacturer.trim());
     files.forEach((f) => fd.append("pdfs", f));
     if (hero) fd.set("hero", hero);
-    const model = estimate?.model;
     try {
       const res = await fetch("/api/products/ingest", { method: "POST", body: fd });
       if (!res.body) throw new Error("no stream");
@@ -103,8 +118,7 @@ function AddProduct() {
           if (e.type === "tool_start") setProgress(e.summary ?? "Working…");
           else if (e.type === "error") { setPhase("idle"); setProgress(`Error: ${e.message}`); return; }
           else if (e.type === "done") {
-            const cost = costFromTokens(e.inputTokens ?? 0, e.outputTokens ?? 0, model);
-            result = `Indexed ✓ · ${e.pages ?? 0} pages · ${formatCost(cost)}`;
+            result = `Indexed ✓ · ${e.pages ?? 0} pages · ${formatCost(e.costUsd ?? 0)}`;
           }
         }
       }
@@ -132,6 +146,12 @@ function AddProduct() {
         </button>
         <input ref={fileRef} type="file" accept="application/pdf" multiple hidden
           onChange={(e) => { setFiles(Array.from(e.target.files ?? [])); setEstimate(null); setPhase("idle"); }} />
+        <button onClick={() => folderRef.current?.click()} className="flex items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-[12.5px] text-muted-foreground transition hover:border-border-heavy hover:text-foreground">
+          <Upload className="size-4" /> Choose folder
+        </button>
+        {/* Folder upload: keep only the PDFs from the selected directory tree. */}
+        <input ref={folderRef} type="file" multiple hidden {...{ webkitdirectory: "", directory: "" }}
+          onChange={(e) => { setFiles(Array.from(e.target.files ?? []).filter((f) => f.name.toLowerCase().endsWith(".pdf"))); setEstimate(null); setPhase("idle"); }} />
         <label className="flex items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-[12.5px] text-muted-foreground transition hover:border-border-heavy hover:text-foreground cursor-pointer">
           <Upload className="size-4" /> {hero ? "Hero ✓" : "Hero image"}
           <input type="file" accept="image/*" hidden onChange={(e) => setHero(e.target.files?.[0] ?? null)} />
@@ -160,19 +180,19 @@ function AddProduct() {
           </ul>
           <div className="mt-3 grid grid-cols-3 gap-2 text-[12px]">
             <div><div className="text-faint">Pages</div><div className="font-medium text-foreground tabular-nums">{estimate.totalPages}</div></div>
-            <div><div className="text-faint">Model</div><div className="font-medium text-foreground truncate">{estimate.model}</div></div>
-            <div><div className="text-faint">Est. cost</div><div className="font-medium text-foreground tabular-nums">~{formatCost(estimateIngestCost(estimate.totalPages, estimate.model))}</div></div>
+            <div><div className="text-faint">Model</div><div className="font-medium text-foreground truncate">{estimate.provider ? `${estimate.provider} · ` : ""}{estimate.model || "—"}</div></div>
+            <div><div className="text-faint">Est. cost</div><div className="font-medium text-foreground tabular-nums">{estCost(estimate) == null ? "—" : `~${formatCost(estCost(estimate)!)}`}</div></div>
           </div>
           {!estimate.hasKey && (
             <div className="mt-3 flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
               <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-              <span>No Anthropic API key set. Add your key in the Models tab before indexing.</span>
+              <span>No API key for {estimate.provider ?? "the selected provider"}. Add it in the Models tab before indexing.</span>
             </div>
           )}
           <div className="mt-3 flex items-center gap-2">
             <button onClick={runIngest} disabled={!estimate.hasKey}
               className="rounded-lg bg-foreground px-3.5 py-2 text-[13px] font-medium text-background transition hover:opacity-90 disabled:opacity-30">
-              Proceed · ~{formatCost(estimateIngestCost(estimate.totalPages, estimate.model))}
+              Proceed{estCost(estimate) != null ? ` · ~${formatCost(estCost(estimate)!)}` : ""}
             </button>
             <button onClick={() => { setEstimate(null); setPhase("idle"); }}
               className="rounded-lg border border-border px-3.5 py-2 text-[13px] text-muted-foreground transition hover:text-foreground">Cancel</button>

@@ -10,6 +10,7 @@ import { renderPdf } from "./pdf.js";
 import { captionPage, generateStarters } from "./caption.js";
 import { chunkPage } from "./chunk.js";
 import type { ManualKind, Product } from "@prox/shared";
+import type { ProviderInfo } from "@prox/harness";
 
 export interface IngestInput {
   slug: string;
@@ -18,7 +19,10 @@ export interface IngestInput {
   summary?: string | null;
   pdfs: { filename: string; data: Uint8Array }[];
   hero?: { ext: string; data: Uint8Array };
-  captionModel?: string;
+  // Which provider + model captions the pages (resolved by the caller — the
+  // server from DB settings, the CLI from flags/env). No provider is hardcoded.
+  captionProvider: ProviderInfo;
+  captionModel: string;
   apiKey?: string;
   concurrency?: number;
   onProgress?: (msg: string) => void | Promise<void>;
@@ -100,7 +104,7 @@ export async function ingestProduct(input: IngestInput): Promise<IngestResult> {
       const existing = getPageImage(product.id, kind, page.pageNumber);
       let caption = existing?.caption ?? "";
       if (!caption) {
-        const cap = await captionPage(page.png, input.captionModel, input.apiKey);
+        const cap = await captionPage(page.png, input.captionProvider, input.captionModel, input.apiKey);
         caption = cap.text;
         inputTokens += cap.inputTokens; outputTokens += cap.outputTokens;
         setPageCaption(manual.id, page.pageNumber, caption);
@@ -134,7 +138,7 @@ export async function ingestProduct(input: IngestInput): Promise<IngestResult> {
   try {
     await report("Writing starter questions…");
     const starters = await generateStarters({
-      model: input.captionModel ?? "claude-sonnet-5", apiKey: input.apiKey,
+      provider: input.captionProvider, model: input.captionModel, apiKey: input.apiKey,
       name: input.name, manufacturer: input.manufacturer, summary: input.summary,
       manualTitles, sampleText,
     });

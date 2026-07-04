@@ -4,7 +4,9 @@ import type { AskQuestion, AskAnswer } from "./ask-spec";
 
 export type ManualKind = "owner" | "quick_start" | "selection_chart" | "other";
 export type ChunkKind = "text" | "image_caption";
-export type ProviderKind = "anthropic";
+// A provider id from the harness registry (BUILTIN_PROVIDERS): "anthropic",
+// "openai", "google", "openrouter", "ollama", … — no longer Anthropic-only.
+export type ProviderKind = string;
 export type ArtifactKind = "react" | "html";
 export type MessageRole = "user" | "assistant" | "tool";
 

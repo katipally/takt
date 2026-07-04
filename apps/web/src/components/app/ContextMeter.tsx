@@ -12,7 +12,7 @@ import { cn } from "@/lib/cn";
 // selected model's real context window and per-token pricing.
 export function ContextMeter({ usage }: { usage: Usage }) {
   const { data: settings, isLoading } = useQuery({ queryKey: ["settings"], queryFn: api.settings });
-  const { data: models = [] } = useQuery({ queryKey: ["models"], queryFn: api.models });
+  const { data: models = [] } = useQuery({ queryKey: ["models", settings?.chatProviderId], queryFn: () => api.models(settings?.chatProviderId), enabled: !!settings });
   const openSettings = useUi((s) => s.openSettings);
   const meta = metaFor(settings?.chatModel);
   const modelName = models.find((m) => m.id === settings?.chatModel)?.display_name ?? settings?.chatModel;

@@ -14,9 +14,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.107.0",
     "@prox/db": "workspace:*",
     "@prox/embed": "workspace:*",
+    "@prox/harness": "workspace:*",
     "@prox/shared": "workspace:*",
     "mupdf": "^1.28.0"
   },
