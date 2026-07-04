@@ -1,0 +1,32 @@
+import type { Server } from "node:http";
+import { WebSocketServer } from "ws";
+import { getProductBySlug, getManualsByProduct } from "@prox/db";
+import { LiveSession } from "./session.js";
+
+// Attach the /live WebSocket to the agent's existing http.Server (the one
+// @hono/node-server's serve() returns), leaving every HTTP route untouched.
+// ponytail: raw ws.WebSocketServer on serve()'s server — avoids bumping
+// @hono/node-server v1→v2 just to get upgradeWebSocket.
+export function attachLiveWs(server: Server) {
+  const wss = new WebSocketServer({ noServer: true });
+  const AGENT_SECRET = process.env.PROX_AGENT_SECRET?.trim() || "";
+
+  server.on("upgrade", (req, socket, head) => {
+    let url: URL;
+    try { url = new URL(req.url ?? "", "http://localhost"); } catch { socket.destroy(); return; }
+    if (url.pathname !== "/live") { socket.destroy(); return; }
+    // Only the trusted web proxy (which holds the secret) may open a live socket.
+    if (AGENT_SECRET && req.headers["x-prox-secret"] !== AGENT_SECRET) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n"); socket.destroy(); return;
+    }
+    const product = getProductBySlug(url.searchParams.get("product") ?? "");
+    if (!product) { socket.write("HTTP/1.1 404 Not Found\r\n\r\n"); socket.destroy(); return; }
+    const manuals = getManualsByProduct(product.id);
+    const chatId = url.searchParams.get("chat") ?? "";
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      void new LiveSession(ws, product, manuals, chatId).start();
+    });
+  });
+  // Models load LAZILY on the first /live connection (session.start), so a plain
+  // `pnpm dev` never downloads or loads ~200MB of live models it isn't using.
+}

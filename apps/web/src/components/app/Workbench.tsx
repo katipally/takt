@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Boxes, PanelLeftOpen } from "lucide-react";
+import { Boxes, PanelLeftOpen, Radio } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { ArtifactPart } from "@/lib/chatStore";
 import { Sidebar } from "./Sidebar";
@@ -11,6 +11,7 @@ import { ProductSwitcher } from "./ProductSwitcher";
 import { Transcript } from "@/components/chat/Transcript";
 import { Composer } from "@/components/chat/Composer";
 import { Canvas, ArtifactDock } from "@/components/canvas/Canvas";
+import { LivePanel } from "@/components/live/LivePanel";
 import { SourceModal } from "@/components/canvas/SourceModal";
 import { AskModal } from "@/components/chat/AskModal";
 import { SettingsModal } from "@/components/settings/SettingsModal";
@@ -26,7 +27,7 @@ export function Workbench({ slug, productName, starters }: { slug: string; produ
   const wb = useWorkbench(slug);
   const empty = wb.messages.length === 0;
   const prompts = starters?.length ? starters : STARTERS;
-  const { sidebarWidth, canvasWidth, setSidebarWidth, setCanvasWidth, sidebarCollapsed, toggleSidebar } = useUi();
+  const { sidebarWidth, canvasWidth, setSidebarWidth, setCanvasWidth, sidebarCollapsed, toggleSidebar, liveOpen, toggleLive } = useUi();
   const reduce = useReducedMotion();
   const [maximized, setMaximized] = useState(false);
   const [resizing, setResizing] = useState(false);
@@ -101,6 +102,11 @@ export function Workbench({ slug, productName, starters }: { slug: string; produ
           <div className="flex items-center gap-2">
             <div className="hidden sm:block"><ContextMeter usage={wb.usage} /></div>
             <ThemeToggle />
+            <button onClick={toggleLive} title="Live voice + vision"
+              className={cn("flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-[12px] transition hover:bg-foreground/[0.06]",
+                liveOpen ? "text-foreground" : "text-muted-foreground")}>
+              <Radio className="size-3.5" /> Live
+            </button>
             <button onClick={wb.toggleCanvas} title={wb.canvas.open ? "Hide artifacts" : "Show artifacts"}
               className={cn("flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-[12px] transition hover:bg-foreground/[0.06]",
                 wb.canvas.open ? "text-foreground" : "text-muted-foreground")}>
@@ -154,6 +160,18 @@ export function Workbench({ slug, productName, starters }: { slug: string; produ
           )}
         </AnimatePresence>
       </section>
+
+      {/* Live voice+vision panel — collapsing like the others; Canvas + transcript
+          stay visible so the agent can draw/show pages while talking. */}
+      <motion.div
+        initial={false}
+        animate={{ width: liveOpen ? 340 : 0 }}
+        transition={widthTransition}
+        className="relative hidden h-full shrink-0 overflow-hidden md:block">
+        <div style={{ width: 340 }} className="h-full">
+          <LivePanel chatId={wb.chatId} productSlug={slug} />
+        </div>
+      </motion.div>
 
       {/* Artifacts panel — width-collapse spring, matching the sidebar. Stays
           mounted so the iframe doesn't re-spin on every open. Hidden on mobile;

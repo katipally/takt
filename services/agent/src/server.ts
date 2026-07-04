@@ -21,6 +21,8 @@ async function captionCost(provider: any, model: string): Promise<{ input: numbe
 }
 import { runAgent } from "./agent.js";
 import { resolveAnswers } from "./pending.js";
+import { attachLiveWs } from "./live/ws.js";
+import type { Server } from "node:http";
 
 loadEnv();
 ensureSeedProviders();
@@ -172,5 +174,6 @@ app.post("/ingest", async (c) => {
 });
 
 const port = Number(process.env.AGENT_PORT ?? 8787);
-serve({ fetch: app.fetch, port });
+const server = serve({ fetch: app.fetch, port }) as unknown as Server;
+attachLiveWs(server); // live voice+vision on ws://…/live
 console.log(`▸ Prox agent service listening on http://localhost:${port}`);

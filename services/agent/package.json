@@ -6,10 +6,12 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
+    "test:live": "tsx src/live/live.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.8",
+    "@huggingface/transformers": "^4.2.0",
     "@prox/db": "workspace:*",
     "@prox/embed": "workspace:*",
     "@prox/harness": "workspace:*",
@@ -17,12 +19,16 @@
     "@prox/shared": "workspace:*",
     "esbuild": "^0.28.1",
     "hono": "^4.12.27",
+    "kokoro-js": "^1.2.0",
+    "onnxruntime-node": "^1.24.3",
     "sharp": "^0.34.5",
+    "ws": "^8.18.0",
     "zod": "^3.24.1",
     "zod-to-json-schema": "^3.24.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
+    "@types/ws": "^8.5.13",
     "tsx": "^4.22.4",
     "typescript": "^5.7.3"
   }

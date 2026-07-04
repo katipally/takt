@@ -127,6 +127,33 @@ function appendText(parts: Part[], key: "reasoning" | "text", text: string): Par
   return parts;
 }
 
+// Apply one streamed SSE event to an assistant node. Shared by the HTTP chat
+// stream (runStream) and the live-mode WebSocket (chatStore.liveApply), so
+// artifacts, page images, tool rows, and usage all render identically.
+function applyStreamEvent(chatId: string, assistantId: string, e: import("@prox/shared").SseEvent) {
+  if (e.type === "text_delta") update(chatId, (s) => patchAssistant(s, assistantId, (p) => appendText(p, "text", e.text)));
+  else if (e.type === "reasoning_delta") update(chatId, (s) => patchAssistant(s, assistantId, (p) => appendText(p, "reasoning", e.text)));
+  else if (e.type === "status") update(chatId, (s) => setStatus(s, assistantId, e.text));
+  else if (e.type === "tool_start") update(chatId, (s) => setStatus(patchAssistant(s, assistantId, (p) => [...p, { id: e.id, kind: "tool", tool: e.tool, summary: e.summary, status: "running" }]), assistantId, null));
+  else if (e.type === "tool_done") update(chatId, (s) => patchAssistant(s, assistantId, (p) => p.map((q) => (q.kind === "tool" && q.id === e.id ? { ...q, status: "done", detail: e.detail } : q))));
+  else if (e.type === "page_image") update(chatId, (s) =>
+    patchAssistant(s, assistantId, (p) => [...p, { id: uid(), kind: "page_image", citationId: e.citationId, url: e.url, page: e.page, manualKind: e.manualKind, manualTitle: e.manualTitle, caption: e.caption }]),
+  );
+  else if (e.type === "artifact") update(chatId, (s) => {
+    const withPart = patchAssistant(s, assistantId, (p) => [...p, { id: uid(), kind: "artifact", artifactId: e.artifactId, title: e.title, artifactKind: e.kind, groupKey: e.groupKey, version: e.version }]);
+    return { ...setStatus(withPart, assistantId, null), canvas: { open: true, artifactId: e.artifactId } };
+  });
+  else if (e.type === "ask_user") update(chatId, (s) => {
+    const withPart = patchAssistant(s, assistantId, (p) =>
+      p.some((q) => q.kind === "ask" && q.askId === e.askId) ? p : [...p, { id: uid(), kind: "ask", askId: e.askId, questions: e.questions }]);
+    return { ...withPart, ask: { askId: e.askId, questions: e.questions } };
+  });
+  else if (e.type === "ask_answer") update(chatId, (s) => patchAssistant(s, assistantId, (p) =>
+    p.map((q) => (q.kind === "ask" && q.askId === e.askId ? { ...q, answers: e.answers, cancelled: e.cancelled } : q))));
+  else if (e.type === "usage") update(chatId, (s) => ({ ...s, usage: { contextTokens: e.contextTokens || s.usage.contextTokens, outputTokens: s.usage.outputTokens + e.outputTokens, costUsd: s.usage.costUsd + e.costUsd } }));
+  else if (e.type === "error") update(chatId, (s) => patchAssistant(s, assistantId, (p) => appendText(p, "text", `\n\n_${e.message}_`)));
+}
+
 // ── streaming ───────────────────────────────────────────────────────────────
 async function runStream(chatId: string, productSlug: string, userNodeId: string, attachments: Attachment[] | undefined, onFinalText?: (t: string) => void) {
   const assistantId = uid();
@@ -143,33 +170,7 @@ async function runStream(chatId: string, productSlug: string, userNodeId: string
   };
 
   try {
-    await streamChat(req, (e) => {
-      if (e.type === "text_delta") update(chatId, (s) => patchAssistant(s, assistantId, (p) => appendText(p, "text", e.text)));
-      else if (e.type === "reasoning_delta") update(chatId, (s) => patchAssistant(s, assistantId, (p) => appendText(p, "reasoning", e.text)));
-      else if (e.type === "status") update(chatId, (s) => setStatus(s, assistantId, e.text));
-      else if (e.type === "tool_start") update(chatId, (s) => setStatus(patchAssistant(s, assistantId, (p) => [...p, { id: e.id, kind: "tool", tool: e.tool, summary: e.summary, status: "running" }]), assistantId, null));
-      else if (e.type === "tool_done") update(chatId, (s) => patchAssistant(s, assistantId, (p) => p.map((q) => (q.kind === "tool" && q.id === e.id ? { ...q, status: "done", detail: e.detail } : q))));
-      // Sources just appear in the answer footer — no auto-open. The user opens
-      // the page in a modal by clicking it.
-      else if (e.type === "page_image") update(chatId, (s) =>
-        patchAssistant(s, assistantId, (p) => [...p, { id: uid(), kind: "page_image", citationId: e.citationId, url: e.url, page: e.page, manualKind: e.manualKind, manualTitle: e.manualTitle, caption: e.caption }]),
-      );
-      else if (e.type === "artifact") update(chatId, (s) => {
-        const withPart = patchAssistant(s, assistantId, (p) => [...p, { id: uid(), kind: "artifact", artifactId: e.artifactId, title: e.title, artifactKind: e.kind, groupKey: e.groupKey, version: e.version }]);
-        return { ...setStatus(withPart, assistantId, null), canvas: { open: true, artifactId: e.artifactId } };
-      });
-      // ask_user opens the interactive panel AND drops an inline part so the
-      // question (and the chosen answer, once it streams back) survive reload.
-      else if (e.type === "ask_user") update(chatId, (s) => {
-        const withPart = patchAssistant(s, assistantId, (p) =>
-          p.some((q) => q.kind === "ask" && q.askId === e.askId) ? p : [...p, { id: uid(), kind: "ask", askId: e.askId, questions: e.questions }]);
-        return { ...withPart, ask: { askId: e.askId, questions: e.questions } };
-      });
-      else if (e.type === "ask_answer") update(chatId, (s) => patchAssistant(s, assistantId, (p) =>
-        p.map((q) => (q.kind === "ask" && q.askId === e.askId ? { ...q, answers: e.answers, cancelled: e.cancelled } : q))));
-      else if (e.type === "usage") update(chatId, (s) => ({ ...s, usage: { contextTokens: e.contextTokens || s.usage.contextTokens, outputTokens: s.usage.outputTokens + e.outputTokens, costUsd: s.usage.costUsd + e.costUsd } }));
-      else if (e.type === "error") update(chatId, (s) => patchAssistant(s, assistantId, (p) => appendText(p, "text", `\n\n_${e.message}_`)));
-    }, abort.signal);
+    await streamChat(req, (e) => applyStreamEvent(chatId, assistantId, e), abort.signal);
   } catch (err) {
     // User pressed Stop → clean stop, keep the partial reply (also persisted
     // server-side). Only surface genuine network errors.
@@ -187,6 +188,31 @@ async function runStream(chatId: string, productSlug: string, userNodeId: string
 
 export const chatStore = {
   getSession, subscribe, activePath, branchInfo,
+
+  // ── live mode ──────────────────────────────────────────────────────────────
+  // The live WebSocket drives turns instead of runStream. We still create the
+  // user + assistant nodes and reuse applyStreamEvent, so a live conversation
+  // renders in the normal transcript and its artifacts land on the Canvas.
+  liveUserTurn(chatId: string, productSlug: string, text: string): string {
+    const s = getSession(chatId, productSlug);
+    const path = activePath(s);
+    const parentId = path.length ? path[path.length - 1]!.id : null;
+    const userId = uid();
+    update(chatId, (x) => ({ ...addNode(x, { id: userId, parentId, role: "user", text }), productSlug }));
+    const assistantId = uid();
+    update(chatId, (x) => ({ ...addNode(x, { id: assistantId, parentId: userId, role: "assistant", parts: [], streaming: true }), streaming: true }));
+    return assistantId;
+  },
+  liveApply(chatId: string, assistantId: string, e: import("@prox/shared").SseEvent) {
+    if (e.type === "done") return;
+    applyStreamEvent(chatId, assistantId, e);
+  },
+  liveFinish(chatId: string, assistantId: string) {
+    update(chatId, (s) => {
+      const n = s.nodes[assistantId];
+      return { ...s, streaming: false, nodes: n && n.role === "assistant" ? { ...s.nodes, [assistantId]: { ...n, streaming: false, status: null } } : s.nodes };
+    });
+  },
 
   // Answering ask_user is out-of-band — it resolves the awaiting tool so the
   // SAME open stream resumes; it is NOT a new chat turn.

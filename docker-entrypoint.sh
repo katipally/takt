@@ -11,6 +11,8 @@ WEB_PORT="${PORT:-7860}"
 # secret if the host didn't provide one; both processes inherit it from here.
 export PROX_AGENT_SECRET="${PROX_AGENT_SECRET:-$(cat /proc/sys/kernel/random/uuid)}"
 
+# The web runs a custom Node server (server.mjs) so it can proxy the /live
+# WebSocket to the internal agent — it reads PORT (7860) for its listen port.
 exec pnpm exec concurrently -k -n agent,web -c magenta,cyan \
   "pnpm --filter @prox/agent start" \
-  "pnpm --filter @prox/web exec next start -H 0.0.0.0 -p ${WEB_PORT}"
+  "PORT=${WEB_PORT} pnpm --filter @prox/web start"

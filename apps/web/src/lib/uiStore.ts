@@ -16,6 +16,9 @@ interface UiState {
   setCanvasWidth: (w: number) => void;
   voiceEnabled: boolean;
   setVoiceEnabled: (v: boolean) => void;
+  liveOpen: boolean;
+  setLiveOpen: (v: boolean) => void;
+  toggleLive: () => void;
 }
 
 export const useUi = create<UiState>()(
@@ -33,6 +36,9 @@ export const useUi = create<UiState>()(
       setCanvasWidth: (w) => set({ canvasWidth: w }),
       voiceEnabled: false,
       setVoiceEnabled: (v) => set({ voiceEnabled: v }),
+      liveOpen: false,
+      setLiveOpen: (v) => set({ liveOpen: v }),
+      toggleLive: () => set((s) => ({ liveOpen: !s.liveOpen })),
     }),
     { name: "prox-ui", partialize: (s) => ({ sidebarWidth: s.sidebarWidth, canvasWidth: s.canvasWidth, voiceEnabled: s.voiceEnabled, sidebarCollapsed: s.sidebarCollapsed }) },
   ),
