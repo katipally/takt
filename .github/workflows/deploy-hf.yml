@@ -1,0 +1,56 @@
+name: Deploy to Hugging Face Space
+
+# Vercel-style auto-deploy: every push to main mirrors this repo to the HF Space.
+# The committed README has no HF frontmatter (keeps GitHub clean) — we inject it
+# here at deploy time. Uses the hf CLI (API auth), so no git-credential juggling.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: hf-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inject HF Space frontmatter into README
+        run: |
+          cat > README.hf <<'EOF'
+          ---
+          title: Takt
+          emoji: 🎛️
+          colorFrom: blue
+          colorTo: gray
+          sdk: docker
+          app_port: 7860
+          pinned: false
+          ---
+
+          EOF
+          cat README.md >> README.hf
+          mv README.hf README.md
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install hf CLI
+        run: pip install -q -U "huggingface_hub[cli]"
+
+      # A fresh checkout contains only tracked files (no node_modules/.env/.next —
+      # they're gitignored), so this uploads exactly the right set. --delete "*"
+      # makes it a true mirror: files removed from the repo are removed from the Space.
+      - name: Deploy to Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          hf upload yashwanttth/takt . . \
+            --repo-type space \
+            --exclude ".git/*" --exclude ".github/*" \
+            --delete "*" \
+            --commit-message "Deploy from GitHub @ ${GITHUB_SHA::7}"
