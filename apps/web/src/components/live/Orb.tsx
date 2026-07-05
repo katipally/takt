@@ -1,0 +1,56 @@
+"use client";
+
+import { useEffect, useRef } from "react";
+import type { LivePhase } from "@/lib/live/liveStore";
+
+// A simple, dependency-free voice orb: layered CSS circles driven by a rAF loop.
+// No WebGL/shaders (which failed to compile on some GPUs and leaked contexts) —
+// just a glowing core + two rings that react to the mic (listening) or the
+// agent's voice (speaking), with a gentle breathing pulse while thinking/loading.
+export function Orb({ phase, getLevels, size = 240 }: { phase: LivePhase; getLevels: () => { mic: number; agent: number }; size?: number }) {
+  const core = useRef<HTMLDivElement>(null);
+  const ring1 = useRef<HTMLDivElement>(null);
+  const ring2 = useRef<HTMLDivElement>(null);
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
+
+  useEffect(() => {
+    const reduce = matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    let raf = 0, t0 = 0, cur = 0;
+    const loop = (ms: number) => {
+      if (!t0) t0 = ms;
+      const time = (ms - t0) / 1000;
+      const p = phaseRef.current;
+      const { mic, agent } = getLevels();
+      const busy = p === "thinking" || p === "connecting" || p === "loading" || p === "reconnecting";
+      // Target amplitude 0..1: mic when listening, agent when speaking, a soft
+      // sine while busy, near-flat when idle/reduced-motion.
+      let amp = 0;
+      if (p === "speaking") amp = Math.min(1, agent * 4);
+      else if (p === "listening" || p === "idle") amp = Math.min(1, mic * 4);
+      else if (busy) amp = 0.35 + 0.2 * Math.sin(time * 3);
+      if (reduce) amp = busy ? 0.3 : Math.min(0.3, amp);
+      cur += (amp - cur) * 0.2; // critically damped
+
+      if (core.current) { core.current.style.transform = `scale(${1 + cur * 0.16})`; core.current.style.opacity = `${0.85 + cur * 0.15}`; }
+      if (ring1.current) { ring1.current.style.transform = `scale(${1 + cur * 0.55})`; ring1.current.style.opacity = `${0.35 + cur * 0.35}`; }
+      if (ring2.current) { ring2.current.style.transform = `scale(${1 + cur * 0.95})`; ring2.current.style.opacity = `${0.15 + cur * 0.3}`; }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [getLevels]);
+
+  const ring = "absolute inset-0 rounded-full border will-change-transform";
+  return (
+    <div className="relative grid place-items-center select-none" style={{ width: size, height: size }} aria-hidden>
+      <div ref={ring2} className={`${ring} border-accent/25`} style={{ transition: "none" }} />
+      <div ref={ring1} className={`${ring} border-accent/40`} style={{ transition: "none" }} />
+      <div ref={core} className="rounded-full will-change-transform" style={{
+        width: size * 0.55, height: size * 0.55,
+        background: "radial-gradient(circle at 40% 35%, #c9dcfc, #8fa8d8 55%, #6b7fb0 80%)",
+        boxShadow: "0 0 40px 8px rgba(140,160,230,0.35), inset 0 0 24px rgba(255,255,255,0.35)",
+      }} />
+    </div>
+  );
+}

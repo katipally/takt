@@ -3,69 +3,122 @@
 import { useCallback, useRef } from "react";
 import { chatStore } from "@/lib/chatStore";
 import { LiveClient } from "./liveClient";
-import { MicCapture } from "./audioCapture";
-import { AudioPlayer } from "./audioPlayback";
 import { CameraCapture } from "./cameraCapture";
-import { useLiveStore, type LivePhase } from "./liveStore";
+import { VoiceEngine, type EnginePhase } from "./voiceEngine";
+import { loadModels, disposeModels, modelsReady } from "./models";
+import { useLiveStore } from "./liveStore";
 
-// Orchestrates one live call: wires the WebSocket to the mic, camera, speaker,
-// and the chat store (so the spoken conversation + any artifacts render in the
-// normal transcript/Canvas). Returns controls + a level getter for the orb.
+// Orchestrates one live call. THICK CLIENT: the VoiceEngine runs VAD+STT+TTS
+// on-device; this hook wires it to the /live socket (final text + camera frames
+// + cancel), the camera, and the chat store, and owns a single leak-proof
+// teardown that every close path routes through.
 export function useLiveSession(chatId: string, productSlug: string) {
   const set = useLiveStore((s) => s.set);
   const client = useRef<LiveClient | null>(null);
-  const mic = useRef<MicCapture | null>(null);
-  const player = useRef<AudioPlayer | null>(null);
+  const engine = useRef<VoiceEngine | null>(null);
   const cam = useRef<CameraCapture | null>(null);
+  const micStream = useRef<MediaStream | null>(null);
   const assistantId = useRef<string | null>(null);
+  const tornDown = useRef(false);
+  const onPageHide = useRef<() => void>(() => {});
+
+  // ── single teardown authority — releases EVERYTHING, always ───────────────
+  const teardown = useCallback(() => {
+    if (tornDown.current) return;
+    tornDown.current = true;
+    window.removeEventListener("pagehide", onPageHide.current);
+    try { client.current?.close(); } catch { /* */ }
+    try { engine.current?.stop(); } catch { /* */ }              // destroys VAD + closes audio
+    try { cam.current?.stop(); } catch { /* */ }                 // camera light off
+    if (micStream.current) { micStream.current.getTracks().forEach((t) => t.stop()); micStream.current = null; }
+    if (assistantId.current) { chatStore.liveFinish(chatId, assistantId.current); assistantId.current = null; }
+    disposeModels();                                             // frees the WebGPU worker
+    client.current = null; engine.current = null; cam.current = null;
+    // Keep `error` so the user sees why it ended; start() clears it next time.
+    set({ active: false, phase: "off", downloadPct: 0, cameraOn: false, muted: false, pttEnabled: false, cameraStream: null, turns: [], userCaption: "", userPartial: false, agentCaption: "" });
+  }, [chatId, set]);
 
   const start = useCallback(async () => {
-    set({ error: undefined, phase: "connecting", active: true, userCaption: "", agentCaption: "" });
-    const play = new AudioPlayer();
-    play.resume(); // user gesture → unlock audio
-    player.current = play;
-
-    const c = new LiveClient({
-      onClose: () => set({ phase: "off", active: false }),
-      onError: (m) => set({ error: m }),
-      onState: (p) => set({ phase: p as LivePhase }),
-      onAudio: (pcm, epoch) => play.play(pcm, epoch),
-      onFlush: (epoch) => play.flush(epoch),
-      onVision: (fps, size) => cam.current?.setVision(fps, size),
-      onCaption: (role, text, final) => {
-        if (role === "user" && final) {
-          if (assistantId.current) chatStore.liveFinish(chatId, assistantId.current);
-          set({ userCaption: text, agentCaption: "" });
-          assistantId.current = chatStore.liveUserTurn(chatId, productSlug, text);
-        } else if (role === "agent") {
-          set({ agentCaption: (useLiveStore.getState().agentCaption + " " + text).trim() });
-        }
-      },
-      onSse: (e) => {
-        if (e.type === "done") {
-          if (assistantId.current) { chatStore.liveFinish(chatId, assistantId.current); assistantId.current = null; }
-          return;
-        }
-        if (assistantId.current) chatStore.liveApply(chatId, assistantId.current, e);
-      },
-      onNeedFrame: (reqId) => {
-        const camera = cam.current;
-        if (!camera) { client.current?.frameResponse(reqId); return; }
-        void camera.captureOne().then((b) => { client.current?.frameResponse(reqId); if (b) client.current?.sendFrame(b); });
-      },
-    });
-    client.current = c;
-    c.connect(productSlug, chatId);
-
-    const m = new MicCapture();
-    mic.current = m;
+    tornDown.current = false;
+    set({ error: undefined, phase: "connecting", active: true, downloadPct: 0, turns: [], userCaption: "", userPartial: false, agentCaption: "" });
     try {
-      await m.start((buf) => c.sendPcm(buf), useLiveStore.getState().micId);
-      await refreshDevices(); // labels are only exposed after a grant
-    } catch {
-      set({ error: "Microphone access denied. Allow the mic and try again.", phase: "off", active: false });
-      c.close();
+      // 1. Models (download-on-demand, cached). Shows a progress bar the first time.
+      if (!modelsReady()) { set({ phase: "loading" }); await loadModels((p) => set({ downloadPct: p.pct })); }
+      if (tornDown.current) return;
+
+      // 2. Mic stream — chosen device + browser AEC (so the agent's own voice is
+      //    cancelled from the mic and can't self-trigger barge-in).
+      const audio: MediaTrackConstraints = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+      const micId = useLiveStore.getState().micId;
+      if (micId) audio.deviceId = { exact: micId };
+      const stream = await navigator.mediaDevices.getUserMedia({ audio });
+      micStream.current = stream;
+      if (tornDown.current) { stream.getTracks().forEach((t) => t.stop()); return; }
+
+      // 3. Voice engine.
+      const eng = new VoiceEngine({
+        onPhase: (p: EnginePhase) => set({ phase: p }),
+        onPartial: (text) => set({ userCaption: text, userPartial: true }),
+        onUserText: (text) => void handleUserText(text),
+        onAgentText: (sentence) => { const st = useLiveStore.getState(); set({ agentCaption: (st.agentCaption + " " + sentence).trim() }); },
+        onBargeIn: () => client.current?.cancel(),
+      });
+      engine.current = eng;
+      await eng.start(stream);
+      if (tornDown.current) return;
+
+      // 4. Socket.
+      const c = new LiveClient({
+        onReconnecting: () => set({ phase: "reconnecting" }),
+        onClose: () => teardown(),
+        onError: (m) => set({ error: m }),
+        onSse: (e) => {
+          if (e.type === "text_delta") engine.current?.feedAgentDelta(e.text);
+          if (e.type === "done") {
+            engine.current?.endAgentTurn();
+            if (assistantId.current) { chatStore.liveFinish(chatId, assistantId.current); assistantId.current = null; }
+            return;
+          }
+          if (assistantId.current) chatStore.liveApply(chatId, assistantId.current, e);
+        },
+        onNeedFrame: async (reqId) => {
+          const camera = cam.current;
+          if (!camera || !useLiveStore.getState().cameraOn) { client.current?.frameResponse(reqId); return; }
+          const jpeg = await camera.captureOne();
+          client.current?.frameResponse(reqId);   // server arms for the look frame FIRST
+          if (jpeg) client.current?.sendFrame(jpeg);
+        },
+      });
+      client.current = c;
+      c.connect(productSlug, chatId);
+
+      onPageHide.current = () => teardown();
+      window.addEventListener("pagehide", onPageHide.current);
+      set({ phase: "idle" });
+      await refreshDevices();
+    } catch (e: any) {
+      const denied = e?.name === "NotAllowedError" || e?.name === "SecurityError";
+      set({ error: denied ? "Microphone access denied. Allow the mic and try again." : `Couldn't start live mode: ${String(e?.message ?? e)}` });
+      teardown();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatId, productSlug, set, teardown]);
+
+  // A completed user turn: attach the freshest camera frame, send the text, and
+  // reflect the exchange in the chat store (so it renders + persists like typing).
+  const handleUserText = useCallback(async (text: string) => {
+    if (useLiveStore.getState().cameraOn && cam.current) {
+      const jpeg = await cam.current.captureFreshest();
+      if (jpeg) client.current?.sendFrame(jpeg);
+    }
+    client.current?.userText(text);
+    const st = useLiveStore.getState();
+    const turns = [...st.turns];
+    if (st.agentCaption.trim()) turns.push({ role: "agent", text: st.agentCaption.trim() });
+    turns.push({ role: "user", text });
+    set({ turns: turns.slice(-40), userCaption: "", userPartial: false, agentCaption: "" });
+    if (assistantId.current) chatStore.liveFinish(chatId, assistantId.current);
+    assistantId.current = chatStore.liveUserTurn(chatId, productSlug, text);
   }, [chatId, productSlug, set]);
 
   const refreshDevices = useCallback(async () => {
@@ -78,16 +131,26 @@ export function useLiveSession(chatId: string, productSlug: string) {
     } catch { /* enumerate not available */ }
   }, [set]);
 
-  const setMic = useCallback(async (id: string) => {
-    set({ micId: id });
-    if (mic.current && client.current) {
-      mic.current.stop();
-      const m = new MicCapture();
-      mic.current = m;
-      try { await m.start((buf) => client.current!.sendPcm(buf), id); m.setMuted(useLiveStore.getState().muted); }
-      catch { set({ error: "Couldn't switch microphone." }); }
-    }
+  const stop = useCallback(() => teardown(), [teardown]);
+
+  const toggleMute = useCallback(() => {
+    const next = !useLiveStore.getState().muted;
+    engine.current?.setMuted(next);
+    set({ muted: next });
   }, [set]);
+
+  // Push-to-talk: setPtt(true) mutes until held; holdTalk toggles while held.
+  const setPtt = useCallback((enabled: boolean) => {
+    engine.current?.setMuted(enabled);
+    set({ pttEnabled: enabled, muted: enabled });
+  }, [set]);
+  const holdTalk = useCallback((down: boolean) => {
+    if (!useLiveStore.getState().pttEnabled) return;
+    engine.current?.setMuted(!down);
+    set({ muted: !down });
+  }, [set]);
+
+  const setMic = useCallback((id: string) => { set({ micId: id }); /* applies on next start */ }, [set]);
 
   const setCam = useCallback(async (id: string) => {
     set({ camId: id });
@@ -95,27 +158,9 @@ export function useLiveSession(chatId: string, productSlug: string) {
       cam.current.stop();
       const c = new CameraCapture();
       cam.current = c;
-      try { await c.start((b) => client.current?.sendFrame(b), id); set({ cameraStream: c.getStream() ?? null }); }
-      catch { set({ error: "Couldn't switch camera." }); }
+      try { await c.start(id); set({ cameraStream: c.getStream() ?? null }); }
+      catch { cam.current = null; set({ error: "Couldn't switch camera.", cameraStream: null }); }
     }
-  }, [set]);
-
-  const stop = useCallback(() => {
-    client.current?.close();
-    mic.current?.stop();
-    cam.current?.stop();
-    player.current?.close();
-    if (assistantId.current) chatStore.liveFinish(chatId, assistantId.current);
-    assistantId.current = null;
-    client.current = null; mic.current = null; cam.current = null; player.current = null;
-    set({ active: false, phase: "off", cameraOn: false, muted: false, cameraStream: null, userCaption: "", agentCaption: "" });
-  }, [chatId, set]);
-
-  const toggleMute = useCallback(() => {
-    const next = !useLiveStore.getState().muted;
-    mic.current?.setMuted(next);
-    client.current?.control(next ? "mute" : "unmute");
-    set({ muted: next });
   }, [set]);
 
   const toggleCamera = useCallback(async () => {
@@ -124,11 +169,12 @@ export function useLiveSession(chatId: string, productSlug: string) {
       const camera = new CameraCapture();
       cam.current = camera;
       try {
-        await camera.start((b) => client.current?.sendFrame(b), useLiveStore.getState().camId);
+        await camera.start(useLiveStore.getState().camId);
         await refreshDevices();
       } catch {
-        set({ error: "Camera access denied." });
+        try { camera.stop(); } catch { /* */ }   // stop the stream BEFORE dropping the ref
         cam.current = null;
+        set({ error: "Camera access denied." });
         return;
       }
       client.current?.control("camera_on");
@@ -139,9 +185,10 @@ export function useLiveSession(chatId: string, productSlug: string) {
       cam.current = null;
       set({ cameraOn: false, cameraStream: null });
     }
-  }, [set]);
+  }, [set, refreshDevices]);
 
-  const getLevels = useCallback(() => ({ mic: mic.current?.level() ?? 0, agent: player.current?.level() ?? 0 }), []);
+  const getLevels = useCallback(() => ({ mic: engine.current?.micLevel() ?? 0, agent: engine.current?.agentLevel() ?? 0 }), []);
+  const getSpeechProgress = useCallback(() => engine.current?.speechProgress() ?? 1, []);
 
-  return { start, stop, toggleMute, toggleCamera, getLevels, refreshDevices, setMic, setCam };
+  return { start, stop, toggleMute, setPtt, holdTalk, toggleCamera, getLevels, getSpeechProgress, refreshDevices, setMic, setCam };
 }

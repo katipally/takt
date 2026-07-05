@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Boxes, PanelLeftOpen, Radio } from "lucide-react";
+import { Boxes, PanelLeftOpen } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { ArtifactPart } from "@/lib/chatStore";
 import { Sidebar } from "./Sidebar";
@@ -11,7 +11,7 @@ import { ProductSwitcher } from "./ProductSwitcher";
 import { Transcript } from "@/components/chat/Transcript";
 import { Composer } from "@/components/chat/Composer";
 import { Canvas, ArtifactDock } from "@/components/canvas/Canvas";
-import { LivePanel } from "@/components/live/LivePanel";
+import { LiveStage } from "@/components/live/LiveStage";
 import { SourceModal } from "@/components/canvas/SourceModal";
 import { AskModal } from "@/components/chat/AskModal";
 import { SettingsModal } from "@/components/settings/SettingsModal";
@@ -27,7 +27,7 @@ export function Workbench({ slug, productName, starters }: { slug: string; produ
   const wb = useWorkbench(slug);
   const empty = wb.messages.length === 0;
   const prompts = starters?.length ? starters : STARTERS;
-  const { sidebarWidth, canvasWidth, setSidebarWidth, setCanvasWidth, sidebarCollapsed, toggleSidebar, liveOpen, toggleLive } = useUi();
+  const { sidebarWidth, canvasWidth, setSidebarWidth, setCanvasWidth, sidebarCollapsed, toggleSidebar, liveOpen, setLiveOpen } = useUi();
   const reduce = useReducedMotion();
   const [maximized, setMaximized] = useState(false);
   const [resizing, setResizing] = useState(false);
@@ -46,6 +46,20 @@ export function Workbench({ slug, productName, starters }: { slug: string; produ
   // Every artifact generated in this chat (across the visible transcript).
   const artifacts = wb.messages.flatMap((m) =>
     m.role === "assistant" ? m.parts.filter((p): p is ArtifactPart => p.kind === "artifact") : []);
+
+  // During a live call the transcript is hidden. When the agent draws, DON'T
+  // yank the user out of the conversation — surface a small dismissible card they
+  // can tap to view the artifact when they want to (non-disruptive).
+  const prevArtCount = useRef(0);
+  const [liveCard, setLiveCard] = useState<{ id: string; title: string } | null>(null);
+  useEffect(() => {
+    if (liveOpen && artifacts.length > prevArtCount.current) {
+      const last = artifacts[artifacts.length - 1];
+      if (last) setLiveCard({ id: last.artifactId, title: last.title });
+    }
+    prevArtCount.current = artifacts.length;
+    if (!liveOpen) setLiveCard(null);
+  }, [artifacts.length, liveOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Deep-links: ?chat=<id> loads a conversation; ?q=<text> opens a fresh chat
   // with that question asked. Runs ONCE — and we strip ?q from the URL right
@@ -102,11 +116,6 @@ export function Workbench({ slug, productName, starters }: { slug: string; produ
           <div className="flex items-center gap-2">
             <div className="hidden sm:block"><ContextMeter usage={wb.usage} /></div>
             <ThemeToggle />
-            <button onClick={toggleLive} title="Live voice + vision"
-              className={cn("flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-[12px] transition hover:bg-foreground/[0.06]",
-                liveOpen ? "text-foreground" : "text-muted-foreground")}>
-              <Radio className="size-3.5" /> Live
-            </button>
             <button onClick={wb.toggleCanvas} title={wb.canvas.open ? "Hide artifacts" : "Show artifacts"}
               className={cn("flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-[12px] transition hover:bg-foreground/[0.06]",
                 wb.canvas.open ? "text-foreground" : "text-muted-foreground")}>
@@ -116,31 +125,52 @@ export function Workbench({ slug, productName, starters }: { slug: string; produ
           </div>
         </div>
 
-        {empty ? (
-          <div className="flex flex-1 flex-col items-center justify-center px-6 pb-12">
-            <div className="w-full max-w-2xl text-center">
-              <Wordmark size="lg" className="mb-4 inline-block" />
-              <h1 className="text-[22px] font-semibold tracking-tight">{productName}</h1>
-              <p className="mt-1.5 text-[13px] text-muted-foreground">Ask anything — answers are grounded in the manual, cited to the page, and drawn when words aren&apos;t enough.</p>
-              <div className="mt-6 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {prompts.map((s) => (
-                  <button key={s} onClick={() => wb.send(s)}
-                    className="rounded-2xl border border-border bg-surface px-4 py-3 text-left text-[13px] text-foreground transition hover:-translate-y-0.5 hover:border-border-heavy">
-                    {s}
-                  </button>
-                ))}
-              </div>
-            </div>
+        {liveOpen ? (
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            <LiveStage chatId={wb.chatId} productSlug={slug} onExit={() => setLiveOpen(false)} />
+            <AnimatePresence>
+              {liveCard && (
+                <motion.button key="live-card"
+                  initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 12 }} transition={quick}
+                  onClick={() => { wb.openArtifact(liveCard.id); setLiveCard(null); }}
+                  className="absolute left-1/2 top-16 z-30 flex -translate-x-1/2 items-center gap-2 rounded-full border border-border bg-surface/95 px-4 py-2 text-[13px] shadow-[var(--shadow-card)] backdrop-blur transition hover:border-border-heavy">
+                  <Boxes className="size-4 text-accent" />
+                  <span className="max-w-[220px] truncate font-medium">Prox sketched “{liveCard.title}”</span>
+                  <span className="text-muted-foreground">· tap to view</span>
+                  <span onClick={(e) => { e.stopPropagation(); setLiveCard(null); }} className="ml-1 grid size-5 place-items-center rounded-full text-muted-foreground hover:bg-foreground/10" aria-label="Dismiss">✕</span>
+                </motion.button>
+              )}
+            </AnimatePresence>
           </div>
         ) : (
-          <Transcript messages={wb.messages} branchInfo={wb.branchInfo} switchBranch={wb.switchBranch}
-            onCitation={wb.openCitation}
-            onOpenSource={(b) => wb.openSource({ url: b.url, page: b.page, manualKind: b.manualKind, manualTitle: b.manualTitle, caption: b.caption })}
-            onOpenArtifact={(b) => wb.openArtifact(b.artifactId)}
-            onRegenerate={wb.regenerate} onEdit={(node, text) => wb.editUser(node, text)} />
+          <>
+            {empty ? (
+              <div className="flex flex-1 flex-col items-center justify-center px-6 pb-12">
+                <div className="w-full max-w-2xl text-center">
+                  <Wordmark size="lg" className="mb-4 inline-block" />
+                  <h1 className="text-[22px] font-semibold tracking-tight">{productName}</h1>
+                  <p className="mt-1.5 text-[13px] text-muted-foreground">Ask anything — answers are grounded in the manual, cited to the page, and drawn when words aren&apos;t enough.</p>
+                  <div className="mt-6 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {prompts.map((s) => (
+                      <button key={s} onClick={() => wb.send(s)}
+                        className="rounded-2xl border border-border bg-surface px-4 py-3 text-left text-[13px] text-foreground transition hover:-translate-y-0.5 hover:border-border-heavy">
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <Transcript messages={wb.messages} branchInfo={wb.branchInfo} switchBranch={wb.switchBranch}
+                onCitation={wb.openCitation}
+                onOpenSource={(b) => wb.openSource({ url: b.url, page: b.page, manualKind: b.manualKind, manualTitle: b.manualTitle, caption: b.caption })}
+                onOpenArtifact={(b) => wb.openArtifact(b.artifactId)}
+                onRegenerate={wb.regenerate} onEdit={(node, text) => wb.editUser(node, text)} />
+            )}
+            <Composer onSend={wb.send} onStop={wb.stop} isStreaming={wb.isStreaming}
+              voiceEnabled={wb.voiceEnabled} setVoiceEnabled={wb.setVoiceEnabled} onOpenLive={() => setLiveOpen(true)} />
+          </>
         )}
-        <Composer onSend={wb.send} onStop={wb.stop} isStreaming={wb.isStreaming}
-          voiceEnabled={wb.voiceEnabled} setVoiceEnabled={wb.setVoiceEnabled} />
 
         {/* Floating artifact switcher — thumbnails over the chat's empty space. */}
         <ArtifactDock artifacts={artifacts} selectedId={wb.canvas.artifactId} panelOpen={wb.canvas.open} onSelect={wb.openArtifact} />
@@ -160,18 +190,6 @@ export function Workbench({ slug, productName, starters }: { slug: string; produ
           )}
         </AnimatePresence>
       </section>
-
-      {/* Live voice+vision panel — collapsing like the others; Canvas + transcript
-          stay visible so the agent can draw/show pages while talking. */}
-      <motion.div
-        initial={false}
-        animate={{ width: liveOpen ? 340 : 0 }}
-        transition={widthTransition}
-        className="relative hidden h-full shrink-0 overflow-hidden md:block">
-        <div style={{ width: 340 }} className="h-full">
-          <LivePanel chatId={wb.chatId} productSlug={slug} />
-        </div>
-      </motion.div>
 
       {/* Artifacts panel — width-collapse spring, matching the sidebar. Stays
           mounted so the iframe doesn't re-spin on every open. Hidden on mobile;

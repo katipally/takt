@@ -1,14 +1,10 @@
-// Camera → JPEG frames at an adaptive rate. The server tells us the fps/size
-// (baseline ~1 fps @ 320px, escalated to ~5 fps @ 720px when it needs detail),
-// and can request one hi-res grab for the `look` tool.
+// Camera → JPEG frames ON DEMAND. The thick client attaches ONE freshest frame
+// per turn (always, when the camera is on — no dark/dedup gating), plus a hi-res
+// grab for the `look` tool. No interval, no server-driven fps.
 export class CameraCapture {
   private stream?: MediaStream;
   private video: HTMLVideoElement;
   private canvas: HTMLCanvasElement;
-  private timer?: ReturnType<typeof setInterval>;
-  private fps = 1;
-  private size = 320;
-  private onFrame?: (jpeg: ArrayBuffer) => void;
 
   constructor() {
     this.video = document.createElement("video");
@@ -17,30 +13,19 @@ export class CameraCapture {
     this.canvas = document.createElement("canvas");
   }
 
-  async start(onFrame: (jpeg: ArrayBuffer) => void, deviceId?: string) {
+  async start(deviceId?: string, facingMode: "user" | "environment" = "environment") {
     const video: MediaTrackConstraints = { width: { ideal: 1280 }, height: { ideal: 720 } };
     if (deviceId) video.deviceId = { exact: deviceId };
+    else video.facingMode = facingMode; // phones: default to the rear camera
     this.stream = await navigator.mediaDevices.getUserMedia({ video });
     this.video.srcObject = this.stream;
     await this.video.play();
-    this.onFrame = onFrame;
-    this.schedule();
   }
 
-  setVision(fps: number, size: number) {
-    if (fps === this.fps && size === this.size) return;
-    this.fps = fps; this.size = size;
-    this.schedule();
-  }
-
-  private schedule() {
-    clearInterval(this.timer);
-    if (!this.onFrame) return;
-    this.timer = setInterval(() => { void this.grab(this.size, 0.6).then((b) => b && this.onFrame?.(b)); }, Math.max(120, 1000 / this.fps));
-  }
-
+  /** The freshest frame, attached to each turn (~512px, moderate quality). */
+  captureFreshest(size = 512, q = 0.7): Promise<ArrayBuffer | null> { return this.grab(size, q); }
   /** One higher-res grab for the `look` tool. */
-  captureOne(size = 720): Promise<ArrayBuffer | null> { return this.grab(size, 0.85); }
+  captureOne(size = 768, q = 0.85): Promise<ArrayBuffer | null> { return this.grab(size, q); }
 
   private async grab(size: number, q: number): Promise<ArrayBuffer | null> {
     const v = this.video;
@@ -55,8 +40,8 @@ export class CameraCapture {
 
   getStream() { return this.stream; }
   stop() {
-    clearInterval(this.timer);
     this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = undefined;
+    this.video.srcObject = null;
   }
 }

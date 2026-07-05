@@ -51,6 +51,10 @@ export interface ChatRequest {
   messages: Message[]
   tools: ToolDef[]
   effort?: Effort
+  /** Raw reasoning-effort override for the OpenAI Responses API (e.g. "minimal"
+   *  for GPT-5, which the Effort enum doesn't expose). Takes precedence over
+   *  `effort`; ignored by other providers. Used by live mode for lowest latency. */
+  reasoningEffort?: string
   maxTokens?: number
 }
 

@@ -27,6 +27,6 @@ export function attachLiveWs(server: Server) {
       void new LiveSession(ws, product, manuals, chatId).start();
     });
   });
-  // Models load LAZILY on the first /live connection (session.start), so a plain
-  // `pnpm dev` never downloads or loads ~200MB of live models it isn't using.
+  // The browser runs the voice models on-device now; the server just streams LLM
+  // text and persists the conversation, so /live is cheap and free-tier friendly.
 }

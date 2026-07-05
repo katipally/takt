@@ -53,7 +53,10 @@ export async function* streamOpenAIResponses(opts: {
   }
   if (instructions) body.instructions = instructions
   if (req.tools.length) body.tools = toTools(req.tools)
-  if (req.effort) body.reasoning = { effort: EFFORT_MAP[req.effort], summary: "auto" }
+  // reasoningEffort is a raw passthrough (e.g. "minimal" on GPT-5) and wins over
+  // the mapped Effort; skip the summary for minimal to shave latency + tokens.
+  if (req.reasoningEffort) body.reasoning = { effort: req.reasoningEffort }
+  else if (req.effort) body.reasoning = { effort: EFFORT_MAP[req.effort], summary: "auto" }
   if (req.maxTokens) body.max_output_tokens = req.maxTokens
 
   const res = await fetchWithRetry(

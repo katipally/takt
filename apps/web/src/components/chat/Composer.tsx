@@ -1,20 +1,21 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowUp, Square, Mic, Volume2, VolumeX, Plus, X } from "lucide-react";
+import { ArrowUp, Square, Mic, Volume2, VolumeX, Plus, X, AudioLines } from "lucide-react";
 import type { Attachment } from "@/lib/chatStore";
 import { cn } from "@/lib/cn";
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random() + Date.now()));
 
 export function Composer({
-  onSend, onStop, isStreaming, voiceEnabled, setVoiceEnabled,
+  onSend, onStop, isStreaming, voiceEnabled, setVoiceEnabled, onOpenLive,
 }: {
   onSend: (text: string, attachments?: Attachment[]) => void;
   onStop: () => void;
   isStreaming: boolean;
   voiceEnabled: boolean;
   setVoiceEnabled: (v: boolean) => void;
+  onOpenLive: () => void;
 }) {
   const [value, setValue] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -96,6 +97,10 @@ export function Composer({
           <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
 
           <div className="flex items-center gap-1.5">
+            <button onClick={onOpenLive} title="Live conversation" aria-label="Start a live voice conversation"
+              className="grid size-8 place-items-center rounded-full text-muted-foreground transition hover:bg-foreground/10 hover:text-accent">
+              <AudioLines className="size-4" />
+            </button>
             <button onClick={() => setVoiceEnabled(!voiceEnabled)} title={voiceEnabled ? "Spoken replies on" : "Spoken replies off"} aria-label={voiceEnabled ? "Turn spoken replies off" : "Turn spoken replies on"} aria-pressed={voiceEnabled}
               className={cn("grid size-8 place-items-center rounded-full text-muted-foreground transition hover:bg-foreground/10", voiceEnabled && "text-accent")}>
               {voiceEnabled ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}

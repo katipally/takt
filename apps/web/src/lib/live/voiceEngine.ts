@@ -1,0 +1,260 @@
+import { MicVAD } from "@ricky0123/vad-web";
+import { AudioPlayer } from "./audioPlayback";
+import { stt, tts, hasWebGPU, turnComplete, turnModelReady } from "./models";
+
+// The on-device conversation loop (replaces the old server pipeline). Silero VAD
+// segments the user's speech; Whisper transcribes it (streaming partials + a
+// final); a light "mid-thought" check holds through natural pauses; the final
+// text goes to the server; the LLM's reply text streams back and is spoken with
+// Kokoro. Barge-in is a LOCAL decision — no server round-trip for audio.
+export type EnginePhase = "idle" | "listening" | "thinking" | "speaking";
+
+export interface VoiceEngineHandlers {
+  onPhase: (p: EnginePhase) => void;
+  onPartial: (text: string) => void;      // interim user caption (greyed)
+  onUserText: (text: string) => void;      // final user turn → send to server
+  onAgentText: (sentence: string) => void; // agent caption line
+  onBargeIn: () => void;                    // ask the server to cancel the LLM stream
+}
+
+const PARTIAL_MS = 500;      // min gap between interim transcriptions
+const HOLD_MS = 4000;        // safety: never hold a mid-thought pause longer than this
+const ONSET_GRACE_MS = 250;  // agent's own first syllable can't self-trigger barge-in
+const MIN_UTTER_SAMPLES = 16000 * 0.25; // ignore <0.25s blips
+
+// Whisper hallucinates these on silence/ambient noise — never treat as a turn.
+const HALLUCINATIONS = new Set(["", "you", "thank you", "thank you.", "thanks", "thanks for watching", "thank you for watching", "thanks for watching!", "bye", "bye.", "please subscribe", "subtitles by the amara.org community", "so", "the", "i", "yeah", "okay", "ok"]);
+function isJunk(text: string): boolean {
+  const t = text.toLowerCase().replace(/[^a-z0-9\s]/g, "").trim();
+  return t.length < 2 || HALLUCINATIONS.has(t);
+}
+function rmsOf(a: Float32Array): number { let s = 0; for (let i = 0; i < a.length; i++) s += a[i]! * a[i]!; return Math.sqrt(s / a.length); }
+
+// Strip markdown so the voice never reads out "-", "*", "#", or "[p.18]" symbols.
+function stripMarkdown(s: string): string {
+  return s
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")   // links → text
+    .replace(/`([^`]*)`/g, "$1")                // inline code
+    .replace(/[*_~#>]+/g, "")                   // bold/italic/heading/quote marks
+    .replace(/^\s*[-•]\s+/gm, "")               // list bullets
+    .replace(/^\s*\d+\.\s+/gm, "")              // numbered lists
+    .replace(/\[p\.\s*\d+\]/gi, "")             // citation tokens
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Words that, at the very end of an utterance, usually mean "I'm not done yet".
+const TRAILING = new Set(["to","the","a","an","and","but","so","or","of","for","with","my","your","is","are","it","that","this","on","at","in","because","if","when","then","like","about","into","um","uh"]);
+function endsMidThought(text: string): boolean {
+  const w = text.toLowerCase().replace(/[^a-z\s]/g, "").trim().split(/\s+/);
+  const last = w[w.length - 1];
+  return !!last && TRAILING.has(last);
+}
+
+// Split a growing text stream into speakable sentences (keep decimals/abbrevs).
+class SentenceChunker {
+  private buf = "";
+  push(t: string): string[] {
+    this.buf += t;
+    const out: string[] = [];
+    const re = /[^.!?]+[.!?]+(?:\s|$)/g;
+    let m: RegExpExecArray | null, last = 0;
+    while ((m = re.exec(this.buf))) { const s = m[0].trim(); if (s.length >= 2) { out.push(s); last = re.lastIndex; } }
+    if (last) this.buf = this.buf.slice(last);
+    return out;
+  }
+  flush(): string { const s = this.buf.trim(); this.buf = ""; return s; }
+}
+
+export class VoiceEngine {
+  private vad: MicVAD | null = null;
+  private player = new AudioPlayer();
+  private chunker = new SentenceChunker();
+  private phase: EnginePhase = "idle";
+
+  private pending: Float32Array | null = null;   // held mid-thought utterance
+  private holdTimer: ReturnType<typeof setTimeout> | null = null;
+  private curBuf: Float32Array[] = [];           // frames since speech start (for partials)
+  private curLen = 0;
+  private lastPartialAt = 0;
+  private partialBusy = false;
+  private finalizing = false;
+
+  private micRms = 0;
+  private epoch = 0;                              // bumped on barge-in; stales TTS + audio
+  private ttsChain: Promise<void> = Promise.resolve();
+  private speakingStartAt = 0;
+
+  constructor(private h: VoiceEngineHandlers) {}
+
+  async start(stream: MediaStream) {
+    this.player.resume();
+    this.vad = await MicVAD.new({
+      model: "v5",
+      // Serve the Silero worklet + onnx + ort wasm from a CDN (the default
+      // resolves them to the app origin, which 404s). ponytail: CDN keeps it
+      // zero-config; vendor these into /public for a fully-offline HF Space.
+      baseAssetPath: "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/",
+      onnxWASMBasePath: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.27.0/dist/",
+      getStream: async () => stream,             // our stream: chosen device + AEC on
+      positiveSpeechThreshold: 0.6,              // higher → fewer ambient false-triggers
+      negativeSpeechThreshold: 0.4,
+      minSpeechMs: 250,
+      redemptionMs: 700,                         // wait through short natural pauses
+      onSpeechStart: () => this.onSpeechStart(),
+      onSpeechEnd: (audio) => { void this.onSpeechEnd(audio); },
+      onFrameProcessed: (_p, frame) => this.onFrame(frame),
+      onVADMisfire: () => { if (this.phase === "listening") this.setPhase("idle"); },
+    });
+    await this.vad.start();
+    this.setPhase("idle");
+  }
+
+  // ── user speech ─────────────────────────────────────────────────────────
+  private onSpeechStart() {
+    // Barge-in: user talks over the agent (past the onset grace) → kill audio now.
+    if ((this.phase === "speaking" || this.player.level() > 0) && Date.now() - this.speakingStartAt > ONSET_GRACE_MS) {
+      this.bargeIn();
+    }
+    this.clearHold();
+    this.curBuf = []; this.curLen = 0;
+    this.setPhase("listening");
+  }
+
+  private onFrame(frame: Float32Array) {
+    // Mic level for the orb (smoothed RMS).
+    let sum = 0; for (let i = 0; i < frame.length; i++) sum += frame[i]! * frame[i]!;
+    const rms = Math.sqrt(sum / frame.length);
+    this.micRms += (rms - this.micRms) * 0.3;
+    if (this.phase !== "listening") return;
+    this.curBuf.push(frame); this.curLen += frame.length;
+    void this.maybePartial();
+  }
+
+  // Interim caption while speaking (WebGPU only — too slow to be useful on WASM).
+  private async maybePartial() {
+    if (!hasWebGPU() || this.partialBusy || this.finalizing) return;
+    const now = Date.now();
+    if (now - this.lastPartialAt < PARTIAL_MS || this.curLen < MIN_UTTER_SAMPLES) return;
+    this.lastPartialAt = now;
+    this.partialBusy = true;
+    try {
+      const win = this.concat(this.curBuf, this.curLen);
+      if (rmsOf(win) < 0.012) return;
+      const text = await stt(win);
+      if (text && !isJunk(text) && this.phase === "listening") this.h.onPartial(text);
+    } catch { /* best-effort */ }
+    finally { this.partialBusy = false; }
+  }
+
+  private async onSpeechEnd(audio: Float32Array) {
+    if (this.finalizing) return;
+    const combined = this.pending ? this.concat([this.pending, audio], this.pending.length + audio.length) : audio;
+    // Reject blips and near-silence up front (ambient noise that tripped the VAD).
+    if (combined.length < MIN_UTTER_SAMPLES || rmsOf(audio) < 0.012) { this.pending = null; if (this.phase === "listening") this.setPhase("idle"); return; }
+    this.finalizing = true;
+    try {
+      // Transcribe AND ask Smart-Turn (semantic end-of-turn) in parallel. If the
+      // turn model isn't loaded, fall back to the VAD's silence endpointing.
+      const [text, modelComplete] = await Promise.all([
+        stt(combined).then((t) => t.trim()),
+        turnModelReady() ? turnComplete(combined) : Promise.resolve(true),
+      ]);
+      // Drop empties and Whisper's silence-hallucinations so background noise and
+      // dead air never fire a turn.
+      if (isJunk(text)) { this.pending = null; this.setPhase("idle"); return; }
+      // Hold through a mid-thought pause (model says "not done", or the words
+      // trail off) instead of cutting in — but never longer than HOLD_MS / 20 s.
+      const done = modelComplete && !endsMidThought(text);
+      if (!done && combined.length < 16000 * 20) {
+        this.pending = combined;
+        this.h.onPartial(text);
+        this.scheduleHold();
+        this.setPhase("idle");
+        return;
+      }
+      this.pending = null;
+      this.clearHold();
+      this.setPhase("thinking");
+      this.h.onUserText(text);
+    } catch {
+      this.pending = null; this.setPhase("idle");
+    } finally { this.finalizing = false; }
+  }
+
+  private scheduleHold() {
+    this.clearHold();
+    this.holdTimer = setTimeout(() => {
+      const p = this.pending; this.pending = null; this.holdTimer = null;
+      if (p && this.phase === "idle") { void stt(p).then((t) => { const text = t.trim(); if (text) { this.setPhase("thinking"); this.h.onUserText(text); } }); }
+    }, HOLD_MS);
+  }
+  private clearHold() { if (this.holdTimer) { clearTimeout(this.holdTimer); this.holdTimer = null; } }
+
+  // ── agent reply → speech ───────────────────────────────────────────────
+  feedAgentDelta(text: string) {
+    for (const s of this.chunker.push(text)) this.enqueueSpeak(s, this.epoch);
+  }
+  endAgentTurn() {
+    const tail = this.chunker.flush();
+    if (tail) this.enqueueSpeak(tail, this.epoch);
+    // When the TTS chain drains and audio finishes, drop back to idle.
+    const ep = this.epoch;
+    void this.ttsChain.then(() => { if (this.epoch === ep && this.phase === "speaking") this.waitDrainThenIdle(ep); if (this.epoch === ep && this.phase === "thinking") this.setPhase("idle"); });
+  }
+  private waitDrainThenIdle(ep: number) {
+    const check = () => {
+      if (this.epoch !== ep) return;
+      if (this.player.level() > 0) { setTimeout(check, 120); return; }
+      if (this.phase === "speaking") this.setPhase("idle");
+    };
+    check();
+  }
+
+  private enqueueSpeak(sentence: string, epoch: number) {
+    this.ttsChain = this.ttsChain.then(async () => {
+      if (this.epoch !== epoch) return; // barged-in → drop stale speech
+      const spoken = stripMarkdown(sentence);
+      if (!spoken) return;
+      const { audio, sampleRate } = await tts(spoken);
+      if (this.epoch !== epoch) return;
+      this.h.onAgentText(spoken);
+      if (this.phase !== "speaking") { this.speakingStartAt = Date.now(); this.setPhase("speaking"); }
+      this.player.play(audio, epoch, sampleRate);
+    }).catch((e) => { console.warn("[live] TTS failed:", e?.message ?? e); });
+  }
+
+  private bargeIn() {
+    this.epoch++;
+    this.player.flush(this.epoch);
+    this.chunker.flush();
+    this.h.onBargeIn();
+  }
+
+  // ── helpers / lifecycle ────────────────────────────────────────────────
+  private concat(parts: Float32Array[], total: number): Float32Array {
+    const out = new Float32Array(total); let off = 0;
+    for (const p of parts) { out.set(p, off); off += p.length; }
+    return out;
+  }
+  private setPhase(p: EnginePhase) { if (p !== this.phase) { this.phase = p; this.h.onPhase(p); } }
+
+  /** Mute (push-to-talk / manual): pause listening; a held pending is dropped. */
+  setMuted(muted: boolean) {
+    if (!this.vad) return;
+    if (muted) { this.clearHold(); this.pending = null; this.micRms = 0; void this.vad.pause(); if (this.phase === "listening") this.setPhase("idle"); }
+    else void this.vad.start();
+  }
+
+  micLevel() { return this.micRms; }
+  agentLevel() { return this.player.level(); }
+  speechProgress() { return this.player.progress(); }
+
+  stop() {
+    this.clearHold();
+    this.epoch++;
+    try { this.vad?.destroy(); } catch { /* */ }
+    this.vad = null;
+    this.player.close();
+  }
+}
