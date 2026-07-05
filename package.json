@@ -8,7 +8,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "concurrently -n web,agent -c cyan,magenta \"pnpm --filter @takt/web dev\" \"pnpm --filter @takt/agent dev\"",
+    "predev": "bash scripts/free-ports.sh",
+    "dev": "concurrently -k --kill-others -n web,agent -c cyan,magenta \"pnpm --filter @takt/web dev\" \"pnpm --filter @takt/agent dev\"",
+    "stop": "bash scripts/free-ports.sh",
     "build": "pnpm -r --filter @takt/web build",
     "ingest": "pnpm --filter @takt/ingest start --",
     "profile:build": "pnpm --filter @takt/ingest profile:build --",
