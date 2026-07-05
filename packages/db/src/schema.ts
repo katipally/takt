@@ -1,8 +1,6 @@
-import { EMBED_DIM } from "./paths";
-
-// Idempotent schema. `vec_chunks` uses a sqlite-vec vec0 virtual table with a
-// product_id partition key so KNN search is filtered efficiently per product —
-// this is what keeps the system product-agnostic with no cross-product bleed.
+// Idempotent schema. Product knowledge lives in the Profile markdown bundles
+// (data/products/<slug>/); the DB holds only metadata + app state. Retrieval is
+// Direct Corpus Interaction — the agent greps/reads the markdown, no vectors.
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS products (
   id           TEXT PRIMARY KEY,
@@ -36,25 +34,6 @@ CREATE TABLE IF NOT EXISTS page_images (
   UNIQUE(manual_id, page_number)
 );
 CREATE INDEX IF NOT EXISTS idx_pages_product ON page_images(product_id);
-
-CREATE TABLE IF NOT EXISTS chunks (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  product_id   TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
-  manual_id    TEXT NOT NULL REFERENCES manuals(id) ON DELETE CASCADE,
-  page_number  INTEGER NOT NULL,
-  kind         TEXT NOT NULL,
-  content      TEXT NOT NULL,
-  content_hash TEXT NOT NULL,
-  created_at   TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE(content_hash)
-);
-CREATE INDEX IF NOT EXISTS idx_chunks_product ON chunks(product_id);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(
-  product_id TEXT PARTITION KEY,
-  chunk_id INTEGER,
-  embedding FLOAT[${EMBED_DIM}]
-);
 
 CREATE TABLE IF NOT EXISTS providers (
   id                 TEXT PRIMARY KEY,
@@ -125,6 +104,14 @@ export function migrate(handle: MigrateHandle) {
   if (!cols.includes("group_key")) handle.exec("ALTER TABLE artifacts ADD COLUMN group_key TEXT");
   if (!cols.includes("version")) handle.exec("ALTER TABLE artifacts ADD COLUMN version INTEGER NOT NULL DEFAULT 1");
   handle.exec("CREATE INDEX IF NOT EXISTS idx_artifacts_chat ON artifacts(chat_id)");
+
+  // Retrieval moved to Direct Corpus Interaction over the Profile markdown — the
+  // vector store is gone. Drop the old chunks/vec_chunks tables if a pre-existing
+  // DB still has them. vec_chunks is a vec0 virtual table whose DROP needs the
+  // (now-removed) sqlite-vec module, so tolerate that failing — an orphaned vtab
+  // is harmless since nothing queries it.
+  try { handle.exec("DROP TABLE IF EXISTS vec_chunks"); } catch { /* module gone; harmless orphan */ }
+  try { handle.exec("DROP TABLE IF EXISTS chunks"); } catch { /* ignore */ }
 
   // Master mode: chats/artifacts.product_id must be NULLABLE. Rebuild the table
   // if it's still the old NOT NULL shape. FKs OFF so dropping chats (referenced

@@ -22,10 +22,13 @@ out
 # runs with zero seeding (connection.ts copies seed.db -> takt.db on first boot).
 # Rebuild the template after re-seeding with scripts/bake-seed-db.sh.
 /data/*
-!/data/.gitkeep
 !/data/seed.db
 !/data/pages/
 !/data/heroes/
+# Per-product knowledge — OKF Profile bundles (readable markdown + media),
+# READ-ONLY to the chat agent. Committed like pages/heroes so a fresh clone + the
+# HF image ship with them. The agent greps/reads these directly (no vector index).
+!/data/products/
 # never commit: runtime db, its sidecars, the encryption key, or ingest inputs
 /data/takt.db
 /data/takt.db-wal

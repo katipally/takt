@@ -11,8 +11,11 @@
 .git
 *.log
 
-# Source PDFs are only needed for re-ingest, not at runtime — keep the image lean.
+# Source PDFs (dropped from git anyway) and the agent's runtime scratch aren't
+# needed in the image — keep it lean.
 data/pdfs
+data/scratch
 
-# NOTE: data/takt.db, data/pages, data/heroes and data/.enc-key are intentionally
-# NOT ignored — the seeded catalog + vector index + page images are baked in.
+# NOTE: data/takt.db, data/products, data/pages, data/heroes and data/.enc-key are
+# intentionally NOT ignored — the seeded catalog + product Profiles (OKF markdown)
+# + rendered pages are baked in so the app answers on first boot.

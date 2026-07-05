@@ -11,12 +11,13 @@
   },
   "scripts": {
     "start": "tsx src/cli.ts",
+    "profile:build": "tsx src/profile-cli.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@takt/db": "workspace:*",
-    "@takt/embed": "workspace:*",
     "@takt/harness": "workspace:*",
+    "@takt/profile": "workspace:*",
     "@takt/shared": "workspace:*",
     "mupdf": "^1.28.0"
   },

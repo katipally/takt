@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { resolve, join, isAbsolute, extname } from "node:path";
 import { REPO_ROOT, loadEnv } from "@takt/db";
 import { BUILTIN_PROVIDERS } from "@takt/harness";
@@ -70,10 +70,9 @@ async function main() {
     onProgress: (m) => { process.stdout.write(`  · ${m}\r`); },
   });
 
-  const manifestDir = resolve(REPO_ROOT, "seed");
-  mkdirSync(manifestDir, { recursive: true });
-  writeFileSync(join(manifestDir, `${slug}.json`), JSON.stringify({ slug, name, dir }, null, 2));
-  console.log(`\n✓ Ingest complete for "${name}".`);
+  // The Profile bundle (data/products/<slug>/) is the canonical record — its
+  // overview.md already holds name/maker/summary, so no separate manifest is kept.
+  console.log(`\n✓ Ingest complete for "${name}" → data/products/${slug}/`);
   process.exit(0);
 }
 

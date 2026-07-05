@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
-  Product, Manual, PageImage, SearchResult, Provider,
-  Artifact, ChatSummary, ChatMessage, ManualKind, ChunkKind,
+  Product, Manual, PageImage, Provider,
+  Artifact, ChatSummary, ChatMessage, ManualKind,
   ProviderKind, ArtifactKind, MessageBlock, MessageRole,
 } from "@takt/shared";
 import { isReservedSlug } from "@takt/shared";
@@ -111,6 +111,16 @@ export function upsertPageImage(pi: {
   ).run(randomUUID(), pi.manualId, pi.productId, pi.pageNumber, pi.pngPath, pi.width, pi.height, pi.caption ?? null);
 }
 
+// All page images (with captions) for a manual, in page order — the author step
+// reads these to build the Profile bundle from already-extracted content.
+export function listPageImages(manualId: string): PageImage[] {
+  return db().prepare(
+    `SELECT id, manual_id AS manualId, product_id AS productId, page_number AS pageNumber,
+            png_path AS pngPath, width, height, caption
+     FROM page_images WHERE manual_id = ? ORDER BY page_number`,
+  ).all(manualId) as PageImage[];
+}
+
 export function setPageCaption(manualId: string, pageNumber: number, caption: string): void {
   db().prepare(`UPDATE page_images SET caption=? WHERE manual_id=? AND page_number=?`)
     .run(caption, manualId, pageNumber);
@@ -125,89 +135,6 @@ export function getPageImage(productId: string, manualKind: ManualKind | null, p
     WHERE pi.product_id = ? ${manualKind ? "AND m.kind = ?" : ""} AND pi.page_number = ?`;
   const args = manualKind ? [productId, manualKind, page] : [productId, page];
   return db().prepare(sql).get(...args) as any;
-}
-
-// ─── Chunks + vectors ──────────────────────────────────────────────────────
-export function chunkExists(contentHash: string): boolean {
-  return !!db().prepare(`SELECT 1 FROM chunks WHERE content_hash = ?`).get(contentHash);
-}
-
-export function insertChunk(c: {
-  productId: string; manualId: string; pageNumber: number;
-  kind: ChunkKind; content: string; contentHash: string; embedding: Float32Array;
-}): void {
-  const tx = db().transaction(() => {
-    const info = db().prepare(
-      `INSERT OR IGNORE INTO chunks (product_id, manual_id, page_number, kind, content, content_hash)
-       VALUES (?,?,?,?,?,?)`,
-    ).run(c.productId, c.manualId, c.pageNumber, c.kind, c.content, c.contentHash);
-    if (info.changes === 0) return; // already present (idempotent)
-    const chunkId = BigInt(info.lastInsertRowid); // vec0 metadata column needs a true INTEGER
-    db().prepare(
-      `INSERT INTO vec_chunks (product_id, chunk_id, embedding) VALUES (?, ?, ?)`,
-    ).run(c.productId, chunkId, JSON.stringify(Array.from(c.embedding)));
-  });
-  tx();
-}
-
-// Drop all chunks + vectors for a product so an ingest can rebuild them cleanly
-// (e.g. after the contextual-embedding change). Page renders + captions are kept
-// (the expensive part), so a re-ingest only re-embeds.
-export function deleteChunksByProduct(productId: string): void {
-  const tx = db().transaction(() => {
-    db().prepare(`DELETE FROM vec_chunks WHERE product_id = ?`).run(productId);
-    db().prepare(`DELETE FROM chunks WHERE product_id = ?`).run(productId);
-  });
-  tx();
-}
-
-export function matchChunks(
-  productId: string, queryEmbedding: Float32Array, k: number, kinds?: ChunkKind[],
-): SearchResult[] {
-  // KNN within the product partition, then join chunk metadata. Over-fetch a
-  // little so an optional kind filter still returns k results.
-  const fetchK = kinds && kinds.length ? k * 3 : k;
-  const rows = db().prepare(
-    `SELECT chunk_id AS chunkId, distance FROM vec_chunks
-     WHERE product_id = ? AND embedding MATCH ? AND k = ? ORDER BY distance`,
-  ).all(productId, JSON.stringify(Array.from(queryEmbedding)), fetchK) as { chunkId: number; distance: number }[];
-  if (!rows.length) return [];
-
-  const byId = new Map(rows.map((r) => [Number(r.chunkId), r.distance]));
-  const ids = rows.map((r) => Number(r.chunkId));
-  const placeholders = ids.map(() => "?").join(",");
-  const chunkRows = db().prepare(
-    `SELECT c.id AS id, c.content, c.page_number AS pageNumber, c.kind, m.kind AS manualKind, m.title AS manualTitle
-     FROM chunks c JOIN manuals m ON m.id = c.manual_id
-     WHERE c.id IN (${placeholders})`,
-  ).all(...ids) as { id: number; content: string; pageNumber: number; kind: ChunkKind; manualKind: ManualKind; manualTitle: string }[];
-
-  return chunkRows
-    .filter((r) => !kinds || !kinds.length || kinds.includes(r.kind))
-    .map((r) => ({
-      content: r.content, pageNumber: r.pageNumber, manualKind: r.manualKind,
-      manualTitle: r.manualTitle, kind: r.kind,
-      score: 1 - (byId.get(r.id) ?? 1), // cosine distance → rough similarity
-    }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, k);
-}
-
-// Cross-product KNN for master mode. Loops every product and runs the existing
-// per-partition search, tagging each hit with its product, then keeps the global
-// top-k. A loop (not a single un-partitioned query) so attribution is exact and
-// we don't depend on sqlite-vec partition-omission semantics. Product count is
-// small; this is plenty fast.
-export function matchAllChunks(
-  queryEmbedding: Float32Array, k: number, kinds?: ChunkKind[],
-): SearchResult[] {
-  const all: SearchResult[] = [];
-  for (const p of listProducts()) {
-    for (const hit of matchChunks(p.id, queryEmbedding, k, kinds)) {
-      all.push({ ...hit, productSlug: p.slug, productName: p.name });
-    }
-  }
-  return all.sort((a, b) => b.score - a.score).slice(0, k);
 }
 
 // ─── Providers ─────────────────────────────────────────────────────────────

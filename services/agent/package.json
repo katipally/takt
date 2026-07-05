@@ -11,9 +11,9 @@
   "dependencies": {
     "@hono/node-server": "^1.13.8",
     "@takt/db": "workspace:*",
-    "@takt/embed": "workspace:*",
     "@takt/harness": "workspace:*",
     "@takt/ingest": "workspace:*",
+    "@takt/profile": "workspace:*",
     "@takt/shared": "workspace:*",
     "esbuild": "^0.28.1",
     "hono": "^4.12.27",

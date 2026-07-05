@@ -208,7 +208,7 @@ function EmptyState() {
         <Plus className="size-4" /> Add product
       </button>
       <p className="mt-6 text-[12.5px] text-muted-foreground">Or from the command line:</p>
-      <pre className="mt-2 overflow-x-auto rounded-xl border border-border bg-surface p-4 font-mono text-[12px] text-foreground takt-scroll">pnpm ingest --product my-product --name &quot;My Product&quot; --dir ./files --url https://…</pre>
+      <pre className="mt-2 overflow-x-auto rounded-xl border border-border bg-surface p-4 font-mono text-[12px] text-foreground takt-scroll">pnpm ingest --product my-product --name &quot;My Product&quot; --dir ./my-pdfs --url https://…</pre>
     </div>
   );
 }

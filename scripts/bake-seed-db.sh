@@ -9,11 +9,11 @@
 # What it strips: the provider API key (api_key_ciphertext + key_last4), all
 # runtime chat data (chats / messages / artifacts), and the per-machine model
 # settings (so a fresh boot applies the shared DEFAULT_* models, not whatever a
-# dev last picked). It keeps the valuable seed: products, manuals, page_images,
-# chunks. Run it after re-seeding.
+# dev last picked). It keeps the catalog metadata: products, manuals, page_images.
+# Product knowledge itself lives in data/products/ (committed markdown), not the DB.
 #
 # Usage:  scripts/bake-seed-db.sh
-# Prereqs: sqlite3.  Commits: data/seed.db, data/pages/, data/heroes/.
+# Prereqs: sqlite3.  Commits: data/seed.db, data/pages/, data/heroes/, data/products/.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -42,9 +42,11 @@ sqlite3 "$OUT" "
 rm -f "$OUT-wal" "$OUT-shm"
 
 echo "▸ Safety checks…"
-LAST4=$(sqlite3 "$OUT" "SELECT COALESCE(key_last4,'<null>') FROM providers;")
-[ "$LAST4" = "<null>" ] || { echo "✗ ABORT: provider key not stripped (last4=$LAST4)." >&2; exit 1; }
+# Count providers still carrying a key — 0 required. (COUNT, not the value, so
+# multiple provider rows don't produce a multi-line string that false-aborts.)
+WITHKEY=$(sqlite3 "$OUT" "SELECT COUNT(*) FROM providers WHERE key_last4 IS NOT NULL OR api_key_ciphertext IS NOT NULL;")
+[ "$WITHKEY" = "0" ] || { echo "✗ ABORT: $WITHKEY provider(s) still carry a key." >&2; exit 1; }
 if grep -aq 'sk-ant-' "$OUT"; then echo "✗ ABORT: 'sk-ant-' found in $OUT." >&2; exit 1; fi
 
 echo "✓ Baked $(du -h "$OUT" | cut -f1) -> data/seed.db (key-free, no chats)."
-echo "  Commit: git add -f data/seed.db data/pages data/heroes"
+echo "  Commit: git add -f data/seed.db data/pages data/heroes data/products"

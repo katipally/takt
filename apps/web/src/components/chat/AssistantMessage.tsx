@@ -16,8 +16,11 @@ import { cn } from "@/lib/cn";
 // `active` shows while the tool runs (gerund + shimmer), `label` once it's done —
 // together they read as staged progress: searching → reading → designing.
 const TOOL_META: Record<string, { label: string; active: string; icon: ReactNode }> = {
-  search_manual: { label: "Searched the manual", active: "Searching the manual…", icon: <Search className="size-3.5" /> },
+  list_profile: { label: "Mapped the product", active: "Listing the product's knowledge…", icon: <FileText className="size-3.5" /> },
+  grep_profile: { label: "Searched the docs", active: "Searching the product…", icon: <Search className="size-3.5" /> },
+  read_profile: { label: "Read the docs", active: "Reading the product…", icon: <FileText className="size-3.5" /> },
   get_page_image: { label: "Opened a manual page", active: "Reading the manual page…", icon: <ImageIcon className="size-3.5" /> },
+  crop_page_image: { label: "Cropped a page", active: "Cropping the page…", icon: <ImageIcon className="size-3.5" /> },
   emit_artifact: { label: "Built the answer", active: "Designing your answer…", icon: <Boxes className="size-3.5" /> },
   list_products: { label: "Checked the catalog", active: "Checking the catalog…", icon: <FileText className="size-3.5" /> },
 };
@@ -40,8 +43,8 @@ export function AssistantMessage({
   const speaking = speakingId === node.id;
 
   // Which product this message's text `[p.N]` citations belong to. In master mode
-  // pages come from search_all_products/get_page_image tagged with a product; if
-  // this message references exactly one, its citation chips open that product.
+  // pages come from get_page_image tagged with a product; if this message
+  // references exactly one, its citation chips open that product.
   const citeProduct = (() => {
     const slugs = [...new Set(
       node.parts.filter((p): p is PageImagePart => p.kind === "page_image").map((p) => p.productSlug).filter(Boolean),

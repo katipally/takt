@@ -3,7 +3,7 @@
 # Assembles a clean, KEY-FREE copy of the app and uploads it.
 #
 # Usage:
-#   deploy/push-to-hf.sh <user>/<space>        # e.g. deploy/push-to-hf.sh alice/takt
+#   scripts/push-to-hf.sh <user>/<space>        # e.g. scripts/push-to-hf.sh alice/takt
 #
 # Prereqs: `hf` CLI + logged in (`hf auth login`), and `sqlite3`.
 # Creates the Space if it doesn't exist, strips the API key from the baked DB,
@@ -33,7 +33,7 @@ rsync -a \
   "$ROOT/" "$STAGE/"
 
 echo "▸ HF Space README (Docker front-matter)…"
-cp "$ROOT/deploy/README.hf.md" "$STAGE/README.md"
+cp "$ROOT/scripts/README.hf.md" "$STAGE/README.md"
 
 echo "▸ Baking the committed key-free catalog (data/seed.db)…"
 [ -f "$ROOT/data/seed.db" ] || { echo "✗ data/seed.db missing — run scripts/bake-seed-db.sh first." >&2; exit 1; }
@@ -43,6 +43,8 @@ mkdir -p "$STAGE/data"
 cp "$ROOT/data/seed.db" "$STAGE/data/takt.db"
 cp -R "$ROOT/data/pages"  "$STAGE/data/pages"
 cp -R "$ROOT/data/heroes" "$STAGE/data/heroes"
+# Per-product knowledge (Profile bundles) — the /profile viewer + grep/read tools.
+[ -d "$ROOT/data/products" ] && cp -R "$ROOT/data/products" "$STAGE/data/products"
 # data/.enc-key deliberately omitted — regenerated fresh in the container.
 
 echo "▸ Safety checks…"

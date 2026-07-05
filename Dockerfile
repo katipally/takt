@@ -3,7 +3,7 @@
 # exactly as on a laptop. Targets a free Hugging Face Docker Space (runs as UID 1000).
 FROM node:22-bookworm-slim
 
-# Toolchain for the native modules (better-sqlite3, onnxruntime-node, sharp, mupdf).
+# Toolchain for the native modules (better-sqlite3, sharp, mupdf).
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ ca-certificates \
   && rm -rf /var/lib/apt/lists/*
@@ -22,12 +22,8 @@ RUN pnpm install --frozen-lockfile
 # Production build of the web app.
 RUN pnpm --filter @takt/web build
 
-# Pre-download the local embedding model so the first manual search is instant
-# (no ~90MB runtime download on the judge's first question).
-RUN pnpm --filter @takt/embed warm
-
-# HF Spaces run as UID 1000; make /app (incl. the baked data dir + caches) writable
-# so runtime writes — judge's pasted key, chats, sqlite WAL, embed-model cache — work.
+# HF Spaces run as UID 1000; make /app (incl. the baked data dir) writable so
+# runtime writes — judge's pasted key, chats, sqlite WAL, Profile edits — work.
 RUN chown -R 1000:1000 /app
 USER 1000
 

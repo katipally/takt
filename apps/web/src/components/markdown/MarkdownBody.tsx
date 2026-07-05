@@ -1,3 +1,5 @@
+"use client";
+
 import { createElement, memo, useMemo, useState, type HTMLAttributes, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";

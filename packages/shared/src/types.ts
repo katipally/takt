@@ -3,7 +3,6 @@
 import type { AskQuestion, AskAnswer } from "./ask-spec";
 
 export type ManualKind = "owner" | "quick_start" | "selection_chart" | "other";
-export type ChunkKind = "text" | "image_caption";
 // A provider id from the harness registry (BUILTIN_PROVIDERS): "anthropic",
 // "openai", "google", "openrouter", "ollama", … — no longer Anthropic-only.
 export type ProviderKind = string;
@@ -40,19 +39,6 @@ export interface PageImage {
   width: number;
   height: number;
   caption: string | null;
-}
-
-export interface SearchResult {
-  content: string;
-  pageNumber: number;
-  manualKind: ManualKind;
-  manualTitle: string;
-  kind: ChunkKind;
-  score: number;
-  // Set by cross-product search (matchAllChunks) so each hit says which product
-  // it came from; undefined for single-product search (the caller knows it).
-  productSlug?: string;
-  productName?: string;
 }
 
 // Slugs the product router reserves — a product can never take one (they'd shadow

@@ -3,13 +3,12 @@ import { join, basename } from "node:path";
 import {
   PAGES_DIR, PDF_DIR, HERO_DIR,
   upsertProduct, upsertManual, upsertSourceManual, upsertPageImage, getPageImage,
-  setPageCaption, insertChunk, setSetting, deleteChunksByProduct,
+  setPageCaption, setSetting,
 } from "@takt/db";
-import { embedPassages } from "@takt/embed";
 import { renderPdf } from "./pdf.js";
 import { captionPage, generateStarters } from "./caption.js";
-import { chunkPage } from "./chunk.js";
 import { fetchWebSource } from "./sources.js";
+import { authorFromUnits, type ProfileConceptInput } from "./author.js";
 import type { ManualKind, Product } from "@takt/shared";
 import type { ProviderInfo } from "@takt/harness";
 
@@ -57,7 +56,11 @@ async function pMap<T>(items: T[], concurrency: number, fn: (item: T) => Promise
   }));
 }
 
-/** Ingest a product end to end: render → caption → chunk → embed → index. */
+/**
+ * Ingest a product: render → caption → author its Profile. The Profile markdown
+ * IS the store (retrieval greps it directly) — there is no chunk/embed/index
+ * step. page_images are kept so get_page_image can still SHOW a page.
+ */
 export async function ingestProduct(input: IngestInput): Promise<IngestResult> {
   const report = async (m: string) => { await input.onProgress?.(m); };
 
@@ -73,13 +76,10 @@ export async function ingestProduct(input: IngestInput): Promise<IngestResult> {
     summary: input.summary ?? null, heroPath,
   });
   await report(`Indexing ${input.name}…`);
-  // Rebuild this product's chunks from scratch (page renders + captions are kept)
-  // so re-ingest can't leave stale/duplicate embeddings behind.
-  deleteChunksByProduct(product.id);
 
   let inputTokens = 0, outputTokens = 0, totalPages = 0;
-  const manualTitles: string[] = [];
   let sampleText = "";
+  const concepts: ProfileConceptInput[] = [];
 
   for (const file of input.pdfs ?? []) {
     const kind = manualKindFromName(file.filename);
@@ -92,7 +92,6 @@ export async function ingestProduct(input: IngestInput): Promise<IngestResult> {
       productId: product.id, kind, title: titleFromName(file.filename),
       pdfPath: `pdfs/${file.filename}`, pageCount: pages.length,
     });
-    manualTitles.push(manual.title);
     totalPages += pages.length;
     mkdirSync(join(PAGES_DIR, manual.id), { recursive: true });
 
@@ -127,21 +126,19 @@ export async function ingestProduct(input: IngestInput): Promise<IngestResult> {
       }
     }
 
-    const drafts = pages.flatMap((page) =>
-      chunkPage({ productSlug: input.slug, sourceTitle: manual.title, manualKind: kind, pageNumber: page.pageNumber, text: page.text, caption: captions.get(page.pageNumber) ?? "" }),
-    );
-    if (drafts.length) {
-      await report(`Embedding ${drafts.length} passages…`);
-      const vectors = await embedPassages(drafts.map((d) => d.embedText));
-      drafts.forEach((d, i) => insertChunk({
-        productId: product.id, manualId: manual.id, pageNumber: d.pageNumber,
-        kind: d.kind, content: d.content, contentHash: d.contentHash, embedding: vectors[i]!,
-      }));
-    }
+    concepts.push({
+      title: manual.title, source: manual.pdfPath,
+      units: pages.map((page) => ({
+        label: `Page ${page.pageNumber}`,
+        text: captions.get(page.pageNumber) ?? "",
+        imageUrl: `/assets/pages/${manual.id}/${page.pageNumber}.png`,
+      })),
+    });
   }
-  // Non-PDF sources (web pages, YouTube transcripts) → text-only chunks through
-  // the same contextual chunk → embed → index path. Failures are per-source and
-  // never abort the whole ingest.
+
+  // Non-PDF sources (web pages, YouTube transcripts) → text-only concepts. Their
+  // text lives in the Profile markdown (canonical); no separate store. Failures
+  // are per-source and never abort the whole ingest.
   for (const src of input.webSources ?? []) {
     await report(`Fetching ${src.url}…`);
     let fetched;
@@ -151,20 +148,21 @@ export async function ingestProduct(input: IngestInput): Promise<IngestResult> {
       productId: product.id, kind: "other", title: src.title ?? fetched.title,
       sourceRef: src.url, pageCount: fetched.sections.length,
     });
-    manualTitles.push(manual.title);
-    const drafts = fetched.sections.flatMap((text, i) =>
-      chunkPage({ productSlug: input.slug, sourceTitle: manual.title, manualKind: "other", pageNumber: i + 1, text, caption: "" }));
-    if (drafts.length) {
-      await report(`Embedding ${drafts.length} passages from ${manual.title}…`);
-      const vectors = await embedPassages(drafts.map((d) => d.embedText));
-      drafts.forEach((d, i) => insertChunk({
-        productId: product.id, manualId: manual.id, pageNumber: d.pageNumber,
-        kind: d.kind, content: d.content, contentHash: d.contentHash, embedding: vectors[i]!,
-      }));
-    }
+    concepts.push({
+      title: manual.title, source: src.url,
+      units: fetched.sections.map((text, i) => ({ label: `Section ${i + 1}`, text })),
+    });
     if (sampleText.length < 4000 && fetched.sections[0]) sampleText += fetched.sections[0].slice(0, 600) + "\n";
-    await report(`Indexed source: ${manual.title} (${fetched.sections.length} sections)`);
+    await report(`Fetched source: ${manual.title} (${fetched.sections.length} sections)`);
   }
+
+  // Author the canonical Profile from everything we captured. The markdown is the
+  // store — the agent greps/reads it directly, no compile step.
+  await report("Writing product Profile…");
+  const authored = authorFromUnits(input.slug, {
+    name: input.name, manufacturer: input.manufacturer ?? null, summary: input.summary ?? null,
+  }, concepts);
+  await report(`Profile ready: ${authored.concepts} concepts`);
 
   // Product-specific starter questions: one cheap text call, stored for reuse.
   // Best-effort — a failure here must never fail the whole ingest.
@@ -173,7 +171,7 @@ export async function ingestProduct(input: IngestInput): Promise<IngestResult> {
     const starters = await generateStarters({
       provider: input.captionProvider, model: input.captionModel, apiKey: input.apiKey,
       name: input.name, manufacturer: input.manufacturer, summary: input.summary,
-      manualTitles, sampleText,
+      manualTitles: concepts.map((c) => c.title), sampleText,
     });
     if (starters.length) setSetting(`starters:${product.id}`, JSON.stringify(starters));
   } catch { /* keep the generic fallback */ }

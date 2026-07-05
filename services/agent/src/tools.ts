@@ -5,32 +5,13 @@ import sharp from "sharp";
 import { transform as esbuildTransform } from "esbuild";
 import { z, type ZodRawShape } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import type { Product, Manual, ManualKind, ChunkKind, SearchResult, SseEvent, AskAnswer } from "@takt/shared";
+import type { Product, Manual, ManualKind, SseEvent, AskAnswer } from "@takt/shared";
 import { artifactInputSchema, askQuestionsSchema } from "@takt/shared";
 import {
-  DATA_DIR, matchChunks, matchAllChunks, getPageImage, createArtifact, nextArtifactVersion,
+  DATA_DIR, getPageImage, createArtifact, nextArtifactVersion,
   listProducts, getProductBySlug,
 } from "@takt/db";
-import { embedQuery, rerank } from "@takt/embed";
-
-// Retrieve: over-fetch KNN, then rerank to the requested top-k with the local
-// cross-encoder. Over-fetching gives the reranker room to promote the truly
-// relevant chunk that pure vector similarity ranked a few slots too low.
-async function retrieve(
-  query: string, product: Product | null, k: number, kinds?: ChunkKind[],
-): Promise<SearchResult[]> {
-  const vec = await embedQuery(query);
-  const fetchK = Math.max(k * 4, 24);
-  const pool = product ? matchChunks(product.id, vec, fetchK, kinds) : matchAllChunks(vec, fetchK, kinds);
-  if (pool.length <= k) return pool;
-  try {
-    const ranked = await rerank(query, pool.map((r) => r.content), k);
-    return ranked.map((r) => ({ ...pool[r.index]!, score: r.score }));
-  } catch {
-    // Reranker unavailable (model download failed etc.) → fall back to KNN order.
-    return pool.slice(0, k);
-  }
-}
+import { profileExists, listConcepts, readConcept, readIndex, generateIndex, grepProfile } from "@takt/profile";
 import { awaitAnswers } from "./pending.js";
 
 export type Emit = (e: SseEvent) => Promise<void> | void;
@@ -110,6 +91,12 @@ export function lintArtifact(code: string): string[] {
 const formatAnswer = (a: AskAnswer) =>
   a.skipped ? "(skipped — no preference)" : Array.isArray(a.answer) ? a.answer.join(", ") : a.answer;
 
+// Rewrite bundle-relative media links (media/…) to servable /assets URLs so the
+// model gets usable image/video/3D URLs it can show; absolute /assets links pass
+// through unchanged.
+const resolveMedia = (slug: string, body: string): string =>
+  body.replace(/\]\(media\//g, `](/assets/products/${slug}/media/`);
+
 export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]; emit: Emit; chatId?: string }): TaktTool[] {
   const { product, emit, chatId } = ctx;
   // Master mode = no single product selected → cross-product tools; the page
@@ -121,49 +108,69 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
   const pageProduct = (args: any): Product | null =>
     product ?? (args.product ? getProductBySlug(String(args.product)) ?? null : null);
 
-  const searchManual: TaktTool = {
-    name: "search_manual",
-    description: "Search this product's manuals (text and image/diagram/table captions) for relevant passages. Returns page-cited snippets. Use this whenever the answer depends on the product's documentation — specs, settings, procedures, numbers.",
+  // Which products a Profile tool should target: the bound one, or the slug the
+  // model passed, or (master, no slug) every product.
+  const targetProducts = (args: any): Product[] =>
+    product ? [product]
+      : args.product ? [getProductBySlug(String(args.product))].filter(Boolean) as Product[]
+      : listProducts();
+
+  // FIND — grep the product's Profile markdown (Direct Corpus Interaction). Pure
+  // lexical scan, so the model must search the vocabulary the Profile uses; the
+  // description steers it to list_profile first and to try synonyms.
+  const grepProfileTool: TaktTool = {
+    name: "grep_profile",
+    description: "Search a product's Profile (its knowledge, stored as markdown) for a keyword or regex — your primary FIND tool, like grep over the product's docs. Returns matching lines grouped by concept, densest first, with line numbers. It's LEXICAL: search the words the docs actually use. Workflow: call list_profile first to learn the product's vocabulary, grep a term (try synonyms if empty), then read_profile the promising concept for full context. Cite the concept a fact came from.",
     parameters: params({
-      query: z.string().describe("What to look up, in natural language"),
-      kinds: z.array(z.enum(["text", "image_caption"])).optional()
-        .describe("Restrict to chunk kinds; omit for all"),
-      k: z.number().int().min(1).max(12).optional().describe("How many results (default 6)"),
+      query: z.string().describe("Keyword, phrase, or regex to search for (case-insensitive)"),
+      ...(masterMode ? { product: z.string().optional().describe("Restrict to one product's slug; omit to grep across ALL products") } : {}),
     }),
     execute: async (args) => {
       const id = randomUUID();
-      await emit({ type: "tool_start", id, tool: "search_manual", summary: args.query });
-      const results = await retrieve(args.query, product, args.k ?? 6, args.kinds as any);
-      await emit({ type: "tool_done", id, detail: `${results.length} passage${results.length === 1 ? "" : "s"}` });
-      if (!results.length) return text("No matching passages found in the manuals.");
-      const body = results
-        .map((r) => `[${r.manualTitle} p.${r.pageNumber} · ${r.kind}]\n${r.content}`)
-        .join("\n\n---\n\n");
-      return text(body);
+      await emit({ type: "tool_start", id, tool: "grep_profile", summary: String(args.query) });
+      const targets = targetProducts(args);
+      const blocks: string[] = [];
+      let total = 0;
+      for (const p of targets) {
+        if (!profileExists(p.slug)) continue;
+        const groups = grepProfile(p.slug, String(args.query));
+        if (!groups.length) continue;
+        const inner = groups.map((g) => {
+          total += g.count;
+          const lines = g.hits.map((h) => `  L${h.line}: ${h.text}`).join("\n");
+          const more = g.count > g.hits.length ? ` (+${g.count - g.hits.length} more)` : "";
+          return `[${g.conceptTitle} · ${g.conceptId}] ${g.count} match${g.count === 1 ? "" : "es"}${more}\n${lines}`;
+        }).join("\n\n");
+        blocks.push(targets.length > 1 ? `### ${p.name} [${p.slug}]\n${inner}` : inner);
+      }
+      await emit({ type: "tool_done", id, detail: total ? `${total} match${total === 1 ? "" : "es"}` : "no matches" });
+      if (!blocks.length) return text(`No matches for "${args.query}". Call list_profile to see the concepts and the exact vocabulary, then grep a synonym.`);
+      return text(`${blocks.join("\n\n")}\n\nRead a concept in full with read_profile(concept: "<id>"${masterMode ? ', product: "<slug>"' : ""}).`);
     },
   };
 
-  // Master-mode search across every product. Each snippet says which product it
-  // came from so the model can attribute and compare.
-  const searchAllProducts: TaktTool = {
-    name: "search_all_products",
-    description: "Search across ALL indexed products at once (text + image/diagram/table captions). Returns page-cited snippets, each tagged with the product it came from. Use this in master mode to answer or compare across products; always tell the user which product a fact came from. To then read a specific page, call get_page_image with that product's slug.",
+  // MAP — list the Profile's concepts so the model orients (and learns vocabulary)
+  // before grepping/reading. Master mode with no slug lists the products instead.
+  const listProfileTool: TaktTool = {
+    name: "list_profile",
+    description: "List a product's Profile concepts — the MAP of what's known: each concept's id, title, type and one-line description. Call this FIRST to see what knowledge exists and learn the product's exact vocabulary before you grep_profile or read_profile. In master mode with no product, it lists the available products.",
     parameters: params({
-      query: z.string().describe("What to look up, in natural language"),
-      kinds: z.array(z.enum(["text", "image_caption"])).optional()
-        .describe("Restrict to chunk kinds; omit for all"),
-      k: z.number().int().min(1).max(16).optional().describe("How many results total (default 8)"),
+      ...(masterMode ? { product: z.string().optional().describe("Product slug to map; omit to list all products") } : {}),
     }),
     execute: async (args) => {
       const id = randomUUID();
-      await emit({ type: "tool_start", id, tool: "search_all_products", summary: args.query });
-      const results = await retrieve(args.query, null, args.k ?? 8, args.kinds as any);
-      await emit({ type: "tool_done", id, detail: `${results.length} passage${results.length === 1 ? "" : "s"}` });
-      if (!results.length) return text("No matching passages found in any product's sources.");
-      const body = results
-        .map((r) => `[${r.productName} · ${r.manualTitle} p.${r.pageNumber} · ${r.kind}]\n${r.content}`)
-        .join("\n\n---\n\n");
-      return text(body);
+      const prod = pageProduct(args);
+      await emit({ type: "tool_start", id, tool: "list_profile", summary: prod ? prod.slug : "products" });
+      if (!prod) {
+        const ps = listProducts();
+        await emit({ type: "tool_done", id, detail: `${ps.length} products` });
+        return text(`Products (call list_profile with a product slug to map one):\n${ps.map((p) => `- ${p.name} [${p.slug}]`).join("\n")}`);
+      }
+      if (!profileExists(prod.slug)) { await emit({ type: "tool_done", id, detail: "no profile" }); return text(`No Profile for ${prod.name} yet.`); }
+      const ids = listConcepts(prod.slug).map((c) => c.id);
+      await emit({ type: "tool_done", id, detail: `${ids.length} concepts` });
+      const index = readIndex(prod.slug) ?? generateIndex(prod.slug, prod.name);
+      return text(`${index}\n\nConcept ids (read with read_profile): ${ids.join(", ")}`);
     },
   };
 
@@ -174,7 +181,7 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
       page: z.number().int().min(1).describe("Page number"),
       manual: z.enum(["owner", "quick_start", "selection_chart", "other"]).optional()
         .describe("Which manual (omit to use any)"),
-      ...(masterMode ? { product: z.string().describe("Which product's page — pass its slug (required in master mode). Get slugs from list_products / search_all_products.") } : {}),
+      ...(masterMode ? { product: z.string().describe("Which product's page — pass its slug (required in master mode). Get slugs from list_products / grep_profile.") } : {}),
     }),
     execute: async (args) => {
       const id = randomUUID();
@@ -233,7 +240,7 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
       const cw = Math.min(Math.max(Math.round(args.w * imgW), 1), imgW - left);
       const ch = Math.min(Math.max(Math.round(args.h * imgH), 1), imgH - top);
       const r = (n: number) => Math.round(n * 1000);
-      const cropRel = `crops/${pi.manualId}/${pi.pageNumber}_${r(args.x)}_${r(args.y)}_${r(args.w)}_${r(args.h)}.png`;
+      const cropRel = `scratch/crops/${pi.manualId}/${pi.pageNumber}_${r(args.x)}_${r(args.y)}_${r(args.w)}_${r(args.h)}.png`;
       const dest = resolve(DATA_DIR, cropRel);
       try {
         if (!existsSync(dest)) {
@@ -302,6 +309,34 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
     },
   };
 
+  // READ — the full text of one Profile concept, verbatim. The third leg of the
+  // list → grep → read loop; call it on a concept grep_profile / list_profile
+  // surfaced. Media links come back as /assets URLs the model can show.
+  const readProfile: TaktTool = {
+    name: "read_profile",
+    description: "Read one Profile concept's full text VERBATIM. Use it after list_profile (to find concept ids) or grep_profile (to find the concept a match is in) to pull the complete context — specs, safety, a procedure, a part. Follow any [links](other.md) in the text by calling read_profile on that concept. Media in the text is given as /assets URLs you can show or embed.",
+    parameters: params({
+      concept: z.string().describe("Concept id to read (e.g. 'overview', 'specs'). Get ids from list_profile / grep_profile."),
+      ...(masterMode ? { product: z.string().describe("Which product's Profile — pass its slug (required in master mode).") } : {}),
+    }),
+    execute: async (args) => {
+      const id = randomUUID();
+      const prod = pageProduct(args);
+      await emit({ type: "tool_start", id, tool: "read_profile", summary: args.concept ? String(args.concept) : "?" });
+      if (!prod) { await emit({ type: "tool_done", id, detail: "no product" }); return text("Specify which product by passing its `product` slug (see list_products)."); }
+      if (!profileExists(prod.slug)) { await emit({ type: "tool_done", id, detail: "no profile" }); return text(`No Profile for ${prod.name} yet.`); }
+
+      const conceptIds = listConcepts(prod.slug).map((c) => c.id);
+      if (!args.concept) { await emit({ type: "tool_done", id, detail: "no concept" }); return text(`Pass a concept id. Available: ${conceptIds.join(", ")} (or call list_profile).`); }
+      const concept = readConcept(prod.slug, String(args.concept));
+      if (!concept) { await emit({ type: "tool_done", id, detail: "not found" }); return text(`No concept "${args.concept}". Available: ${conceptIds.join(", ")}`); }
+      await emit({ type: "tool_done", id, detail: concept.id });
+      const fm = concept.frontmatter;
+      const head = `# ${fm.title ?? concept.id} (${fm.type})${fm.description ? `\n${fm.description}` : ""}`;
+      return text(`${head}\n\n${resolveMedia(prod.slug, concept.body)}`);
+    },
+  };
+
   const listProductsTool: TaktTool = {
     name: "list_products",
     description: "List every product Takt has indexed data for (name, manufacturer, slug).",
@@ -363,8 +398,8 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
     },
   };
 
-  // Single-product mode searches the bound product; master mode searches across
-  // all. list_products + fetch_url are available in both.
-  const searchTool = masterMode ? searchAllProducts : searchManual;
-  return [searchTool, getPageImageTool, cropPageImage, emitArtifact, listProductsTool, askUser, fetchUrl];
+  // Retrieval is Direct Corpus Interaction over the Profile markdown — list (map)
+  // → grep (find) → read (full concept). Works the same in single-product and
+  // master mode. get_page_image/crop show pages; list_products + fetch_url both modes.
+  return [listProfileTool, grepProfileTool, readProfile, getPageImageTool, cropPageImage, emitArtifact, listProductsTool, askUser, fetchUrl];
 }

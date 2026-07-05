@@ -17,4 +17,8 @@ export const SEED_DB_PATH = resolve(DATA_DIR, "seed.db");
 export const PAGES_DIR = resolve(DATA_DIR, "pages");
 export const HERO_DIR = resolve(DATA_DIR, "heroes");
 export const PDF_DIR = resolve(DATA_DIR, "pdfs");
-export const EMBED_DIM = 384;
+// Per-product knowledge — each <slug>/ is an OKF-style Profile (markdown + media).
+// READ-ONLY to the chat agent (it greps/reads via tools); only ingest writes here.
+export const PRODUCTS_DIR = resolve(DATA_DIR, "products");
+// The agent's writable scratch space during a turn (crops, working files).
+export const SCRATCH_DIR = resolve(DATA_DIR, "scratch");

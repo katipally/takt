@@ -12,6 +12,7 @@
   "dependencies": {
     "@takt/db": "workspace:*",
     "@takt/harness": "workspace:*",
+    "@takt/profile": "workspace:*",
     "@takt/shared": "workspace:*",
     "@huggingface/transformers": "^4.2.0",
     "@ricky0123/vad-web": "^0.0.29",
