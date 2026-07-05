@@ -76,6 +76,23 @@ export function resolveChat(): ResolvedChat {
   };
 }
 
+// Which provider + model powers LIVE voice. Its own settings so live can run a
+// fast, low-latency model (Haiku / Gemini Flash / Groq …) independent of the
+// heavier chat model. Falls back to the chat provider+model when unset.
+export function resolveLive(): ResolvedChat {
+  const liveProviderId = getSetting("liveProviderId");
+  const liveModel = getSetting("liveModel");
+  if (!liveProviderId && !liveModel) return resolveChat(); // not configured → inherit chat
+  const providerId = (liveProviderId && providerInfo(liveProviderId)) ? liveProviderId : resolveChatProviderId();
+  const provider = providerInfo(providerId) ?? BUILTIN_PROVIDERS[0]!;
+  return {
+    provider,
+    model: liveModel ?? getSetting("chatModel") ?? "",
+    apiKey: getProviderKey(provider.id),
+    effort: undefined, // live always drives lowest effort in the turn runner
+  };
+}
+
 // Which provider + model captions manual pages at ingest. Its own settings so
 // it can differ from chat; falls back to the chat provider when unset.
 export function resolveCaption(): { provider: ProviderInfo; model: string; apiKey: string | null } {

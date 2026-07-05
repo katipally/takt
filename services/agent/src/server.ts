@@ -183,5 +183,24 @@ app.post("/ingest", async (c) => {
 
 const port = Number(process.env.AGENT_PORT ?? 8787);
 const server = serve({ fetch: app.fetch, port }) as unknown as Server;
-attachLiveWs(server); // live voice+vision on ws://…/live
+const wss = attachLiveWs(server); // live voice+vision on ws://…/live
 console.log(`▸ Prox agent service listening on http://localhost:${port}`);
+
+// A clear message on a busy port instead of an unhandled-'error' crash, and a
+// graceful shutdown so `tsx watch` restarts (SIGTERM) release the port cleanly —
+// otherwise the next boot hits EADDRINUSE and orphans pile up.
+server.on("error", (e: NodeJS.ErrnoException) => {
+  if (e.code === "EADDRINUSE") console.error(`[agent] port ${port} is already in use — kill the old process or set AGENT_PORT.`);
+  else console.error("[agent] server error:", e);
+  process.exit(1);
+});
+let closing = false;
+function shutdown() {
+  if (closing) return; closing = true;
+  for (const c of wss.clients) { try { c.close(); } catch { /* */ } }
+  wss.close();
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 1500).unref(); // don't hang on a stuck socket
+}
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);

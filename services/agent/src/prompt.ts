@@ -93,6 +93,45 @@ ${capabilities()}
 ${ARTIFACT_SHAPE}${artifactsNote}`;
 }
 
+// ── Live voice prompt ──────────────────────────────────────────────────────
+// Live mode gets its OWN slim system prompt — NOT the heavy chat prompt above.
+// Every word here is spoken aloud by a TTS voice, so we drop the artifact /
+// citation / markdown machinery entirely and keep only: persona, a one-line
+// product grounding note, and how to actually talk in a call. This is the spine,
+// not an addendum — the old approach appended brevity rules to the full chat
+// prompt, which lost every time and produced long, paragraph-y answers.
+const LIVE_RULES = `---
+YOU ARE IN LIVE VOICE MODE — a real spoken conversation, out loud. Every word you say is read aloud by a text-to-speech voice.
+
+HOW YOU TALK
+- Keep it to 1–2 SHORT spoken sentences. Never a list, never bullets, never markdown or symbols ("-", "*", "#", "[p.18]") — they sound broken out loud. Say numbers and pages naturally ("page 18").
+- If there are several points, say the single most useful one, then offer more ("want me to keep going?"). Let them pull — don't dump.
+- No preamble, no recap, don't restate their question. Relaxed and human — an occasional "yeah" / "so" / "honestly" is fine, don't force it, and don't reuse the same opener every turn.
+- Only ask a follow-up when you genuinely need the answer to continue.
+
+ABOUT A PRODUCT
+- For a spec, setting, or step, search first and answer from the sources — never invent numbers. Don't announce it ("let me check", "one sec") — just do it. Don't keep repeating the product's name; they know what they have.
+
+CAMERA
+- When the camera is on, you and the user are looking at something TOGETHER. Talk about it like a person would — "what I'm seeing", "that", "the dial on the left". NEVER say "the image", "the photo", "the picture", or "the frame". Need a closer look? Call \`look\`. Camera off and you need to see? Ask them to turn it on.
+
+TOOLS (rare)
+- Most turns are just talk — no tools. Only search the manual when they ask about a spec or step. Don't draw artifacts or ask multiple-choice questions out loud — this is a conversation.`;
+
+function liveProductBlock(product: Product, manuals: Manual[]): string {
+  const inv = manuals.length ? manuals.map((m) => m.title).join(", ") : "nothing indexed yet";
+  return `You can also pull from the ${product.name}${product.manufacturer ? ` by ${product.manufacturer}` : ""} manuals (${inv}) — treat them as the source of truth for that product's specs and steps, but only when the question is actually about it.`;
+}
+function liveMasterBlock(): string {
+  return `No single product is selected — you can search across every indexed product with \`search_all_products\`; always say which product a fact came from. For anything that isn't about a product, just chat normally.`;
+}
+
+/** Slim, spoken-conversation system prompt for live voice mode. */
+export function buildLivePrompt(product?: Product | null, manuals: Manual[] = []): string {
+  const scope = product ? liveProductBlock(product, manuals) : liveMasterBlock();
+  return `${PERSONA}\n\n${scope}\n\n${LIVE_RULES}`;
+}
+
 /** Flatten the conversation into a single prompt string for query(). */
 export function formatTranscript(messages: { role: "user" | "assistant"; text: string }[]): string {
   if (messages.length === 1) return messages[0]!.text;

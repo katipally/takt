@@ -1,6 +1,7 @@
 import { MicVAD } from "@ricky0123/vad-web";
 import { AudioPlayer } from "./audioPlayback";
 import { stt, tts, hasWebGPU, turnComplete, turnModelReady } from "./models";
+import { isJunk, endsMidThought, stripMarkdown, SentenceChunker } from "./voiceText";
 
 // The on-device conversation loop (replaces the old server pipeline). Silero VAD
 // segments the user's speech; Whisper transcribes it (streaming partials + a
@@ -21,50 +22,9 @@ const PARTIAL_MS = 500;      // min gap between interim transcriptions
 const HOLD_MS = 4000;        // safety: never hold a mid-thought pause longer than this
 const ONSET_GRACE_MS = 250;  // agent's own first syllable can't self-trigger barge-in
 const MIN_UTTER_SAMPLES = 16000 * 0.25; // ignore <0.25s blips
+const RMS_GATE = 0.006;      // reject near-silence; low enough to hear a soft talker
 
-// Whisper hallucinates these on silence/ambient noise — never treat as a turn.
-const HALLUCINATIONS = new Set(["", "you", "thank you", "thank you.", "thanks", "thanks for watching", "thank you for watching", "thanks for watching!", "bye", "bye.", "please subscribe", "subtitles by the amara.org community", "so", "the", "i", "yeah", "okay", "ok"]);
-function isJunk(text: string): boolean {
-  const t = text.toLowerCase().replace(/[^a-z0-9\s]/g, "").trim();
-  return t.length < 2 || HALLUCINATIONS.has(t);
-}
 function rmsOf(a: Float32Array): number { let s = 0; for (let i = 0; i < a.length; i++) s += a[i]! * a[i]!; return Math.sqrt(s / a.length); }
-
-// Strip markdown so the voice never reads out "-", "*", "#", or "[p.18]" symbols.
-function stripMarkdown(s: string): string {
-  return s
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")   // links → text
-    .replace(/`([^`]*)`/g, "$1")                // inline code
-    .replace(/[*_~#>]+/g, "")                   // bold/italic/heading/quote marks
-    .replace(/^\s*[-•]\s+/gm, "")               // list bullets
-    .replace(/^\s*\d+\.\s+/gm, "")              // numbered lists
-    .replace(/\[p\.\s*\d+\]/gi, "")             // citation tokens
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-// Words that, at the very end of an utterance, usually mean "I'm not done yet".
-const TRAILING = new Set(["to","the","a","an","and","but","so","or","of","for","with","my","your","is","are","it","that","this","on","at","in","because","if","when","then","like","about","into","um","uh"]);
-function endsMidThought(text: string): boolean {
-  const w = text.toLowerCase().replace(/[^a-z\s]/g, "").trim().split(/\s+/);
-  const last = w[w.length - 1];
-  return !!last && TRAILING.has(last);
-}
-
-// Split a growing text stream into speakable sentences (keep decimals/abbrevs).
-class SentenceChunker {
-  private buf = "";
-  push(t: string): string[] {
-    this.buf += t;
-    const out: string[] = [];
-    const re = /[^.!?]+[.!?]+(?:\s|$)/g;
-    let m: RegExpExecArray | null, last = 0;
-    while ((m = re.exec(this.buf))) { const s = m[0].trim(); if (s.length >= 2) { out.push(s); last = re.lastIndex; } }
-    if (last) this.buf = this.buf.slice(last);
-    return out;
-  }
-  flush(): string { const s = this.buf.trim(); this.buf = ""; return s; }
-}
 
 export class VoiceEngine {
   private vad: MicVAD | null = null;
@@ -97,8 +57,8 @@ export class VoiceEngine {
       baseAssetPath: "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.29/dist/",
       onnxWASMBasePath: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.27.0/dist/",
       getStream: async () => stream,             // our stream: chosen device + AEC on
-      positiveSpeechThreshold: 0.6,              // higher → fewer ambient false-triggers
-      negativeSpeechThreshold: 0.4,
+      positiveSpeechThreshold: 0.5,              // lower → picks up soft speech + faster barge-in
+      negativeSpeechThreshold: 0.35,
       minSpeechMs: 250,
       redemptionMs: 700,                         // wait through short natural pauses
       onSpeechStart: () => this.onSpeechStart(),
@@ -108,6 +68,16 @@ export class VoiceEngine {
     });
     await this.vad.start();
     this.setPhase("idle");
+  }
+
+  /** Swap the mic mid-call (device change) — rebuild the VAD on the new stream
+   *  without touching the audio player, so a reply in progress keeps playing. */
+  async setStream(stream: MediaStream) {
+    this.clearHold();
+    this.pending = null;
+    try { this.vad?.destroy(); } catch { /* */ }
+    this.vad = null;
+    await this.start(stream);
   }
 
   // ── user speech ─────────────────────────────────────────────────────────
@@ -140,7 +110,7 @@ export class VoiceEngine {
     this.partialBusy = true;
     try {
       const win = this.concat(this.curBuf, this.curLen);
-      if (rmsOf(win) < 0.012) return;
+      if (rmsOf(win) < RMS_GATE) return;
       const text = await stt(win);
       if (text && !isJunk(text) && this.phase === "listening") this.h.onPartial(text);
     } catch { /* best-effort */ }
@@ -151,7 +121,7 @@ export class VoiceEngine {
     if (this.finalizing) return;
     const combined = this.pending ? this.concat([this.pending, audio], this.pending.length + audio.length) : audio;
     // Reject blips and near-silence up front (ambient noise that tripped the VAD).
-    if (combined.length < MIN_UTTER_SAMPLES || rmsOf(audio) < 0.012) { this.pending = null; if (this.phase === "listening") this.setPhase("idle"); return; }
+    if (combined.length < MIN_UTTER_SAMPLES || rmsOf(audio) < RMS_GATE) { this.pending = null; if (this.phase === "listening") this.setPhase("idle"); return; }
     this.finalizing = true;
     try {
       // Transcribe AND ask Smart-Turn (semantic end-of-turn) in parallel. If the

@@ -9,7 +9,21 @@ import { KokoroTTS } from "kokoro-js";
 import * as ort from "onnxruntime-web";
 
 env.allowLocalModels = false; // fetch from the hub, then cache
+env.useBrowserCache = true;   // persist weights in the Cache API across sessions
 ort.env.wasm.numThreads = 1;  // single-thread → no cross-origin-isolation needed
+
+// Fetch a URL through the Cache API so big model files download once, not every
+// load. transformers.js caches its own weights; this covers the raw Smart-Turn
+// ONNX we fetch by hand. Falls back to a plain fetch where Cache API is blocked.
+async function cachedArrayBuffer(url: string): Promise<ArrayBuffer> {
+  try {
+    const cache = await caches.open("prox-live-models-v1");
+    let res = await cache.match(url);
+    if (!res) { await cache.add(url); res = await cache.match(url); }
+    if (res) return await res.arrayBuffer();
+  } catch { /* Cache API unavailable (e.g. private mode) → fall through */ }
+  return await (await fetch(url)).arrayBuffer();
+}
 
 const STT_MODEL = "onnx-community/whisper-base";
 const STT_MODEL_WASM = "onnx-community/whisper-tiny"; // lighter on the WASM tier
@@ -60,7 +74,7 @@ self.onmessage = async (e: MessageEvent) => {
       // Smart-Turn is tiny → always CPU/WASM. Non-fatal if it fails to load.
       try {
         turnProc = await AutoProcessor.from_pretrained(TURN_PROCESSOR, { progress_callback });
-        const buf = await (await fetch(SMART_TURN_URL)).arrayBuffer();
+        const buf = await cachedArrayBuffer(SMART_TURN_URL);
         turnSession = await ort.InferenceSession.create(buf, { executionProviders: ["wasm"] });
       } catch (err) { console.warn("[live] Smart-Turn unavailable:", err); turnSession = null; turnProc = null; }
       // Warm up (compiles WebGPU shaders) so the first real turn isn't janky.

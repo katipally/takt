@@ -35,7 +35,7 @@ export function useLiveSession(chatId: string, productSlug: string | null) {
     disposeModels();                                             // frees the WebGPU worker
     client.current = null; engine.current = null; cam.current = null;
     // Keep `error` so the user sees why it ended; start() clears it next time.
-    set({ active: false, phase: "off", downloadPct: 0, cameraOn: false, muted: false, pttEnabled: false, cameraStream: null, turns: [], userCaption: "", userPartial: false, agentCaption: "" });
+    set({ active: false, phase: "off", downloading: false, downloadPct: 0, cameraOn: false, muted: false, pttEnabled: false, cameraStream: null, turns: [], userCaption: "", userPartial: false, agentCaption: "" });
   }, [chatId, set]);
 
   const start = useCallback(async () => {
@@ -57,11 +57,15 @@ export function useLiveSession(chatId: string, productSlug: string | null) {
 
       // 3. Voice engine.
       const eng = new VoiceEngine({
-        onPhase: (p: EnginePhase) => set({ phase: p }),
+        // Entering "listening" clears the previous answer's caption so the user
+        // sees themselves (or "Listening…") the moment they start talking.
+        onPhase: (p: EnginePhase) => set(p === "listening" ? { phase: p, agentCaption: "" } : { phase: p }),
         onPartial: (text) => set({ userCaption: text, userPartial: true }),
         onUserText: (text) => void handleUserText(text),
         onAgentText: (sentence) => { const st = useLiveStore.getState(); set({ agentCaption: (st.agentCaption + " " + sentence).trim() }); },
-        onBargeIn: () => client.current?.cancel(),
+        // Barge-in: cancel the server turn AND drop the stale caption immediately,
+        // so interrupting gives instant "I'm listening" feedback.
+        onBargeIn: () => { client.current?.cancel(); set({ agentCaption: "", userCaption: "", userPartial: false }); },
       });
       engine.current = eng;
       await eng.start(stream);
@@ -121,7 +125,21 @@ export function useLiveSession(chatId: string, productSlug: string | null) {
     assistantId.current = chatStore.liveUserTurn(chatId, productSlug, text);
   }, [chatId, productSlug, set]);
 
+  // Explicit, user-initiated model download (pre-call). Nothing downloads until
+  // the user asks — and because the worker stays warm, this only happens once.
+  const download = useCallback(async () => {
+    if (modelsReady()) { set({ modelsDownloaded: true }); return; }
+    set({ downloading: true, downloadPct: 0, error: undefined });
+    try {
+      await loadModels((p) => set({ downloadPct: p.pct }));
+      set({ modelsDownloaded: true, downloading: false });
+    } catch (e: any) {
+      set({ downloading: false, error: `Couldn't download the AI models: ${String(e?.message ?? e)}` });
+    }
+  }, [set]);
+
   const refreshDevices = useCallback(async () => {
+    set({ modelsDownloaded: modelsReady() }); // reflect warm/cached models in the UI
     try {
       const devs = await navigator.mediaDevices.enumerateDevices();
       set({
@@ -150,7 +168,20 @@ export function useLiveSession(chatId: string, productSlug: string | null) {
     set({ muted: !down });
   }, [set]);
 
-  const setMic = useCallback((id: string) => { set({ micId: id }); /* applies on next start */ }, [set]);
+  // Change the mic — live if a call is active (rebuild the stream + VAD), else it
+  // just applies on the next start.
+  const setMic = useCallback(async (id: string) => {
+    set({ micId: id });
+    if (!useLiveStore.getState().active || !engine.current) return;
+    try {
+      const audio: MediaTrackConstraints = { echoCancellation: true, noiseSuppression: true, autoGainControl: true, deviceId: { exact: id } };
+      const stream = await navigator.mediaDevices.getUserMedia({ audio });
+      const old = micStream.current;
+      micStream.current = stream;
+      await engine.current.setStream(stream);
+      old?.getTracks().forEach((t) => t.stop()); // stop the previous mic only after the swap
+    } catch { set({ error: "Couldn't switch microphone." }); }
+  }, [set]);
 
   const setCam = useCallback(async (id: string) => {
     set({ camId: id });
@@ -190,5 +221,5 @@ export function useLiveSession(chatId: string, productSlug: string | null) {
   const getLevels = useCallback(() => ({ mic: engine.current?.micLevel() ?? 0, agent: engine.current?.agentLevel() ?? 0 }), []);
   const getSpeechProgress = useCallback(() => engine.current?.speechProgress() ?? 1, []);
 
-  return { start, stop, toggleMute, setPtt, holdTalk, toggleCamera, getLevels, getSpeechProgress, refreshDevices, setMic, setCam };
+  return { start, stop, download, toggleMute, setPtt, holdTalk, toggleCamera, getLevels, getSpeechProgress, refreshDevices, setMic, setCam };
 }

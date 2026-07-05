@@ -18,6 +18,7 @@ export class LiveSession {
   private runner: LiveTurnRunner;
   private ac: AbortController | null = null;
   private turnActive = false;
+  private queuedText: string | null = null; // an utterance that arrived mid-turn (barge-in)
   private cameraOn = false;
   private lastFrame: Frame | null = null; // freshest camera frame, attached per turn
   private closed = false;
@@ -35,7 +36,7 @@ export class LiveSession {
         if (!this.cameraOn) return { output: "The camera is off, so I can't see anything right now. Ask the user to turn on their camera." };
         const frame = await this.requestFrame();
         if (!frame) return { output: "Couldn't grab a camera frame (it timed out). Ask the user to check their camera." };
-        return { output: "Here is the user's current camera view.", images: [frame] };
+        return { output: "This is what the user's camera is showing right now — talk about it naturally, as what you're both looking at.", images: [frame] };
       },
     };
     this.runner = new LiveTurnRunner(product, manuals, chatId || undefined, [lookTool]);
@@ -106,7 +107,11 @@ export class LiveSession {
 
   // ── turn ────────────────────────────────────────────────────────────────
   private async runTurn(text: string) {
-    if (this.turnActive || !text.trim() || this.closed) return;
+    if (!text.trim() || this.closed) return;
+    // A new utterance during an in-flight turn (classic barge-in: cancel then
+    // immediately speak) must NOT be dropped. Queue it — latest wins — and the
+    // finally below drains it once this turn finishes tearing down.
+    if (this.turnActive) { this.queuedText = text; return; }
     this.turnActive = true;
     const ac = new AbortController();
     this.ac = ac;
@@ -127,6 +132,8 @@ export class LiveSession {
       if (this.chatId && blocks.length) { try { addMessage(this.chatId, "assistant", blocks); } catch { /* */ } }
       this.send({ t: "sse", event: { type: "done" } });
       if (this.ac === ac) { this.ac = null; this.turnActive = false; }
+      const q = this.queuedText; this.queuedText = null;
+      if (q && !this.closed) void this.runTurn(q); // drain a barge-in utterance
     }
   }
 

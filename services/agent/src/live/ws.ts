@@ -7,7 +7,7 @@ import { LiveSession } from "./session.js";
 // @hono/node-server's serve() returns), leaving every HTTP route untouched.
 // ponytail: raw ws.WebSocketServer on serve()'s server — avoids bumping
 // @hono/node-server v1→v2 just to get upgradeWebSocket.
-export function attachLiveWs(server: Server) {
+export function attachLiveWs(server: Server): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
   const AGENT_SECRET = process.env.PROX_AGENT_SECRET?.trim() || "";
 
@@ -32,4 +32,5 @@ export function attachLiveWs(server: Server) {
   });
   // The browser runs the voice models on-device now; the server just streams LLM
   // text and persists the conversation, so /live is cheap and free-tier friendly.
+  return wss;
 }

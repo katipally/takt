@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 // No model defaults — model + provider are chosen live in Settings. Only the
 // reasoning effort has a sensible default.
 const DEFAULTS = { effort: DEFAULT_EFFORT };
-const KEYS = ["chatModel", "captionModel", "effort", "chatProviderId", "captionProviderId"];
+const KEYS = ["chatModel", "captionModel", "effort", "chatProviderId", "captionProviderId", "liveModel", "liveProviderId"];
 
 export function GET() {
   return NextResponse.json({ ...DEFAULTS, ...getAllSettings() });

@@ -8,6 +8,8 @@ export interface LiveTurn { role: "user" | "agent"; text: string }
 interface LiveState {
   active: boolean;
   phase: LivePhase;
+  modelsDownloaded: boolean; // on-device models present (cached/warm) → skip download
+  downloading: boolean;      // model download in progress on the pre-call screen
   downloadPct: number; // 0..1 model-download progress (phase === "loading")
   muted: boolean;
   pttEnabled: boolean; // push-to-talk: mic only listens while held
@@ -30,6 +32,8 @@ interface LiveState {
 export const useLiveStore = create<LiveState>((set) => ({
   active: false,
   phase: "off",
+  modelsDownloaded: false,
+  downloading: false,
   downloadPct: 0,
   muted: false,
   pttEnabled: false,

@@ -8,6 +8,7 @@ export interface ModelInfo {
 export interface AppSettings {
   chatModel: string; captionModel: string; effort: string;
   chatProviderId?: string; captionProviderId?: string;
+  liveModel?: string; liveProviderId?: string;
 }
 
 async function j<T>(res: Response): Promise<T> {

@@ -1,34 +1,18 @@
 import { streamProvider, type Message } from "@prox/harness";
 import type { Product, Manual } from "@prox/shared";
+import { liveModelVision } from "@prox/shared";
 import { buildProxTools, type ProxTool, type Emit } from "../tools.js";
 import { collectTurn } from "../turn.js";
-import { buildSystemPrompt } from "../prompt.js";
-import { resolveChat } from "../providers.js";
+import { buildLivePrompt } from "../prompt.js";
+import { resolveLive } from "../providers.js";
 
 const MAX_STEPS = 16;
 
-// Live mode needs the model to answer in short, speakable turns while still
-// having its tools (search the manual, draw an artifact on the Canvas, look
-// through the camera).
-// Voice-only addendum. The shared PERSONA already lives in buildSystemPrompt, so
-// this adds ONLY what's specific to a spoken conversation.
-const LIVE_ADDENDUM = `
-
----
-YOU ARE IN LIVE VOICE MODE — a natural spoken conversation, out loud. Every word you write is read aloud by a text-to-speech voice, so:
-
-HOW YOU TALK
-- 1–2 SHORT spoken sentences per turn. Never a list, never bullets, never markdown or symbols ("-", "*", "#") — they sound broken out loud.
-- If there are several points, say the single most useful one, then offer more ("want me to keep going?"). Let them pull, don't push.
-- No preamble, no recap, don't restate their question. Relaxed and natural — an occasional "yeah" / "so" / "honestly" is fine, don't force it. Don't reuse the same opening line turn after turn.
-- Only ask a follow-up when you genuinely need the info.
-
-WHEN IT'S ABOUT A PRODUCT
-- Lean in: for specs, settings, or steps, search first and answer from the sources; never invent numbers. Don't keep repeating the product's name — they know what they have. Don't announce what you're about to do ("let me check", "one sec") — just do it. Say page numbers naturally ("page 18"), never read "[p.18]" out loud.
-
-TOOLS & CANVAS (use sparingly)
-- Only when the user wants something visual or it clearly helps: emit_artifact / get_page_image / crop_page_image show on their Canvas. Most turns are just talk — no tools.
-- You can see their camera when it's on (a recent frame is attached). Need a closer look? Call \`look\`. Camera off and you need to see? Ask them to turn it on.`;
+// Tools that don't belong in a spoken call: emit_artifact runs an esbuild compile
+// (seconds of dead air, output can't be spoken), and ask_user blocks the turn
+// forever on a UI that isn't there. Everything else (search, page images, look,
+// fetch_url) stays.
+const LIVE_TOOL_DENY = new Set(["emit_artifact", "ask_user"]);
 
 // A per-call LLM driver that keeps a growing Message[] across turns (unlike the
 // one-shot runAgent) and injects the camera frame(s) onto each user turn. Reuses
@@ -42,7 +26,7 @@ export class LiveTurnRunner {
     private chatId: string | undefined,
     private extraTools: ProxTool[],
   ) {
-    this.messages = [{ role: "system", text: buildSystemPrompt(product, manuals) + LIVE_ADDENDUM }];
+    this.messages = [{ role: "system", text: buildLivePrompt(product, manuals) }];
   }
 
   /** Seed prior conversation (text only) after the system prompt — used on
@@ -52,13 +36,20 @@ export class LiveTurnRunner {
   }
 
   async runTurn(userText: string, frames: { data: string; mime: string }[], emit: Emit, signal: AbortSignal): Promise<void> {
-    this.messages.push({ role: "user", text: userText, images: frames.length ? frames : undefined });
-    const { provider, model, apiKey } = resolveChat();
+    const { provider, model, apiKey } = resolveLive();
     if (!model) { await emit({ type: "error", message: "No model selected. Open Settings → Models and pick a model." }); return; }
     if (!apiKey && !provider.keyless) { await emit({ type: "error", message: `No API key for ${provider.name}. Add one in Settings → Models.` }); return; }
+    // Only attach the camera frame if the live model can actually see (curated
+    // table; unknown/custom models default to attaching). A text-only fast model
+    // (e.g. Cerebras/DeepSeek) would otherwise error on an image input.
+    const canSee = liveModelVision(provider.id, model) ?? true;
+    const imgs = canSee && frames.length ? frames : undefined;
+    this.messages.push({ role: "user", text: userText, images: imgs });
     // Build tools with THIS turn's emit so their artifact/page_image events are
-    // dropped by the same epoch guard when a barge-in interrupts the turn.
-    const tools = [...buildProxTools({ product: this.product, manuals: this.manuals, emit, chatId: this.chatId }), ...this.extraTools];
+    // dropped by the same epoch guard when a barge-in interrupts the turn. Drop
+    // the tools that can't work in a spoken call.
+    const tools = [...buildProxTools({ product: this.product, manuals: this.manuals, emit, chatId: this.chatId }), ...this.extraTools]
+      .filter((t) => !LIVE_TOOL_DENY.has(t.name));
     const toolDefs = tools.map(({ name, description, parameters }) => ({ name, description, parameters }));
 
     // Live wants the SMOOTHEST conversation, not the deepest reasoning — so use
