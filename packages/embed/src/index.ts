@@ -4,7 +4,7 @@ import { pipeline, type FeatureExtractionPipeline } from "@huggingface/transform
 // is asymmetric: passages are embedded plain, queries get a short retrieval
 // instruction. 384-dim, L2-normalized → cosine == dot product.
 
-const MODEL = process.env.PROX_EMBED_MODEL ?? "Xenova/bge-small-en-v1.5";
+const MODEL = process.env.TAKT_EMBED_MODEL ?? "Xenova/bge-small-en-v1.5";
 const QUERY_INSTRUCTION = "Represent this sentence for searching relevant passages: ";
 
 let extractorPromise: Promise<FeatureExtractionPipeline> | null = null;

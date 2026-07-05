@@ -5,13 +5,13 @@
 Two processes run locally, started together by `pnpm dev`:
 
 - **Web** (`apps/web`, Next.js, :3000) — the UI plus light API routes. It owns all CRUD (products, providers, settings, artifacts, chats) by talking directly to the SQLite file, serves rendered page images, and proxies the chat stream to the agent.
-- **Agent** (`services/agent`, Hono, :8787) — runs the Claude Agent SDK `query()` loop with five in-process tools (`search_manual`, `get_page_image`, `emit_artifact`, `ask_user`, `list_products`) and streams Server-Sent Events back. The web proxy forwards a shared secret (`x-prox-secret`); the agent rejects anything without it when one is configured.
+- **Agent** (`services/agent`, Hono, :8787) — runs the Claude Agent SDK `query()` loop with five in-process tools (`search_manual`, `get_page_image`, `emit_artifact`, `ask_user`, `list_products`) and streams Server-Sent Events back. The web proxy forwards a shared secret (`x-takt-secret`); the agent rejects anything without it when one is configured.
 
 They are separate because the Agent SDK spawns a `claude` CLI subprocess that needs a real Node runtime and a working directory — it can't run inside a serverless function. Splitting them now also means hosting later is just pointing `AGENT_SERVICE_URL` at a container.
 
 ## Data store
 
-Everything is one SQLite database (`data/prox.db`) opened with `better-sqlite3`, with the `sqlite-vec` extension loaded for vector search. Tables:
+Everything is one SQLite database (`data/takt.db`) opened with `better-sqlite3`, with the `sqlite-vec` extension loaded for vector search. Tables:
 
 - `products`, `manuals`, `page_images` — the catalog and rendered pages
 - `chunks` — retrieval units (text / image_caption), each tagged with a page number

@@ -87,7 +87,7 @@ export function Composer({
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !(e.nativeEvent as any).isComposing) { e.preventDefault(); submit(); } }}
           placeholder="Ask anything…"
           rows={1}
-          className="prox-scroll block max-h-[200px] w-full resize-none bg-transparent px-4 pt-3.5 text-chat text-foreground outline-none placeholder:text-faint"
+          className="takt-scroll block max-h-[200px] w-full resize-none bg-transparent px-4 pt-3.5 text-chat text-foreground outline-none placeholder:text-faint"
         />
         <div className="flex items-center justify-between gap-2 px-2.5 pb-2.5">
           <button onClick={() => fileRef.current?.click()} title="Attach an image" aria-label="Attach an image"

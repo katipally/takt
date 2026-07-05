@@ -27,7 +27,7 @@ export function Transcript({
   return (
     <div
       onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}
-      className="prox-scroll flex-1 overflow-y-auto"
+      className="takt-scroll flex-1 overflow-y-auto"
     >
       <div className="mx-auto flex max-w-3xl flex-col gap-6 px-5 py-8">
         {messages.map((m, i) =>

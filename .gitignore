@@ -19,7 +19,7 @@ out
 # generated data. The RUNTIME db holds the encrypted provider key + chat
 # history, so it stays out of the repo. We DO commit a key-free pre-seeded
 # template (data/seed.db) plus the static page/hero images, so a fresh clone
-# runs with zero seeding (connection.ts copies seed.db -> prox.db on first boot).
+# runs with zero seeding (connection.ts copies seed.db -> takt.db on first boot).
 # Rebuild the template after re-seeding with scripts/bake-seed-db.sh.
 /data/*
 !/data/.gitkeep
@@ -27,9 +27,9 @@ out
 !/data/pages/
 !/data/heroes/
 # never commit: runtime db, its sidecars, the encryption key, or ingest inputs
-/data/prox.db
-/data/prox.db-wal
-/data/prox.db-shm
+/data/takt.db
+/data/takt.db-wal
+/data/takt.db-shm
 /data/.enc-key
 /data/pdfs/
 

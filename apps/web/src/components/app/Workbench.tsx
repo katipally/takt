@@ -27,7 +27,7 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
   const wb = useWorkbench(slug);
   const isMaster = !slug;
   const basePath = slug ? `/${slug}` : "/master";
-  const heading = productName ?? (isMaster ? "Prox" : "");
+  const heading = productName ?? (isMaster ? "Takt" : "");
   const empty = wb.messages.length === 0;
   const prompts = starters?.length ? starters : STARTERS;
   const { sidebarWidth, canvasWidth, setSidebarWidth, setCanvasWidth, sidebarCollapsed, toggleSidebar, liveOpen, setLiveOpen } = useUi();
@@ -138,7 +138,7 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
                   onClick={() => { wb.openArtifact(liveCard.id); setLiveCard(null); }}
                   className="absolute left-1/2 top-16 z-30 flex -translate-x-1/2 items-center gap-2 rounded-full border border-border bg-surface/95 px-4 py-2 text-[13px] shadow-[var(--shadow-card)] backdrop-blur transition hover:border-border-heavy">
                   <Boxes className="size-4 text-accent" />
-                  <span className="max-w-[220px] truncate font-medium">Prox sketched “{liveCard.title}”</span>
+                  <span className="max-w-[220px] truncate font-medium">Takt sketched “{liveCard.title}”</span>
                   <span className="text-muted-foreground">· tap to view</span>
                   <span onClick={(e) => { e.stopPropagation(); setLiveCard(null); }} className="ml-1 grid size-5 place-items-center rounded-full text-muted-foreground hover:bg-foreground/10" aria-label="Dismiss">✕</span>
                 </motion.button>

@@ -5,13 +5,13 @@ import sharp from "sharp";
 import { transform as esbuildTransform } from "esbuild";
 import { z, type ZodRawShape } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import type { Product, Manual, ManualKind, ChunkKind, SearchResult, SseEvent, AskAnswer } from "@prox/shared";
-import { artifactInputSchema, askQuestionsSchema } from "@prox/shared";
+import type { Product, Manual, ManualKind, ChunkKind, SearchResult, SseEvent, AskAnswer } from "@takt/shared";
+import { artifactInputSchema, askQuestionsSchema } from "@takt/shared";
 import {
   DATA_DIR, matchChunks, matchAllChunks, getPageImage, createArtifact, nextArtifactVersion,
   listProducts, getProductBySlug,
-} from "@prox/db";
-import { embedQuery, rerank } from "@prox/embed";
+} from "@takt/db";
+import { embedQuery, rerank } from "@takt/embed";
 
 // Retrieve: over-fetch KNN, then rerank to the requested top-k with the local
 // cross-encoder. Over-fetching gives the reranker room to promote the truly
@@ -37,7 +37,7 @@ export type Emit = (e: SseEvent) => Promise<void> | void;
 
 // A tool the agent loop can call directly: JSON-Schema params for the model,
 // and an execute() returning text (+ optional images fed back for vision).
-export interface ProxTool {
+export interface TaktTool {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
@@ -83,9 +83,9 @@ function params(shape: ZodRawShape): Record<string, unknown> {
 // REJECT so the model fixes them BEFORE the user ever sees the artifact.
 export function lintArtifact(code: string): string[] {
   const issues: string[] = [];
-  // 1. CSS-transform / .prox-crop cropping clips labels — the crop tool already crops.
-  if (/\bprox-crop\b/.test(code) || /<img[^>]*style=["'][^"']*transform\s*:[^"']*(scale|translate)\s*\(/i.test(code)) {
-    issues.push("An image is cropped/positioned with a CSS transform or .prox-crop, which clips its labels. Remove that and instead call crop_page_image for the exact region, then embed the returned URL at full width in a .prox-figure.");
+  // 1. CSS-transform / .takt-crop cropping clips labels — the crop tool already crops.
+  if (/\btakt-crop\b/.test(code) || /<img[^>]*style=["'][^"']*transform\s*:[^"']*(scale|translate)\s*\(/i.test(code)) {
+    issues.push("An image is cropped/positioned with a CSS transform or .takt-crop, which clips its labels. Remove that and instead call crop_page_image for the exact region, then embed the returned URL at full width in a .takt-figure.");
   }
   // 2. Invented / external image URLs — only manual images (/assets/…) are real.
   const badImg = [...code.matchAll(/<img[^>]*\bsrc=["'](https?:\/\/[^"']+)["']/gi)]
@@ -110,7 +110,7 @@ export function lintArtifact(code: string): string[] {
 const formatAnswer = (a: AskAnswer) =>
   a.skipped ? "(skipped — no preference)" : Array.isArray(a.answer) ? a.answer.join(", ") : a.answer;
 
-export function buildProxTools(ctx: { product: Product | null; manuals: Manual[]; emit: Emit; chatId?: string }): ProxTool[] {
+export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]; emit: Emit; chatId?: string }): TaktTool[] {
   const { product, emit, chatId } = ctx;
   // Master mode = no single product selected → cross-product tools; the page
   // tools then require a `product` slug to say which product to read from.
@@ -121,7 +121,7 @@ export function buildProxTools(ctx: { product: Product | null; manuals: Manual[]
   const pageProduct = (args: any): Product | null =>
     product ?? (args.product ? getProductBySlug(String(args.product)) ?? null : null);
 
-  const searchManual: ProxTool = {
+  const searchManual: TaktTool = {
     name: "search_manual",
     description: "Search this product's manuals (text and image/diagram/table captions) for relevant passages. Returns page-cited snippets. Use this whenever the answer depends on the product's documentation — specs, settings, procedures, numbers.",
     parameters: params({
@@ -145,7 +145,7 @@ export function buildProxTools(ctx: { product: Product | null; manuals: Manual[]
 
   // Master-mode search across every product. Each snippet says which product it
   // came from so the model can attribute and compare.
-  const searchAllProducts: ProxTool = {
+  const searchAllProducts: TaktTool = {
     name: "search_all_products",
     description: "Search across ALL indexed products at once (text + image/diagram/table captions). Returns page-cited snippets, each tagged with the product it came from. Use this in master mode to answer or compare across products; always tell the user which product a fact came from. To then read a specific page, call get_page_image with that product's slug.",
     parameters: params({
@@ -167,7 +167,7 @@ export function buildProxTools(ctx: { product: Product | null; manuals: Manual[]
     },
   };
 
-  const getPageImageTool: ProxTool = {
+  const getPageImageTool: TaktTool = {
     name: "get_page_image",
     description: "Fetch a specific manual page as an image and SHOW it to the user. Use for diagrams, schematics, control-panel layouts, duty-cycle tables, the selection chart, and weld-diagnosis pages. The page is displayed in the user's Canvas and also returned so you can read it. To put a figure in an artifact, prefer calling crop_page_image next to embed just the relevant region rather than the whole page.",
     parameters: params({
@@ -202,7 +202,7 @@ export function buildProxTools(ctx: { product: Product | null; manuals: Manual[]
     },
   };
 
-  const cropPageImage: ProxTool = {
+  const cropPageImage: TaktTool = {
     name: "crop_page_image",
     description: "Crop a manual page to the exact region that matters and SHOW that crop — use this AFTER get_page_image so you've seen the full page and can pick the region. Give the region as fractions of the page (0=left/top, 1=right/bottom): x,y = top-left corner, w,h = width,height. The cropped image is displayed in the user's Canvas and returned so you can confirm it, and you get a verbatim URL to embed in an artifact. Prefer this over embedding a whole page (whole pages have tab-strips/footers/whitespace and look broken).",
     parameters: params({
@@ -259,12 +259,12 @@ export function buildProxTools(ctx: { product: Product | null; manuals: Manual[]
     },
   };
 
-  const emitArtifact: ProxTool = {
+  const emitArtifact: TaktTool = {
     name: "emit_artifact",
     description: "Publish the answer as a designed artifact in the user's Artifacts panel — reach for this when a designed, visual, or interactive answer beats plain text (a diagram, calculator, schematic, annotated page, comparison, procedure); skip it for simple replies. You have full design freedom over layout, components and interactions; design what best fits THIS question. Kinds: 'html' for designed/explanatory answers, 'react' for interactive ones (`export default function App(){...}`, real ES module imports from react, lucide-react, framer-motion, recharts, d3, three).\n" +
       "DIAGRAMS: for flowcharts/sequences/state/gantt, put Mermaid syntax inside a `<pre class=\"mermaid\">…</pre>` — it renders as a themed diagram (works in html and react). 3D: embed an ingested model with `<model-viewer src=\"/assets/…​.glb\" camera-controls>` (the src MUST be a real /assets/ asset, never an external URL).\n" +
-      "ONE HARD RULE — theme consistency: the artifact must read perfectly in BOTH light and dark. For ANY color/background/border/text-color use ONLY the theme tokens var(--prox-fg/-muted/-card/-surface/-border/-accent/-arc/-success/-danger) and their -soft tints — NEVER bg-white, bg-gray-50, bg-blue-50, text-black, #fff, color:#000 (they break dark mode). Tailwind for LAYOUT only.\n" +
-      "Practical: size to content (no min-h-screen/h-screen/100vh); stay readable narrow AND wide. Images: embed ONLY a real crop_page_image/get_page_image URL (contains /assets/) at FULL WIDTH inside a .prox-figure — NEVER crop or shift an image with a CSS transform (scale/translate) or .prox-crop (it clips labels); if a label is cut off, call crop_page_image again with a wider region. Never invent an image URL. Citations: inline plain text right after the claim (e.g. `... [p.18].`) — NEVER put a citation alone in a box/card/callout/border (it renders as an empty box). No empty elements or stray punctuation. The artifact is checked before it's shown; if it's rejected, fix exactly what's listed and re-emit with the SAME `key`. To revise, call emit_artifact again with the SAME `key` (new VERSION); use a NEW `key` for a different artifact.",
+      "ONE HARD RULE — theme consistency: the artifact must read perfectly in BOTH light and dark. For ANY color/background/border/text-color use ONLY the theme tokens var(--takt-fg/-muted/-card/-surface/-border/-accent/-arc/-success/-danger) and their -soft tints — NEVER bg-white, bg-gray-50, bg-blue-50, text-black, #fff, color:#000 (they break dark mode). Tailwind for LAYOUT only.\n" +
+      "Practical: size to content (no min-h-screen/h-screen/100vh); stay readable narrow AND wide. Images: embed ONLY a real crop_page_image/get_page_image URL (contains /assets/) at FULL WIDTH inside a .takt-figure — NEVER crop or shift an image with a CSS transform (scale/translate) or .takt-crop (it clips labels); if a label is cut off, call crop_page_image again with a wider region. Never invent an image URL. Citations: inline plain text right after the claim (e.g. `... [p.18].`) — NEVER put a citation alone in a box/card/callout/border (it renders as an empty box). No empty elements or stray punctuation. The artifact is checked before it's shown; if it's rejected, fix exactly what's listed and re-emit with the SAME `key`. To revise, call emit_artifact again with the SAME `key` (new VERSION); use a NEW `key` for a different artifact.",
     parameters: params(artifactInputSchema.shape),
     execute: async (args) => {
       const id = randomUUID();
@@ -274,7 +274,7 @@ export function buildProxTools(ctx: { product: Product | null; manuals: Manual[]
       // Compile gate: catch syntax/parse errors BEFORE the user sees a broken
       // frame, and hand the error back so the model self-corrects.
       // ponytail: esbuild catches the 80% (parse/syntax); runtime errors still
-      // surface in the iframe .prox-err box.
+      // surface in the iframe .takt-err box.
       if (parsed.data.kind === "react") {
         try {
           await esbuildTransform(parsed.data.code, { loader: "tsx", jsx: "automatic" });
@@ -302,9 +302,9 @@ export function buildProxTools(ctx: { product: Product | null; manuals: Manual[]
     },
   };
 
-  const listProductsTool: ProxTool = {
+  const listProductsTool: TaktTool = {
     name: "list_products",
-    description: "List every product Prox has indexed data for (name, manufacturer, slug).",
+    description: "List every product Takt has indexed data for (name, manufacturer, slug).",
     parameters: params({}),
     execute: async () => {
       const products = listProducts();
@@ -313,8 +313,8 @@ export function buildProxTools(ctx: { product: Product | null; manuals: Manual[]
   };
 
   // General-agent capability: read a web page's text. Zero-key. Available in both
-  // single-product and master mode so Prox can pull in outside context on request.
-  const fetchUrl: ProxTool = {
+  // single-product and master mode so Takt can pull in outside context on request.
+  const fetchUrl: TaktTool = {
     name: "fetch_url",
     description: "Fetch a web page and return its readable text. Use when the user asks about a specific URL or wants information from a page. Returns plain text (scripts/markup stripped).",
     parameters: params({
@@ -328,7 +328,7 @@ export function buildProxTools(ctx: { product: Product | null; manuals: Manual[]
       try { url = new URL(raw); } catch { await emit({ type: "tool_done", id, detail: "bad url" }); return text(`"${raw}" is not a valid URL.`); }
       if (url.protocol !== "http:" && url.protocol !== "https:") { await emit({ type: "tool_done", id, detail: "blocked" }); return text("Only http(s) URLs are allowed."); }
       try {
-        const res = await fetch(url, { signal: AbortSignal.timeout(15_000), headers: { "user-agent": "ProxBot/1.0" } });
+        const res = await fetch(url, { signal: AbortSignal.timeout(15_000), headers: { "user-agent": "TaktBot/1.0" } });
         if (!res.ok) { await emit({ type: "tool_done", id, detail: `HTTP ${res.status}` }); return text(`Fetch failed: HTTP ${res.status}.`); }
         const html = await res.text();
         const body = htmlToText(html).slice(0, 20_000);
@@ -341,7 +341,7 @@ export function buildProxTools(ctx: { product: Product | null; manuals: Manual[]
     },
   };
 
-  const askUser: ProxTool = {
+  const askUser: TaktTool = {
     name: "ask_user",
     description: "Ask the user 1-4 clarifying questions BEFORE answering, when the request is ambiguous or a choice would change the answer (e.g. which model/variant, which use case, which constraint). The questions appear in an interactive panel. For each question give a short `header`, the `question`, and `options` (each with a `label` and optional `description`). Set `multiSelect: true` when several can apply. To explain a question or an option visually, attach a `render`: `{ kind: 'ascii', content }` for a quick text/SVG sketch, or `{ kind: 'react', content }` — a single self-contained React component named `App` (no imports; `React` is global; style with Tailwind; draw with inline SVG) — for an interactive diagram. Keep questions tight; don't ask what the manual or the user already answered.",
     parameters: params({ questions: askQuestionsSchema }),

@@ -1,4 +1,4 @@
-import { streamProvider, type ProviderInfo, type ChatRequest } from "@prox/harness";
+import { streamProvider, type ProviderInfo, type ChatRequest } from "@takt/harness";
 
 // Vision-caption a rendered page. This is the key move that makes image-only
 // content (selection charts, schematics, weld-diagnosis photos, wiring

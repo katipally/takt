@@ -40,6 +40,6 @@ export const useUi = create<UiState>()(
       setLiveOpen: (v) => set({ liveOpen: v }),
       toggleLive: () => set((s) => ({ liveOpen: !s.liveOpen })),
     }),
-    { name: "prox-ui", partialize: (s) => ({ sidebarWidth: s.sidebarWidth, canvasWidth: s.canvasWidth, voiceEnabled: s.voiceEnabled, sidebarCollapsed: s.sidebarCollapsed }) },
+    { name: "takt-ui", partialize: (s) => ({ sidebarWidth: s.sidebarWidth, canvasWidth: s.canvasWidth, voiceEnabled: s.voiceEnabled, sidebarCollapsed: s.sidebarCollapsed }) },
   ),
 );

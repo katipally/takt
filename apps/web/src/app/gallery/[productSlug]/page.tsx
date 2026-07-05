@@ -53,7 +53,7 @@ export default function Gallery({ params }: { params: Promise<{ productSlug: str
           <h1 className="text-[14px] font-semibold">Artifact gallery</h1>
         </header>
 
-        <div className="prox-scroll min-h-0 flex-1 overflow-y-auto">
+        <div className="takt-scroll min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto max-w-5xl px-6 py-8">
             {artifacts.length === 0 ? (
               <div className="rounded-2xl border border-border bg-card p-8 text-center">
@@ -93,7 +93,7 @@ export default function Gallery({ params }: { params: Promise<{ productSlug: str
                 <div className="text-[13px] font-medium">{open.title}</div>
                 <button onClick={() => setOpen(null)} aria-label="Close" className="grid size-8 place-items-center rounded-lg text-muted-foreground transition hover:bg-foreground/10 hover:text-foreground"><X className="size-4" /></button>
               </div>
-              <div className="prox-scroll overflow-y-auto p-4"><ArtifactFrame artifactId={open.id} /></div>
+              <div className="takt-scroll overflow-y-auto p-4"><ArtifactFrame artifactId={open.id} /></div>
             </motion.div>
           </motion.div>
         )}

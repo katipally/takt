@@ -1,4 +1,4 @@
-import type { SseEvent } from "@prox/shared";
+import type { SseEvent } from "@takt/shared";
 
 // Browser side of the /live WebSocket. Same-origin (the web server proxies it to
 // the agent). THIN protocol: we send final user text + camera frames + a cancel

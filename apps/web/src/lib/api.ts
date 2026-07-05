@@ -1,4 +1,4 @@
-import type { Product, Provider, Artifact, ChatSummary, ChatMessage, AskAnswerPayload } from "@prox/shared";
+import type { Product, Provider, Artifact, ChatSummary, ChatMessage, AskAnswerPayload } from "@takt/shared";
 
 export interface ModelInfo {
   id: string; display_name: string; created_at?: string;

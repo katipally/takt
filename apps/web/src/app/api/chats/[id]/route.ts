@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { renameChat, deleteChat } from "@prox/db";
+import { renameChat, deleteChat } from "@takt/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

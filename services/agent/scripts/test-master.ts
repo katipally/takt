@@ -1,15 +1,15 @@
 // Battle-test for Phase 2 (master mode) core logic. Runs against the real DB
 // (so it also verifies the nullable-product_id migration actually applies to the
-// committed data/prox.db). Idempotent; cleans up the chat it creates.
+// committed data/takt.db). Idempotent; cleans up the chat it creates.
 //
 //   cd services/agent && pnpm exec tsx scripts/test-master.ts
 //
 // ponytail: plain assert script, matches scripts/smoke.mjs — no test framework.
 import assert from "node:assert";
 import { randomUUID } from "node:crypto";
-import { getDb, createChat, listMasterChats, deleteChat, upsertProduct, matchAllChunks, listProducts } from "@prox/db";
-import { isReservedSlug } from "@prox/shared";
-import { embedQuery } from "@prox/embed";
+import { getDb, createChat, listMasterChats, deleteChat, upsertProduct, matchAllChunks, listProducts } from "@takt/db";
+import { isReservedSlug } from "@takt/shared";
+import { embedQuery } from "@takt/embed";
 
 const db = getDb(); // triggers SCHEMA_SQL + migrate()
 

@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { WebSocket } from "ws";
-import type { Product, Manual, SseEvent, MessageBlock, LiveServerMsg } from "@prox/shared";
-import { LIVE_TAG, liveClientMsgSchema } from "@prox/shared";
-import { createChat, addMessage, listMessages } from "@prox/db";
-import type { Message } from "@prox/harness";
-import type { Emit, ProxTool } from "../tools.js";
+import type { Product, Manual, SseEvent, MessageBlock, LiveServerMsg } from "@takt/shared";
+import { LIVE_TAG, liveClientMsgSchema } from "@takt/shared";
+import { createChat, addMessage, listMessages } from "@takt/db";
+import type { Message } from "@takt/harness";
+import type { Emit, TaktTool } from "../tools.js";
 import { LiveTurnRunner } from "./turn-runner.js";
 
 type Frame = { data: string; mime: string };
@@ -28,7 +28,7 @@ export class LiveSession {
   private awaitingLookFrame = false;
 
   constructor(private ws: WebSocket, private product: Product | null, private manuals: Manual[], private chatId: string) {
-    const lookTool: ProxTool = {
+    const lookTool: TaktTool = {
       name: "look",
       description: "Capture a fresh, higher-resolution frame from the user's camera and see it right now. Use when you need a closer or more current look at what the user is showing you. If the camera is off this returns nothing — then ask the user to turn it on.",
       parameters: { type: "object", properties: {}, additionalProperties: false },

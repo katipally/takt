@@ -42,7 +42,7 @@ export function SourceModal({ source, onClose, onNavigate }: {
                 <IconBtn onClick={onClose} aria-label="Close"><X className="size-4" /></IconBtn>
               </div>
             </header>
-            <div className={cn("prox-scroll min-h-0 flex-1 overflow-auto p-3")}>
+            <div className={cn("takt-scroll min-h-0 flex-1 overflow-auto p-3")}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={source.url} alt={`Manual page ${source.page}`}
                 className={cn("mx-auto rounded-lg border border-border bg-white", zoom ? "max-w-none" : "w-full")}

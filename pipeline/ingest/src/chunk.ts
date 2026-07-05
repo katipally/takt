@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ChunkKind } from "@prox/shared";
+import type { ChunkKind } from "@takt/shared";
 
 export interface DraftChunk {
   pageNumber: number;

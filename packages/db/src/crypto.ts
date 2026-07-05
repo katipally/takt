@@ -4,12 +4,12 @@ import { resolve } from "node:path";
 import { DATA_DIR } from "./paths";
 
 // AES-256-GCM for provider API keys at rest. Key precedence:
-//   1. PROX_ENC_KEY env (64 hex chars)  2. data/.enc-key (auto-created)
+//   1. TAKT_ENC_KEY env (64 hex chars)  2. data/.enc-key (auto-created)
 // This is the trust boundary: plaintext keys never leave the server and are
 // never returned to the browser (the UI only ever sees key_last4).
 
 function loadKey(): Buffer {
-  const fromEnv = process.env.PROX_ENC_KEY?.trim();
+  const fromEnv = process.env.TAKT_ENC_KEY?.trim();
   if (fromEnv && /^[0-9a-fA-F]{64}$/.test(fromEnv)) {
     return Buffer.from(fromEnv, "hex");
   }

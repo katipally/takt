@@ -7,7 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Settings, ArrowRight, Sparkles, ArrowUpRight, Plus, Boxes } from "lucide-react";
 import gsap from "gsap";
-import type { Product } from "@prox/shared";
+import type { Product } from "@takt/shared";
 import { api } from "@/lib/api";
 import { STARTERS } from "@/lib/starters";
 import { spring, easeOut } from "@/lib/motion";
@@ -105,7 +105,7 @@ function Showcase({ products, active, setActive, product }: {
           </button>
         ))}
         <AddProductPill />
-        {/* Master mode — Prox across every product at once. */}
+        {/* Master mode — Takt across every product at once. */}
         <Link href="/master" title="Ask across all products"
           className="flex items-center gap-2 rounded-full border border-dashed border-border px-3 py-1.5 text-[13px] text-muted-foreground transition hover:border-border-heavy hover:text-foreground">
           <Boxes className="size-4" /> Ask across all
@@ -121,7 +121,7 @@ function Showcase({ products, active, setActive, product }: {
             <span className="size-3 rounded-full bg-foreground/15" />
           </span>
           <div className="mx-auto flex items-center rounded-md bg-surface px-3 py-1 text-[12px] text-muted-foreground">
-            useprox.com/agent/{product.slug}
+            usetakt.com/agent/{product.slug}
           </div>
           <Link href={`/${product.slug}`} title="Open the agent" className="grid size-7 place-items-center rounded-md text-muted-foreground transition hover:bg-foreground/10 hover:text-foreground">
             <ArrowUpRight className="size-4" />
@@ -202,13 +202,13 @@ function EmptyState() {
   return (
     <div className="mt-10 max-w-xl">
       <h1 className="text-[24px] font-semibold tracking-tight">No products yet</h1>
-      <p className="mt-2 text-[14px] text-muted-foreground">Add a product by uploading its manuals — Prox indexes them and it shows up here instantly.</p>
+      <p className="mt-2 text-[14px] text-muted-foreground">Add a product by uploading its manuals — Takt indexes them and it shows up here instantly.</p>
       <button onClick={() => openSettings("products")}
         className="mt-4 flex items-center gap-1.5 rounded-full bg-foreground px-4 py-2.5 text-[13px] font-medium text-background transition hover:opacity-90">
         <Plus className="size-4" /> Add product
       </button>
       <p className="mt-6 text-[12.5px] text-muted-foreground">Or from the command line:</p>
-      <pre className="mt-2 overflow-x-auto rounded-xl border border-border bg-surface p-4 font-mono text-[12px] text-foreground prox-scroll">pnpm ingest --product my-product --name &quot;My Product&quot; --dir ./files --url https://…</pre>
+      <pre className="mt-2 overflow-x-auto rounded-xl border border-border bg-surface p-4 font-mono text-[12px] text-foreground takt-scroll">pnpm ingest --product my-product --name &quot;My Product&quot; --dir ./files --url https://…</pre>
     </div>
   );
 }

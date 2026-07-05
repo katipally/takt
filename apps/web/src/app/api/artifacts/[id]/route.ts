@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getArtifact } from "@prox/db";
+import { getArtifact } from "@takt/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

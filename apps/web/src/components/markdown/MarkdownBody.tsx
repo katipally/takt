@@ -31,7 +31,7 @@ const STATIC = {
   hr: () => <hr className="my-4 border-border" />,
   table: (p: MdProps) => (
     <div className="my-4 overflow-hidden rounded-lg border border-border">
-      <div className="overflow-x-auto prox-scroll">
+      <div className="overflow-x-auto takt-scroll">
         {el("table", "w-max min-w-full border-collapse text-chat [&_tbody_tr:nth-child(2n)]:bg-foreground/[0.02]", p)}
       </div>
     </div>
@@ -68,7 +68,7 @@ function CodeBlock({ code, label }: { code: string; label?: string | null }) {
           {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
         </button>
       </div>
-      <div className="overflow-x-auto p-2.5 prox-scroll">
+      <div className="overflow-x-auto p-2.5 takt-scroll">
         <pre className="m-0"><code className="whitespace-pre font-mono text-[12px] leading-[1.5]">{code}</code></pre>
       </div>
     </div>
@@ -96,9 +96,9 @@ export const MarkdownBody = memo(function MarkdownBody({
   );
 });
 
-// Preserve our `prox:cite:` scheme (used for citation chips); block dangerous ones.
+// Preserve our `takt:cite:` scheme (used for citation chips); block dangerous ones.
 function urlTransform(url: string): string {
-  if (url.startsWith("prox:")) return url;
+  if (url.startsWith("takt:")) return url;
   if (/^(javascript|data|vbscript):/i.test(url.trim())) return "";
   return url;
 }

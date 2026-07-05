@@ -1,4 +1,4 @@
-import { createSseDecoder, type SseEvent, type ChatRequest } from "@prox/shared";
+import { createSseDecoder, type SseEvent, type ChatRequest } from "@takt/shared";
 
 // Stream a chat turn over fetch+SSE (POST with a JSON body — EventSource can't
 // do either). Abortable via the passed signal.

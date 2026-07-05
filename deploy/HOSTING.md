@@ -1,4 +1,4 @@
-# Hosting Prox on Hugging Face Spaces (free)
+# Hosting Takt on Hugging Face Spaces (free)
 
 The whole app (Next.js web + agent service) runs in **one Docker container** — the same
 two processes as `pnpm dev`, sharing one filesystem — so the hosted site behaves exactly
@@ -24,23 +24,23 @@ One command — it creates the Space if needed, strips your API key from the bak
 drops `.env`, uploads everything, and sets `WEB_PUBLIC_URL`:
 ```bash
 cd <your-fork>   # the repo root
-deploy/push-to-hf.sh <user>/prox
+deploy/push-to-hf.sh <user>/takt
 ```
 HF then builds the Docker image (~5 min) and starts it. Watch it with:
 ```bash
-hf spaces logs <user>/prox --build --follow
+hf spaces logs <user>/takt --build --follow
 ```
 
-(`AGENT_SERVICE_URL`, `AGENT_PORT`, `PORT`, `PROX_DATA_DIR` are baked into the image.
+(`AGENT_SERVICE_URL`, `AGENT_PORT`, `PORT`, `TAKT_DATA_DIR` are baked into the image.
 Do **not** set `ANTHROPIC_API_KEY` — judges paste their own.)
 
 ## Using it (what a judge does)
-1. Open `https://<user>-prox.hf.space`.
+1. Open `https://<user>-takt.hf.space`.
 2. **Settings → Providers → paste an Anthropic key → Save.**
 3. Ask the welder questions. Done.
 
 ## Re-deploying after code changes
-Re-run `deploy/push-to-hf.sh <user>/prox`; it re-uploads and HF rebuilds.
+Re-run `deploy/push-to-hf.sh <user>/takt`; it re-uploads and HF rebuilds.
 
 ## Notes
 - Free Spaces **sleep after ~48h idle**; the first visit afterward cold-starts (~30–60s).
@@ -48,13 +48,13 @@ Re-run `deploy/push-to-hf.sh <user>/prox`; it re-uploads and HF rebuilds.
   restarts or redeploys. Fine for a demo; judges just re-paste their key.
 - Local clone-and-run needs no seeding: the key-free `data/seed.db` plus the rendered
   page images are committed, and `packages/db` copies the seed to the runtime DB on
-  first boot. The runtime DB (`data/prox.db`, holding the pasted key + chats) stays
+  first boot. The runtime DB (`data/takt.db`, holding the pasted key + chats) stays
   gitignored. Re-index or add a product with `pnpm ingest`, then `scripts/bake-seed-db.sh`.
 
 ## Local smoke test (optional, needs Docker)
 ```bash
 cd <your-fork>   # the repo root
-docker build -t prox:local .
-docker run --rm -p 7860:7860 prox:local
+docker build -t takt:local .
+docker run --rm -p 7860:7860 takt:local
 # open http://localhost:7860  → Settings shows "No key set"
 ```

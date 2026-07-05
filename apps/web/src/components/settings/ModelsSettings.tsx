@@ -5,9 +5,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Check, Trash2, ShieldAlert } from "lucide-react";
 // Pure subpaths only — the barrel pulls in catalog/models (node:fs), which
 // can't bundle into this client component.
-import { BUILTIN_PROVIDERS } from "@prox/harness/registry";
-import { allowedEfforts } from "@prox/harness/types";
-import { liveRecsFor } from "@prox/shared";
+import { BUILTIN_PROVIDERS } from "@takt/harness/registry";
+import { allowedEfforts } from "@takt/harness/types";
+import { liveRecsFor } from "@takt/shared";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 
@@ -35,7 +35,7 @@ function ProviderKey({ kind }: { kind: string }) {
     <div className="mt-3 flex flex-wrap items-center gap-2">
       <div className="flex flex-1 items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-[12.5px] text-muted-foreground">
         {row?.hasKey
-          ? <><Check className="size-3.5 text-[var(--prox-success,#16a34a)]" /> Key set · ••••{row.keyLast4}</>
+          ? <><Check className="size-3.5 text-[var(--takt-success,#16a34a)]" /> Key set · ••••{row.keyLast4}</>
           : "No key set"}
       </div>
       <input value={key} onChange={(e) => setKey(e.target.value)} type="password" name={`${kind}-api-key`}
@@ -128,7 +128,7 @@ export function ModelsSettings() {
         {/* No login → the key is stored once for the whole instance and used by
             anyone who can open it. Make that explicit. */}
         <div className="mt-3 flex items-start gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-[12px] text-muted-foreground">
-          <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-[var(--prox-arc,#e2701f)]" />
+          <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-[var(--takt-arc,#e2701f)]" />
           <span>This key is shared by everyone who can open this instance (there&apos;s no login). Use a spend-limited key, remove it when you&apos;re done, or run a private copy.</span>
         </div>
       </section>

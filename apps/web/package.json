@@ -1,5 +1,5 @@
 {
-  "name": "@prox/web",
+  "name": "@takt/web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,9 +10,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@prox/db": "workspace:*",
-    "@prox/harness": "workspace:*",
-    "@prox/shared": "workspace:*",
+    "@takt/db": "workspace:*",
+    "@takt/harness": "workspace:*",
+    "@takt/shared": "workspace:*",
     "@huggingface/transformers": "^4.2.0",
     "@ricky0123/vad-web": "^0.0.29",
     "kokoro-js": "^1.2.0",

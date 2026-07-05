@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { updateProvider, clearProviderKey } from "@prox/db";
+import { updateProvider, clearProviderKey } from "@takt/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

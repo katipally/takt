@@ -4,14 +4,14 @@ import {
   PAGES_DIR, PDF_DIR, HERO_DIR,
   upsertProduct, upsertManual, upsertSourceManual, upsertPageImage, getPageImage,
   setPageCaption, insertChunk, setSetting, deleteChunksByProduct,
-} from "@prox/db";
-import { embedPassages } from "@prox/embed";
+} from "@takt/db";
+import { embedPassages } from "@takt/embed";
 import { renderPdf } from "./pdf.js";
 import { captionPage, generateStarters } from "./caption.js";
 import { chunkPage } from "./chunk.js";
 import { fetchWebSource } from "./sources.js";
-import type { ManualKind, Product } from "@prox/shared";
-import type { ProviderInfo } from "@prox/harness";
+import type { ManualKind, Product } from "@takt/shared";
+import type { ProviderInfo } from "@takt/harness";
 
 export interface IngestInput {
   slug: string;

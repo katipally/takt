@@ -3,8 +3,8 @@ import type {
   Product, Manual, PageImage, SearchResult, Provider,
   Artifact, ChatSummary, ChatMessage, ManualKind, ChunkKind,
   ProviderKind, ArtifactKind, MessageBlock, MessageRole,
-} from "@prox/shared";
-import { isReservedSlug } from "@prox/shared";
+} from "@takt/shared";
+import { isReservedSlug } from "@takt/shared";
 import { getDb } from "./connection";
 import { encryptSecret, decryptSecret } from "./crypto";
 

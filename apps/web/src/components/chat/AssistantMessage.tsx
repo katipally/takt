@@ -22,7 +22,7 @@ const TOOL_META: Record<string, { label: string; active: string; icon: ReactNode
   list_products: { label: "Checked the catalog", active: "Checking the catalog…", icon: <FileText className="size-3.5" /> },
 };
 
-const linkify = (t: string) => t.replace(/\[p\.\s*(\d+)\]/g, (_m, n) => `[p.${n}](prox:cite:${n})`);
+const linkify = (t: string) => t.replace(/\[p\.\s*(\d+)\]/g, (_m, n) => `[p.${n}](takt:cite:${n})`);
 
 export function AssistantMessage({
   node, isLast, branch, onSwitch, onCitation, onOpenSource, onOpenArtifact, onRegenerate,
@@ -50,8 +50,8 @@ export function AssistantMessage({
   })();
 
   const renderLink = ({ href }: { href: string; children: ReactNode }) => {
-    if (href.startsWith("prox:cite:")) {
-      const page = Number(href.slice("prox:cite:".length));
+    if (href.startsWith("takt:cite:")) {
+      const page = Number(href.slice("takt:cite:".length));
       return <CitationChip page={page} onClick={() => onCitation(page, citeProduct)} />;
     }
     return undefined;

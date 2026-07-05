@@ -11,7 +11,7 @@ export async function POST(req: Request) {
     method: "POST",
     headers: {
       "content-type": req.headers.get("content-type") ?? "multipart/form-data",
-      "x-prox-secret": process.env.PROX_AGENT_SECRET ?? "",
+      "x-takt-secret": process.env.TAKT_AGENT_SECRET ?? "",
     },
     body: req.body,
     // @ts-expect-error Node fetch requires duplex for a streamed request body

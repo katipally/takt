@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { getAllSettings, setSetting } from "@prox/db";
-import { DEFAULT_EFFORT } from "@prox/shared";
+import { getAllSettings, setSetting } from "@takt/db";
+import { DEFAULT_EFFORT } from "@takt/shared";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

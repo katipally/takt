@@ -23,4 +23,4 @@ EXPOSE 8787
 # Persist the SQLite DB + rendered pages across restarts via a mounted volume.
 VOLUME ["/app/data"]
 
-CMD ["pnpm", "--filter", "@prox/agent", "start"]
+CMD ["pnpm", "--filter", "@takt/agent", "start"]

@@ -1,4 +1,4 @@
-import type { AskAnswerPayload } from "@prox/shared";
+import type { AskAnswerPayload } from "@takt/shared";
 
 // Bridge between the ask_user tool (which awaits the user's answers) and the
 // out-of-band POST /chat/answer that delivers them. Process-local map keyed by

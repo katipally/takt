@@ -2,12 +2,12 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
-import type { ChatRequest, MessageBlock, SseEvent } from "@prox/shared";
-import { askAnswerPayloadSchema } from "@prox/shared";
-import { getProductBySlug, createChat, listChats, listMasterChats, addMessage, renameChat, loadEnv } from "@prox/db";
-import { ingestProduct, countPdfPages } from "@prox/ingest";
+import type { ChatRequest, MessageBlock, SseEvent } from "@takt/shared";
+import { askAnswerPayloadSchema } from "@takt/shared";
+import { getProductBySlug, createChat, listChats, listMasterChats, addMessage, renameChat, loadEnv } from "@takt/db";
+import { ingestProduct, countPdfPages } from "@takt/ingest";
 import { extname } from "node:path";
-import { catalogModels } from "@prox/harness";
+import { catalogModels } from "@takt/harness";
 import { ensureSeedProviders, resolveCaption } from "./providers.js";
 
 // Per-1M-token prices for a caption model, from the models.dev catalog (cached).
@@ -30,16 +30,16 @@ ensureSeedProviders();
 // Shared-secret gate + locked CORS. The agent is meant to sit behind the Next
 // proxy on localhost / inside the container; this closes the hole if :8787 is
 // ever reachable. The secret is opt-in: when unset (pure local dev) the gate is
-// skipped; the Next proxy forwards PROX_AGENT_SECRET on every call when set, and
+// skipped; the Next proxy forwards TAKT_AGENT_SECRET on every call when set, and
 // the container always sets one (docker-entrypoint).
-const AGENT_SECRET = process.env.PROX_AGENT_SECRET?.trim() || "";
+const AGENT_SECRET = process.env.TAKT_AGENT_SECRET?.trim() || "";
 const WEB_ORIGIN = process.env.WEB_PUBLIC_URL?.trim() || "http://localhost:3000";
 
 const app = new Hono();
 app.use("*", cors({ origin: WEB_ORIGIN }));
 app.use("*", async (c, next) => {
   if (!AGENT_SECRET || c.req.path === "/health") return next();
-  if (c.req.header("x-prox-secret") !== AGENT_SECRET) return c.json({ error: "unauthorized" }, 401);
+  if (c.req.header("x-takt-secret") !== AGENT_SECRET) return c.json({ error: "unauthorized" }, 401);
   return next();
 });
 
@@ -184,7 +184,7 @@ app.post("/ingest", async (c) => {
 const port = Number(process.env.AGENT_PORT ?? 8787);
 const server = serve({ fetch: app.fetch, port }) as unknown as Server;
 const wss = attachLiveWs(server); // live voice+vision on ws://…/live
-console.log(`▸ Prox agent service listening on http://localhost:${port}`);
+console.log(`▸ Takt agent service listening on http://localhost:${port}`);
 
 // A clear message on a busy port instead of an unhandled-'error' crash, and a
 // graceful shutdown so `tsx watch` restarts (SIGTERM) release the port cleanly —

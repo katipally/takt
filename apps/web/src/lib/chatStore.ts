@@ -1,4 +1,4 @@
-import type { ChatRequest, AskQuestion, AskAnswer } from "@prox/shared";
+import type { ChatRequest, AskQuestion, AskAnswer } from "@takt/shared";
 import { streamChat } from "./sse-client";
 import { api } from "./api";
 
@@ -130,7 +130,7 @@ function appendText(parts: Part[], key: "reasoning" | "text", text: string): Par
 // Apply one streamed SSE event to an assistant node. Shared by the HTTP chat
 // stream (runStream) and the live-mode WebSocket (chatStore.liveApply), so
 // artifacts, page images, tool rows, and usage all render identically.
-function applyStreamEvent(chatId: string, assistantId: string, e: import("@prox/shared").SseEvent) {
+function applyStreamEvent(chatId: string, assistantId: string, e: import("@takt/shared").SseEvent) {
   if (e.type === "text_delta") update(chatId, (s) => patchAssistant(s, assistantId, (p) => appendText(p, "text", e.text)));
   else if (e.type === "reasoning_delta") update(chatId, (s) => patchAssistant(s, assistantId, (p) => appendText(p, "reasoning", e.text)));
   else if (e.type === "status") update(chatId, (s) => setStatus(s, assistantId, e.text));
@@ -203,7 +203,7 @@ export const chatStore = {
     update(chatId, (x) => ({ ...addNode(x, { id: assistantId, parentId: userId, role: "assistant", parts: [], streaming: true }), streaming: true }));
     return assistantId;
   },
-  liveApply(chatId: string, assistantId: string, e: import("@prox/shared").SseEvent) {
+  liveApply(chatId: string, assistantId: string, e: import("@takt/shared").SseEvent) {
     if (e.type === "done") return;
     applyStreamEvent(chatId, assistantId, e);
   },

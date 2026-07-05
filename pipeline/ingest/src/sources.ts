@@ -4,7 +4,7 @@
 // Video/audio/3D would slot in here the same way (produce sections + optionally
 // page-images); left as stubs until there's such data.
 
-const UA = "Mozilla/5.0 (compatible; ProxBot/1.0; +https://useprox.com)";
+const UA = "Mozilla/5.0 (compatible; TaktBot/1.0; +https://usetakt.com)";
 
 export interface FetchedSource {
   title: string;

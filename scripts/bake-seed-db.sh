@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Bake the committed, key-free pre-seeded catalog: data/seed.db
 #
-# Turns the local runtime DB (data/prox.db — which holds YOUR encrypted API key
+# Turns the local runtime DB (data/takt.db — which holds YOUR encrypted API key
 # and chat history) into a clean template safe to commit. On a fresh clone,
-# packages/db/src/connection.ts copies data/seed.db -> data/prox.db on first
+# packages/db/src/connection.ts copies data/seed.db -> data/takt.db on first
 # boot, so judges get instant answers with no `pnpm seed`.
 #
 # What it strips: the provider API key (api_key_ciphertext + key_last4), all
@@ -17,7 +17,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SRC="$ROOT/data/prox.db"
+SRC="$ROOT/data/takt.db"
 OUT="$ROOT/data/seed.db"
 
 [ -f "$SRC" ] || { echo "✗ $SRC not found — run 'pnpm seed' first." >&2; exit 1; }

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { listProviders, createProvider, updateProvider } from "@prox/db";
-import { BUILTIN_PROVIDERS } from "@prox/harness";
+import { listProviders, createProvider, updateProvider } from "@takt/db";
+import { BUILTIN_PROVIDERS } from "@takt/harness";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

@@ -6,11 +6,11 @@ import { dirname, resolve } from "node:path";
 // three levels up.
 const here = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(here, "../../..");
-export const DATA_DIR = process.env.PROX_DATA_DIR
-  ? resolve(process.env.PROX_DATA_DIR)
+export const DATA_DIR = process.env.TAKT_DATA_DIR
+  ? resolve(process.env.TAKT_DATA_DIR)
   : resolve(REPO_ROOT, "data");
-export const DB_PATH = resolve(DATA_DIR, "prox.db");
-// Committed, key-free pre-seeded catalog. On first boot (no prox.db yet) it is
+export const DB_PATH = resolve(DATA_DIR, "takt.db");
+// Committed, key-free pre-seeded catalog. On first boot (no takt.db yet) it is
 // copied to DB_PATH so `git clone && pnpm dev` works with zero seeding. See
 // scripts/bake-seed-db.sh and packages/db/src/connection.ts.
 export const SEED_DB_PATH = resolve(DATA_DIR, "seed.db");

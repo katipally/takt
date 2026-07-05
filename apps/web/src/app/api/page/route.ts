@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { getProductBySlug, getPageImage } from "@prox/db";
-import type { ManualKind } from "@prox/shared";
+import { getProductBySlug, getPageImage } from "@takt/db";
+import type { ManualKind } from "@takt/shared";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

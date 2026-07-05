@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getProductBySlug, listChats, listMasterChats, listMessages } from "@prox/db";
+import { getProductBySlug, listChats, listMasterChats, listMessages } from "@takt/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

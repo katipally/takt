@@ -1,7 +1,7 @@
-import { streamProvider, type Message } from "@prox/harness";
-import type { Product, Manual } from "@prox/shared";
-import { liveModelVision } from "@prox/shared";
-import { buildProxTools, type ProxTool, type Emit } from "../tools.js";
+import { streamProvider, type Message } from "@takt/harness";
+import type { Product, Manual } from "@takt/shared";
+import { liveModelVision } from "@takt/shared";
+import { buildTaktTools, type TaktTool, type Emit } from "../tools.js";
 import { collectTurn } from "../turn.js";
 import { buildLivePrompt } from "../prompt.js";
 import { resolveLive } from "../providers.js";
@@ -16,7 +16,7 @@ const LIVE_TOOL_DENY = new Set(["emit_artifact", "ask_user"]);
 
 // A per-call LLM driver that keeps a growing Message[] across turns (unlike the
 // one-shot runAgent) and injects the camera frame(s) onto each user turn. Reuses
-// the exact pieces runAgent composes: buildProxTools, collectTurn, streamProvider.
+// the exact pieces runAgent composes: buildTaktTools, collectTurn, streamProvider.
 export class LiveTurnRunner {
   private messages: Message[];
 
@@ -24,7 +24,7 @@ export class LiveTurnRunner {
     private product: Product | null,
     private manuals: Manual[],
     private chatId: string | undefined,
-    private extraTools: ProxTool[],
+    private extraTools: TaktTool[],
   ) {
     this.messages = [{ role: "system", text: buildLivePrompt(product, manuals) }];
   }
@@ -48,7 +48,7 @@ export class LiveTurnRunner {
     // Build tools with THIS turn's emit so their artifact/page_image events are
     // dropped by the same epoch guard when a barge-in interrupts the turn. Drop
     // the tools that can't work in a spoken call.
-    const tools = [...buildProxTools({ product: this.product, manuals: this.manuals, emit, chatId: this.chatId }), ...this.extraTools]
+    const tools = [...buildTaktTools({ product: this.product, manuals: this.manuals, emit, chatId: this.chatId }), ...this.extraTools]
       .filter((t) => !LIVE_TOOL_DENY.has(t.name));
     const toolDefs = tools.map(({ name, description, parameters }) => ({ name, description, parameters }));
 

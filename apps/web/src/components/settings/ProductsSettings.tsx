@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, Upload, FileText, Loader2, X, AlertTriangle } from "lucide-react";
-import { createSseDecoder } from "@prox/shared";
+import { createSseDecoder } from "@takt/shared";
 import { api } from "@/lib/api";
 import { formatCost } from "@/lib/models";
 import { cn } from "@/lib/cn";
@@ -136,7 +136,7 @@ function AddProduct() {
     <section>
       <h2 className="text-[15px] font-semibold">Add a product</h2>
       <p className="mt-1 text-[12.5px] text-muted-foreground">
-        Add the product&apos;s manuals as PDFs (Prox renders every page and reads its diagrams/tables), and/or paste source links — web pages and YouTube videos are ingested as searchable text. Everything lands in one index, no redeploy.
+        Add the product&apos;s manuals as PDFs (Takt renders every page and reads its diagrams/tables), and/or paste source links — web pages and YouTube videos are ingested as searchable text. Everything lands in one index, no redeploy.
       </p>
       <div className="mt-4 grid grid-cols-2 gap-2">
         <input className={inputCls} name="product-name" placeholder="Product name" aria-label="Product name" value={name} onChange={(e) => setName(e.target.value)} />

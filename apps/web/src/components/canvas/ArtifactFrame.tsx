@@ -33,7 +33,7 @@ export function InlineArtifactFrame({
   const theme = resolvedTheme === "dark" ? "dark" : "light";
 
   const push = useCallback(() => {
-    frameRef.current?.contentWindow?.postMessage({ __prox: true, type: "render", code, kind, theme }, "*");
+    frameRef.current?.contentWindow?.postMessage({ __takt: true, type: "render", code, kind, theme }, "*");
   }, [code, kind, theme]);
 
   const markRendered = () => { renderedRef.current = true; setRendered(true); setFailed(false); };
@@ -41,7 +41,7 @@ export function InlineArtifactFrame({
   useEffect(() => {
     function onMessage(e: MessageEvent) {
       const d = e.data;
-      if (!d?.__prox || e.source !== frameRef.current?.contentWindow) return;
+      if (!d?.__takt || e.source !== frameRef.current?.contentWindow) return;
       // `rendered` (mount ack) clears the spinner in both modes; `height` also
       // sizes the iframe in auto mode (fill mode keeps it at 100%).
       if (d.type === "rendered") markRendered();

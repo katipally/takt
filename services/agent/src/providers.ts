@@ -1,9 +1,9 @@
 import {
   listProviders, createProvider, updateProvider,
   getProviderApiKey, getSetting, setSetting,
-} from "@prox/db";
-import { BUILTIN_PROVIDERS, type ProviderInfo, type Effort } from "@prox/harness";
-import { DEFAULT_EFFORT } from "@prox/shared";
+} from "@takt/db";
+import { BUILTIN_PROVIDERS, type ProviderInfo, type Effort } from "@takt/harness";
+import { DEFAULT_EFFORT } from "@takt/shared";
 
 // Provider-neutral resolution. Keys live in the DB `providers` table (kind =
 // harness provider id) or fall back to the provider's declared env vars. Which

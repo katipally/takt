@@ -11,14 +11,14 @@ import { cn } from "@/lib/cn";
 
 // Fluid product switcher. `panel` = the bordered card used in the sidebar;
 // `bar` = the compact pill used in the chat header (Image #2, top-left).
-// currentSlug null = master mode (no product; search across all → labeled "Prox").
+// currentSlug null = master mode (no product; search across all → labeled "Takt").
 export function ProductSwitcher({ currentSlug, variant = "panel" }: {
   currentSlug: string | null; variant?: "panel" | "bar";
 }) {
   const { data: products = [] } = useQuery({ queryKey: ["products"], queryFn: api.products });
   const current = currentSlug ? products.find((p) => p.slug === currentSlug) : undefined;
   const isMaster = !currentSlug;
-  const label = current?.name ?? (isMaster ? "Prox" : "Select product");
+  const label = current?.name ?? (isMaster ? "Takt" : "Select product");
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -72,12 +72,12 @@ export function ProductSwitcher({ currentSlug, variant = "panel" }: {
         {open && (
           <motion.div variants={dropdown} initial="hidden" animate="show" exit="exit"
             className="absolute left-0 top-full z-40 mt-1.5 min-w-[240px] origin-top-left overflow-hidden rounded-xl border border-border bg-popover p-1 shadow-[var(--shadow-card)]">
-            {/* Master mode — Prox with access to every product at once. */}
+            {/* Master mode — Takt with access to every product at once. */}
             <Link href="/master" onClick={() => setOpen(false)}
               className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 transition hover:bg-foreground/[0.06]">
               <MasterThumb size={26} />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-[12.5px] text-foreground">Prox</div>
+                <div className="truncate text-[12.5px] text-foreground">Takt</div>
                 <div className="truncate text-[11px] text-muted-foreground">All products</div>
               </div>
               {isMaster && <Check className="size-3.5 shrink-0 text-accent" />}

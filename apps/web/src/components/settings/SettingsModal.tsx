@@ -48,7 +48,7 @@ export function SettingsModal() {
               <div className="flex h-12 shrink-0 items-center justify-end border-b border-border px-3">
                 <button onClick={close} className="grid size-8 place-items-center rounded-lg text-muted-foreground transition hover:bg-foreground/10 hover:text-foreground"><X className="size-4" /></button>
               </div>
-              <div className="prox-scroll min-h-0 flex-1 overflow-y-auto p-6">
+              <div className="takt-scroll min-h-0 flex-1 overflow-y-auto p-6">
                 {tab === "models" ? <ModelsSettings /> : <ProductsSettings />}
               </div>
             </div>

@@ -1,6 +1,6 @@
 import type { Server } from "node:http";
 import { WebSocketServer } from "ws";
-import { getProductBySlug, getManualsByProduct } from "@prox/db";
+import { getProductBySlug, getManualsByProduct } from "@takt/db";
 import { LiveSession } from "./session.js";
 
 // Attach the /live WebSocket to the agent's existing http.Server (the one
@@ -9,14 +9,14 @@ import { LiveSession } from "./session.js";
 // @hono/node-server v1→v2 just to get upgradeWebSocket.
 export function attachLiveWs(server: Server): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
-  const AGENT_SECRET = process.env.PROX_AGENT_SECRET?.trim() || "";
+  const AGENT_SECRET = process.env.TAKT_AGENT_SECRET?.trim() || "";
 
   server.on("upgrade", (req, socket, head) => {
     let url: URL;
     try { url = new URL(req.url ?? "", "http://localhost"); } catch { socket.destroy(); return; }
     if (url.pathname !== "/live") { socket.destroy(); return; }
     // Only the trusted web proxy (which holds the secret) may open a live socket.
-    if (AGENT_SECRET && req.headers["x-prox-secret"] !== AGENT_SECRET) {
+    if (AGENT_SECRET && req.headers["x-takt-secret"] !== AGENT_SECRET) {
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n"); socket.destroy(); return;
     }
     // No product (or "master") → a master live session that can search across all

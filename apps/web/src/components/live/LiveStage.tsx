@@ -102,7 +102,7 @@ export function LiveStage({ chatId, productSlug, onExit }: { chatId: string; pro
                   ? <p className="text-[15px] italic text-muted-foreground">{userCaption}</p>
                   : agentCaption
                     ? <AgentCaption text={agentCaption} getProgress={getSpeechProgress} />
-                    : <p className={cn("text-[12px] font-medium", phase === "listening" ? "text-[color:var(--prox-success,#22c55e)]" : "text-muted-foreground")} aria-live="polite">{PHASE_LABEL[phase]}</p>}
+                    : <p className={cn("text-[12px] font-medium", phase === "listening" ? "text-[color:var(--takt-success,#22c55e)]" : "text-muted-foreground")} aria-live="polite">{PHASE_LABEL[phase]}</p>}
               </div>
             )}
           </div>
@@ -201,7 +201,7 @@ function PreCall({ mics, cams, micId, camId, onMic, onCam, error, modelsDownload
         <AudioLines className="size-7" />
       </div>
       <div className="space-y-1.5">
-        <h2 className="text-[18px] font-semibold tracking-tight">Talk with Prox</h2>
+        <h2 className="text-[18px] font-semibold tracking-tight">Talk with Takt</h2>
         <p className="max-w-sm text-[13px] text-muted-foreground">A real conversation — it listens as you speak, answers out loud, and can see through your camera. Runs privately on your device.</p>
       </div>
       <div className="w-full max-w-xs space-y-2">

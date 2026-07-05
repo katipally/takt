@@ -5,7 +5,7 @@ import { AutoTokenizer, AutoModelForSequenceClassification } from "@huggingface/
 // them ranked by relevance. Used to re-order an over-fetched KNN result set —
 // the single biggest precision win over raw vector similarity.
 
-const MODEL = process.env.PROX_RERANK_MODEL ?? "Xenova/bge-reranker-base";
+const MODEL = process.env.TAKT_RERANK_MODEL ?? "Xenova/bge-reranker-base";
 
 let tokPromise: Promise<any> | null = null;
 let modelPromise: Promise<any> | null = null;

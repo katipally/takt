@@ -1,5 +1,5 @@
 {
-  "name": "prox",
+  "name": "takt",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -8,11 +8,11 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "concurrently -n web,agent -c cyan,magenta \"pnpm --filter @prox/web dev\" \"pnpm --filter @prox/agent dev\"",
-    "build": "pnpm -r --filter @prox/web build",
-    "ingest": "pnpm --filter @prox/ingest start --",
-    "db:reset": "pnpm --filter @prox/db reset",
-    "warm": "pnpm --filter @prox/embed warm",
+    "dev": "concurrently -n web,agent -c cyan,magenta \"pnpm --filter @takt/web dev\" \"pnpm --filter @takt/agent dev\"",
+    "build": "pnpm -r --filter @takt/web build",
+    "ingest": "pnpm --filter @takt/ingest start --",
+    "db:reset": "pnpm --filter @takt/db reset",
+    "warm": "pnpm --filter @takt/embed warm",
     "smoke": "node scripts/smoke.mjs",
     "seed": "pnpm ingest --product vulcan-omnipro-220 --name \"Vulcan OmniPro 220\" --manufacturer \"Vulcan\" --summary \"Multiprocess welder (MIG, Flux-Cored, TIG, Stick) with synergic LCD control, 120V/240V input.\" --dir ./files --hero ./assets/vulcan-omnipro-220.webp --model claude-sonnet-5",
     "typecheck": "pnpm -r typecheck"

@@ -1,11 +1,11 @@
-# Prox: an AI product specialist
+# Takt: an AI product specialist
 
 
 ## What this is
 
-This is my submission for the Prox founding engineer challenge. The brief asked
+This is my submission for the Takt founding engineer challenge. The brief asked
 for a multimodal agent that answers questions about the welder accurately and not
-only in text. I treated it as a chance to reconstruct how a product like Prox
+only in text. I treated it as a chance to reconstruct how a product like Takt
 might actually work from end to end, based on what I understood of it, rather than
 only satisfying the brief.
 
@@ -43,7 +43,7 @@ When a choice would change the answer, the agent asks first, with a diagram to h
 
 ## Run it
 
-You don't have to clone anything. Open https://yash3471-prox.hf.space, go to
+You don't have to clone anything. Open https://yash3471-takt.hf.space, go to
 Settings, Providers, paste your own Anthropic API key (the brief says you plug in
 your own), and start asking. A free Hugging Face Space sleeps when idle, so the
 first request may take 30 to 60 seconds to wake.
@@ -79,7 +79,7 @@ quick confidence check, not a test suite.
 
 ## How the agent works
 
-Prox is built around six tools the agent calls on its own. The system prompt
+Takt is built around six tools the agent calls on its own. The system prompt
 gives it four standing rules, Ground, Show, Draw, and Ask, so it behaves like a
 cited specialist rather than a chatbot answering from memory.
 
@@ -146,7 +146,7 @@ product is a drop-in with no code change.
 - Model management. Set your Anthropic key and pick the chat and ingestion models
   from the UI; the picker lists your account's live models. Keys are AES-encrypted
   at rest and the browser only ever sees the last four digits.
-- Add a product from the UI. Upload a manual's PDFs and Prox indexes them in place.
+- Add a product from the UI. Upload a manual's PDFs and Takt indexes them in place.
   Before it spends anything it shows the page count, the model it'll use, and an
   estimated cost to confirm. Each new product also gets its own starter questions,
   written from its manuals.
@@ -166,7 +166,7 @@ flowchart LR
         Loop["Claude Agent SDK query() loop"]
         Tools["Tools: search_manual, get_page_image,<br/>crop_page_image, emit_artifact,<br/>ask_user, list_products"]
     end
-    DB[("SQLite + sqlite-vec<br/>data/prox.db")]
+    DB[("SQLite + sqlite-vec<br/>data/takt.db")]
     PNG[/"data/pages/&lt;product&gt;/*.png"/]
     Claude["Claude API"]
 

@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { getProductBySlug, getSuggestions } from "@prox/db";
+import { getProductBySlug, getSuggestions } from "@takt/db";
 import { Workbench } from "@/components/app/Workbench";
 
 export const runtime = "nodejs";

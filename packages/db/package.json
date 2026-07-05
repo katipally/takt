@@ -1,5 +1,5 @@
 {
-  "name": "@prox/db",
+  "name": "@takt/db",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@prox/shared": "workspace:*",
+    "@takt/shared": "workspace:*",
     "better-sqlite3": "^12.11.1",
     "sqlite-vec": "^0.1.9"
   },

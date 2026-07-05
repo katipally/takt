@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState, useSyncExternalStore } from "react";
-import type { AskAnswer } from "@prox/shared";
+import type { AskAnswer } from "@takt/shared";
 import { chatStore, type CanvasSource, type Node, type Attachment } from "@/lib/chatStore";
 import { speech } from "@/lib/speech";
 import { useUi } from "@/lib/uiStore";

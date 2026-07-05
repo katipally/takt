@@ -23,18 +23,18 @@ importers:
       '@huggingface/transformers':
         specifier: 4.2.0
         version: 4.2.0
-      '@prox/db':
-        specifier: workspace:*
-        version: link:../../packages/db
-      '@prox/harness':
-        specifier: workspace:*
-        version: link:../../packages/harness
-      '@prox/shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
       '@ricky0123/vad-web':
         specifier: ^0.0.29
         version: 0.0.29
+      '@takt/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@takt/harness':
+        specifier: workspace:*
+        version: link:../../packages/harness
+      '@takt/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@tanstack/react-query':
         specifier: ^5.101.2
         version: 5.101.2(react@19.2.7)
@@ -105,7 +105,7 @@ importers:
 
   packages/db:
     dependencies:
-      '@prox/shared':
+      '@takt/shared':
         specifier: workspace:*
         version: link:../shared
       better-sqlite3:
@@ -159,16 +159,16 @@ importers:
 
   pipeline/ingest:
     dependencies:
-      '@prox/db':
+      '@takt/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@prox/embed':
+      '@takt/embed':
         specifier: workspace:*
         version: link:../../packages/embed
-      '@prox/harness':
+      '@takt/harness':
         specifier: workspace:*
         version: link:../../packages/harness
-      '@prox/shared':
+      '@takt/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       mupdf:
@@ -187,19 +187,19 @@ importers:
       '@hono/node-server':
         specifier: ^1.13.8
         version: 1.19.14(hono@4.12.27)
-      '@prox/db':
+      '@takt/db':
         specifier: workspace:*
         version: link:../../packages/db
-      '@prox/embed':
+      '@takt/embed':
         specifier: workspace:*
         version: link:../../packages/embed
-      '@prox/harness':
+      '@takt/harness':
         specifier: workspace:*
         version: link:../../packages/harness
-      '@prox/ingest':
+      '@takt/ingest':
         specifier: workspace:*
         version: link:../../pipeline/ingest
-      '@prox/shared':
+      '@takt/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       esbuild:

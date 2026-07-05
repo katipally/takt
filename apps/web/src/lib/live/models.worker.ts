@@ -17,7 +17,7 @@ ort.env.wasm.numThreads = 1;  // single-thread → no cross-origin-isolation nee
 // ONNX we fetch by hand. Falls back to a plain fetch where Cache API is blocked.
 async function cachedArrayBuffer(url: string): Promise<ArrayBuffer> {
   try {
-    const cache = await caches.open("prox-live-models-v1");
+    const cache = await caches.open("takt-live-models-v1");
     let res = await cache.match(url);
     if (!res) { await cache.add(url); res = await cache.match(url); }
     if (res) return await res.arrayBuffer();

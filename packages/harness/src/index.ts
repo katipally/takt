@@ -17,7 +17,7 @@ export function streamProvider(
   signal: AbortSignal,
 ): AsyncGenerator<ProviderEvent> {
   const headers =
-    provider.id === "openrouter" ? { "HTTP-Referer": "https://prox.local", "X-Title": "Prox" } : undefined
+    provider.id === "openrouter" ? { "HTTP-Referer": "https://takt.local", "X-Title": "Takt" } : undefined
   if (provider.protocol === "anthropic")
     return streamAnthropic({ baseURL: provider.baseURL, apiKey, req, signal, headers })
   if (provider.protocol === "google") return streamGoogle({ baseURL: provider.baseURL, apiKey, req, signal })

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { X, ArrowLeft, ArrowRight, SkipForward, Check, Sparkles } from "lucide-react";
-import type { AskAnswer, AskQuestion, AskRender } from "@prox/shared";
+import type { AskAnswer, AskQuestion, AskRender } from "@takt/shared";
 import type { AskState } from "@/lib/chatStore";
 import { InlineArtifactFrame } from "@/components/canvas/ArtifactFrame";
 import { cn } from "@/lib/cn";
@@ -79,7 +79,7 @@ export function AskModal({ ask, onSubmit, onCancel }: {
         {/* Header: pills + close */}
         <header className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2.5">
           <Sparkles className="size-3.5 shrink-0 text-accent" />
-          <div className="prox-scroll flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
+          <div className="takt-scroll flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
             {questions.map((q, i) => (
               <Pill key={qid(i)} active={step === i} done={isAnswered(i)} onClick={() => setStep(i)}>
                 {q.header || `Q${i + 1}`}
@@ -98,7 +98,7 @@ export function AskModal({ ask, onSubmit, onCancel }: {
         ) : (
           <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-2">
             {/* Left: question + options + custom */}
-            <div className="prox-scroll min-h-0 overflow-y-auto border-border p-5 md:border-r">
+            <div className="takt-scroll min-h-0 overflow-y-auto border-border p-5 md:border-r">
               <div className="text-[11px] uppercase tracking-[0.14em] text-faint">Question {step + 1} of {n}</div>
               <h2 className="mt-1.5 text-[16px] font-semibold leading-snug text-foreground">{cur!.question}</h2>
 
@@ -130,13 +130,13 @@ export function AskModal({ ask, onSubmit, onCancel }: {
                   <textarea value={draftOf(step).custom} rows={2}
                     onChange={(e) => setDraft(step, (d) => ({ ...d, custom: e.target.value, skipped: false }))}
                     placeholder="Type your own answer…"
-                    className="prox-scroll mt-1 w-full resize-none rounded-xl border border-border bg-surface px-3.5 py-2.5 text-[13px] text-foreground outline-none transition focus:border-border-heavy placeholder:text-faint" />
+                    className="takt-scroll mt-1 w-full resize-none rounded-xl border border-border bg-surface px-3.5 py-2.5 text-[13px] text-foreground outline-none transition focus:border-border-heavy placeholder:text-faint" />
                 </div>
               )}
             </div>
 
             {/* Right: render area */}
-            <div className="prox-scroll hidden min-h-0 overflow-y-auto bg-background/40 md:block">
+            <div className="takt-scroll hidden min-h-0 overflow-y-auto bg-background/40 md:block">
               <RenderArea render={activeRender} fromOption={preview != null && !!cur!.options?.[preview]?.render} />
             </div>
           </div>
@@ -192,14 +192,14 @@ function RenderArea({ render, fromOption }: { render?: AskRender; fromOption: bo
     return <div className="grid h-full place-items-center p-8 text-center text-[12px] text-faint">No diagram for this {fromOption ? "option" : "question"}.</div>;
   }
   if (render.kind === "ascii") {
-    return <pre className="prox-scroll m-0 overflow-x-auto p-5 font-mono text-[12px] leading-[1.5] text-foreground whitespace-pre-wrap">{render.content}</pre>;
+    return <pre className="takt-scroll m-0 overflow-x-auto p-5 font-mono text-[12px] leading-[1.5] text-foreground whitespace-pre-wrap">{render.content}</pre>;
   }
   return <InlineArtifactFrame code={render.content} kind={render.kind} />;
 }
 
 function ReviewBody({ questions, answers, onJump }: { questions: AskQuestion[]; answers: AskAnswer[]; onJump: (i: number) => void }) {
   return (
-    <div className="prox-scroll min-h-0 flex-1 overflow-y-auto p-5">
+    <div className="takt-scroll min-h-0 flex-1 overflow-y-auto p-5">
       <h2 className="text-[16px] font-semibold text-foreground">Review</h2>
       <div className="mt-3 flex flex-col gap-2">
         {questions.map((q, i) => {

@@ -26,7 +26,7 @@ export function Carousel({ label, children }: { label?: string; children: ReactN
     <div className="group/car relative">
       {label && <div className="mb-1.5 px-0.5 text-[11px] uppercase tracking-wide text-faint">{label}</div>}
       <div ref={ref} onScroll={measure}
-        className="prox-scroll flex snap-x gap-2 overflow-x-auto scroll-smooth pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        className="takt-scroll flex snap-x gap-2 overflow-x-auto scroll-smooth pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {children}
       </div>
       {overflow && !atStart && (

@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from "node:fs";
 import { resolve, join, isAbsolute, extname } from "node:path";
-import { REPO_ROOT, loadEnv } from "@prox/db";
-import { BUILTIN_PROVIDERS } from "@prox/harness";
+import { REPO_ROOT, loadEnv } from "@takt/db";
+import { BUILTIN_PROVIDERS } from "@takt/harness";
 import { ingestProduct } from "./ingest.js";
 
 function arg(name: string): string | undefined {

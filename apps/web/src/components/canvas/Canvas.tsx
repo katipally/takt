@@ -44,7 +44,7 @@ export function ArtifactDock({ artifacts, selectedId, panelOpen, onSelect }: {
   if (!groups.length) return null;
 
   return (
-    <div className="pointer-events-none absolute right-3 top-14 z-20 flex max-h-[calc(100%-7rem)] w-[124px] flex-col gap-2 overflow-y-auto prox-scroll">
+    <div className="pointer-events-none absolute right-3 top-14 z-20 flex max-h-[calc(100%-7rem)] w-[124px] flex-col gap-2 overflow-y-auto takt-scroll">
       {groups.map((g) => {
         const latest = g[g.length - 1]!;
         const active = panelOpen && g.some((a) => a.artifactId === selectedId);
@@ -96,7 +96,7 @@ export function Canvas({ artifacts, selectedId, onSelect, onClose, maximized, on
       </header>
 
       {groups.length > 1 && (
-        <div className="prox-scroll flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border px-2 py-1.5">
+        <div className="takt-scroll flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border px-2 py-1.5">
           {groups.map((g) => {
             const latest = g[g.length - 1]!;
             const active = g.some((a) => a.artifactId === selected?.artifactId);
@@ -121,7 +121,7 @@ export function Canvas({ artifacts, selectedId, onSelect, onClose, maximized, on
       ) : (
         <>
           {selGroup && selGroup.length > 1 && (
-            <div className="prox-scroll flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-border px-3 py-2">
+            <div className="takt-scroll flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-border px-3 py-2">
               <span className="text-[11px] uppercase tracking-wide text-faint">Versions</span>
               {selGroup.map((a) => (
                 <button key={a.artifactId} onClick={() => onSelect(a.artifactId)}

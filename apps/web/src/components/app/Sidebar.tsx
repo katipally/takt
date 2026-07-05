@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Boxes, Settings, Check, Pencil, Trash2, X, PanelLeftClose } from "lucide-react";
-import type { ChatSummary } from "@prox/shared";
+import type { ChatSummary } from "@takt/shared";
 import { api } from "@/lib/api";
 import { useUi } from "@/lib/uiStore";
 import { cn } from "@/lib/cn";
@@ -41,7 +41,7 @@ export function Sidebar({
         <Plus className="size-4" /> New chat
       </button>
 
-      <div className="prox-scroll mt-3 flex-1 overflow-y-auto px-2.5">
+      <div className="takt-scroll mt-3 flex-1 overflow-y-auto px-2.5">
         {chats.length > 0 && <div className="px-2 pb-1 text-[11px] uppercase tracking-wide text-faint">Recent</div>}
         {chats.map((c) => (
           <ChatRow key={c.id} chat={c} active={c.id === activeChatId} productSlug={chatKey}

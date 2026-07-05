@@ -14,5 +14,5 @@
 # Source PDFs are only needed for re-ingest, not at runtime — keep the image lean.
 data/pdfs
 
-# NOTE: data/prox.db, data/pages, data/heroes and data/.enc-key are intentionally
+# NOTE: data/takt.db, data/pages, data/heroes and data/.enc-key are intentionally
 # NOT ignored — the seeded catalog + vector index + page images are baked in.

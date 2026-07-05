@@ -1,5 +1,5 @@
 ---
-title: Prox
+title: Takt
 emoji: 🔧
 colorFrom: blue
 colorTo: gray
@@ -8,9 +8,9 @@ app_port: 7860
 pinned: false
 ---
 
-# Prox — Vulcan OmniPro 220 expert agent
+# Takt — Vulcan OmniPro 220 expert agent
 
-Live demo of the Prox multimodal agent. Built with the Claude Agent SDK.
+Live demo of the Takt multimodal agent. Built with the Claude Agent SDK.
 
 **To use it:** open **Settings → Providers**, paste your own Anthropic API key, Save,
 then ask the agent anything about the welder. Your key is stored only in this running

@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { resolve, extname } from "node:path";
-import { DATA_DIR } from "@prox/db";
+import { DATA_DIR } from "@takt/db";
 
 export const runtime = "nodejs";
 

@@ -1,5 +1,5 @@
 {
-  "name": "@prox/agent",
+  "name": "@takt/agent",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,11 +10,11 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.13.8",
-    "@prox/db": "workspace:*",
-    "@prox/embed": "workspace:*",
-    "@prox/harness": "workspace:*",
-    "@prox/ingest": "workspace:*",
-    "@prox/shared": "workspace:*",
+    "@takt/db": "workspace:*",
+    "@takt/embed": "workspace:*",
+    "@takt/harness": "workspace:*",
+    "@takt/ingest": "workspace:*",
+    "@takt/shared": "workspace:*",
     "esbuild": "^0.28.1",
     "hono": "^4.12.27",
     "sharp": "^0.34.5",

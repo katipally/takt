@@ -1,5 +1,5 @@
-import type { ProviderEvent, ToolCall } from "@prox/harness";
-import type { SseEvent } from "@prox/shared";
+import type { ProviderEvent, ToolCall } from "@takt/harness";
+import type { SseEvent } from "@takt/shared";
 
 export type Emit = (e: SseEvent) => Promise<void> | void;
 

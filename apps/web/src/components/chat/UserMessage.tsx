@@ -22,7 +22,7 @@ export function UserMessage({
       <div className="flex justify-end animate-fade-up">
         <div className="w-full max-w-[78%] rounded-2xl border border-border-heavy bg-card p-2">
           <textarea autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} rows={2}
-            className="prox-scroll block max-h-48 w-full resize-none bg-transparent px-1.5 py-1 text-chat text-foreground outline-none" />
+            className="takt-scroll block max-h-48 w-full resize-none bg-transparent px-1.5 py-1 text-chat text-foreground outline-none" />
           <div className="mt-1 flex items-center justify-between">
             <span className="px-1 text-[11px] text-faint">Editing creates a new branch</span>
             <div className="flex gap-1">

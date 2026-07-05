@@ -1,5 +1,5 @@
 {
-  "name": "@prox/ingest",
+  "name": "@takt/ingest",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -7,17 +7,17 @@
     ".": "./src/index.ts"
   },
   "bin": {
-    "prox-ingest": "src/cli.ts"
+    "takt-ingest": "src/cli.ts"
   },
   "scripts": {
     "start": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@prox/db": "workspace:*",
-    "@prox/embed": "workspace:*",
-    "@prox/harness": "workspace:*",
-    "@prox/shared": "workspace:*",
+    "@takt/db": "workspace:*",
+    "@takt/embed": "workspace:*",
+    "@takt/harness": "workspace:*",
+    "@takt/shared": "workspace:*",
     "mupdf": "^1.28.0"
   },
   "devDependencies": {

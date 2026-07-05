@@ -1,9 +1,9 @@
-import { streamProvider, catalogModels, type Message } from "@prox/harness";
-import type { ChatRequest } from "@prox/shared";
-import { getProductBySlug, getManualsByProduct, listArtifactsByChat } from "@prox/db";
-import { buildProxTools, type Emit } from "./tools.js";
+import { streamProvider, catalogModels, type Message } from "@takt/harness";
+import type { ChatRequest } from "@takt/shared";
+import { getProductBySlug, getManualsByProduct, listArtifactsByChat } from "@takt/db";
+import { buildTaktTools, type Emit } from "./tools.js";
 import { collectTurn } from "./turn.js";
-import { buildSystemPrompt, formatTranscript } from "./prompt.js";
+import { buildSystemPrompt } from "./prompt.js";
 import { resolveChat } from "./providers.js";
 
 const MAX_STEPS = 16;
@@ -44,7 +44,7 @@ export async function runAgent(req: ChatRequest, emit: Emit, signal?: AbortSigna
     return;
   }
 
-  const tools = buildProxTools({ product, manuals, emit, chatId: req.chatId });
+  const tools = buildTaktTools({ product, manuals, emit, chatId: req.chatId });
   const toolDefs = tools.map(({ name, description, parameters }) => ({ name, description, parameters }));
 
   // Latest version of each artifact already made in this chat, so the model can
@@ -54,15 +54,18 @@ export async function runAgent(req: ChatRequest, emit: Emit, signal?: AbortSigna
         .map((a) => ({ key: a.groupKey ?? a.id, title: a.title, version: a.version }))
     : [];
 
+  // Proper role-alternating history (like live mode) — NOT one flattened user
+  // blob. The model must see its own prior replies as real assistant turns, or
+  // it has no sense of "I already said/offered this" and repeats itself.
   const messages: Message[] = [
     { role: "system", text: buildSystemPrompt(product, manuals, priorArtifacts) },
-    {
-      role: "user",
-      text: formatTranscript(req.messages),
-      // When the user attached images, send them so the model can see them.
-      images: req.attachments?.map((a) => ({ data: a.data, mime: a.mediaType })),
-    },
+    ...req.messages.map((m) => ({ role: m.role, text: m.text })),
   ];
+  // Attach any user images to the last user turn (where the photo belongs).
+  if (req.attachments?.length) {
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    if (lastUser) lastUser.images = req.attachments.map((a) => ({ data: a.data, mime: a.mediaType }));
+  }
 
   const cost = await modelCost(provider, model);
 
