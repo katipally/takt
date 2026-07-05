@@ -71,7 +71,9 @@ export async function generateStarters(opts: {
   ].filter(Boolean).join("\n");
   const { text: raw } = await complete(opts.provider, opts.apiKey, {
     model: opts.model,
-    maxTokens: 400,
+    // Headroom: reasoning models (e.g. gpt-5-mini) spend part of the budget on
+    // reasoning tokens; 400 left nothing for the actual JSON, yielding no starters.
+    maxTokens: 1500,
     tools: [],
     messages: [{
       role: "user",

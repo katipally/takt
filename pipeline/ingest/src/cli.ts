@@ -9,13 +9,21 @@ function arg(name: string): string | undefined {
   return i !== -1 ? process.argv[i + 1] : undefined;
 }
 
+// Collect all values for a repeatable flag, e.g. --url a --url b.
+function args(name: string): string[] {
+  const out: string[] = [];
+  process.argv.forEach((a, i) => { if (a === `--${name}` && process.argv[i + 1]) out.push(process.argv[i + 1]!); });
+  return out;
+}
+
 async function main() {
   loadEnv();
   const slug = arg("product");
   const name = arg("name") ?? slug;
   const dir = arg("dir");
-  if (!slug || !dir) {
-    console.error('Usage: pnpm ingest --product <slug> --name "Name" --dir <folder> [--manufacturer "X"] [--summary "..."] [--hero <img>] [--provider <id>] [--model <id>]');
+  const urls = args("url"); // repeatable: web pages / youtube links
+  if (!slug || (!dir && !urls.length)) {
+    console.error('Usage: pnpm ingest --product <slug> --name "Name" (--dir <folder> | --url <link> [--url <link> …]) [--manufacturer "X"] [--summary "..."] [--hero <img>] [--provider <id>] [--model <id>]');
     process.exit(1);
   }
 
@@ -43,15 +51,20 @@ async function main() {
   }
 
   const fromRoot = (p: string) => (isAbsolute(p) ? p : resolve(REPO_ROOT, p));
-  const pdfDir = fromRoot(dir);
   const heroSrc = arg("hero") ? fromRoot(arg("hero")!) : undefined;
 
-  const pdfFiles = readdirSync(pdfDir).filter((f) => f.toLowerCase().endsWith(".pdf"));
-  if (!pdfFiles.length) { console.error(`No PDFs in ${pdfDir}`); process.exit(1); }
+  let pdfs: { filename: string; data: Uint8Array }[] = [];
+  if (dir) {
+    const pdfDir = fromRoot(dir);
+    const pdfFiles = readdirSync(pdfDir).filter((f) => f.toLowerCase().endsWith(".pdf"));
+    if (!pdfFiles.length && !urls.length) { console.error(`No PDFs in ${pdfDir}`); process.exit(1); }
+    pdfs = pdfFiles.map((f) => ({ filename: f, data: new Uint8Array(readFileSync(join(pdfDir, f))) }));
+  }
 
   await ingestProduct({
     slug, name: name!, manufacturer: arg("manufacturer") ?? null, summary: arg("summary") ?? null,
-    pdfs: pdfFiles.map((f) => ({ filename: f, data: new Uint8Array(readFileSync(join(pdfDir, f))) })),
+    pdfs,
+    webSources: urls.map((url) => ({ url })),
     hero: heroSrc && existsSync(heroSrc) ? { ext: extname(heroSrc), data: new Uint8Array(readFileSync(heroSrc)) } : undefined,
     captionProvider: provider, captionModel: model, apiKey,
     onProgress: (m) => { process.stdout.write(`  · ${m}\r`); },

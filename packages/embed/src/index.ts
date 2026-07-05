@@ -41,3 +41,5 @@ export async function embedQuery(text: string): Promise<Float32Array> {
 }
 
 export const EMBED_DIM = 384;
+
+export { rerank, warmReranker } from "./rerank";

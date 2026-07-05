@@ -4,18 +4,21 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
-import { Check, ChevronsUpDown, ChevronDown } from "lucide-react";
+import { Check, ChevronsUpDown, ChevronDown, Boxes } from "lucide-react";
 import { api } from "@/lib/api";
 import { dropdown } from "@/lib/motion";
 import { cn } from "@/lib/cn";
 
 // Fluid product switcher. `panel` = the bordered card used in the sidebar;
 // `bar` = the compact pill used in the chat header (Image #2, top-left).
+// currentSlug null = master mode (no product; search across all → labeled "Prox").
 export function ProductSwitcher({ currentSlug, variant = "panel" }: {
-  currentSlug: string; variant?: "panel" | "bar";
+  currentSlug: string | null; variant?: "panel" | "bar";
 }) {
   const { data: products = [] } = useQuery({ queryKey: ["products"], queryFn: api.products });
-  const current = products.find((p) => p.slug === currentSlug);
+  const current = currentSlug ? products.find((p) => p.slug === currentSlug) : undefined;
+  const isMaster = !currentSlug;
+  const label = current?.name ?? (isMaster ? "Prox" : "Select product");
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -24,6 +27,12 @@ export function ProductSwitcher({ currentSlug, variant = "panel" }: {
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
   }, []);
+
+  const MasterThumb = ({ size }: { size: number }) => (
+    <span className="grid shrink-0 place-items-center rounded-md bg-accent/10 text-accent" style={{ width: size, height: size }}>
+      <Boxes style={{ width: size * 0.6, height: size * 0.6 }} />
+    </span>
+  );
 
   const Thumb = ({ slug, name, size }: { slug?: string; name?: string; size: number }) => {
     const p = products.find((x) => x.slug === slug) ?? current;
@@ -42,18 +51,19 @@ export function ProductSwitcher({ currentSlug, variant = "panel" }: {
       {variant === "panel" ? (
         <button onClick={() => setOpen((v) => !v)}
           className="flex w-full items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-2 text-left transition hover:border-border-heavy">
-          <Thumb size={28} />
+          {isMaster ? <MasterThumb size={28} /> : <Thumb size={28} />}
           <div className="min-w-0 flex-1">
-            <div className="truncate text-[13px] font-medium text-foreground">{current?.name ?? "Select product"}</div>
-            {current?.manufacturer && <div className="truncate text-[11px] text-muted-foreground">{current.manufacturer}</div>}
+            <div className="truncate text-[13px] font-medium text-foreground">{label}</div>
+            {isMaster ? <div className="truncate text-[11px] text-muted-foreground">All products</div>
+              : current?.manufacturer && <div className="truncate text-[11px] text-muted-foreground">{current.manufacturer}</div>}
           </div>
           <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" />
         </button>
       ) : (
         <button onClick={() => setOpen((v) => !v)}
           className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-foreground/[0.06]">
-          <Thumb size={22} />
-          <span className="max-w-[40vw] truncate text-[13px] font-medium text-foreground sm:max-w-xs">{current?.name ?? "Select product"}</span>
+          {isMaster ? <MasterThumb size={22} /> : <Thumb size={22} />}
+          <span className="max-w-[40vw] truncate text-[13px] font-medium text-foreground sm:max-w-xs">{label}</span>
           <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
         </button>
       )}
@@ -62,6 +72,17 @@ export function ProductSwitcher({ currentSlug, variant = "panel" }: {
         {open && (
           <motion.div variants={dropdown} initial="hidden" animate="show" exit="exit"
             className="absolute left-0 top-full z-40 mt-1.5 min-w-[240px] origin-top-left overflow-hidden rounded-xl border border-border bg-popover p-1 shadow-[var(--shadow-card)]">
+            {/* Master mode — Prox with access to every product at once. */}
+            <Link href="/master" onClick={() => setOpen(false)}
+              className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 transition hover:bg-foreground/[0.06]">
+              <MasterThumb size={26} />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-[12.5px] text-foreground">Prox</div>
+                <div className="truncate text-[11px] text-muted-foreground">All products</div>
+              </div>
+              {isMaster && <Check className="size-3.5 shrink-0 text-accent" />}
+            </Link>
+            <div className="my-1 h-px bg-border" />
             {products.map((p) => (
               <Link key={p.id} href={`/${p.slug}`} onClick={() => setOpen(false)}
                 className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 transition hover:bg-foreground/[0.06]">

@@ -4,6 +4,7 @@ import type {
   Artifact, ChatSummary, ChatMessage, ManualKind, ChunkKind,
   ProviderKind, ArtifactKind, MessageBlock, MessageRole,
 } from "@prox/shared";
+import { isReservedSlug } from "@prox/shared";
 import { getDb } from "./connection";
 import { encryptSecret, decryptSecret } from "./crypto";
 
@@ -28,6 +29,11 @@ export function upsertProduct(p: {
   slug: string; name: string; manufacturer?: string | null;
   summary?: string | null; heroPath?: string | null;
 }): Product {
+  // Guard: a product must never take a reserved slug — it would shadow a static
+  // route like /master or /gallery.
+  if (isReservedSlug(p.slug)) {
+    throw new Error(`Slug "${p.slug}" is reserved and can't be used for a product. Pick a different slug.`);
+  }
   const existing = getProductBySlug(p.slug);
   if (existing) {
     db().prepare(
@@ -71,6 +77,24 @@ export function upsertManual(m: {
     `INSERT INTO manuals (id, product_id, kind, title, pdf_path, page_count) VALUES (?,?,?,?,?,?)`,
   ).run(id, m.productId, m.kind, m.title, m.pdfPath, m.pageCount);
   return { id, ...m };
+}
+
+// A non-PDF source (web page / youtube) reuses the `manuals` table but is keyed
+// by its URL (pdf_path) instead of kind, so a product can hold many of them.
+export function upsertSourceManual(m: {
+  productId: string; kind: ManualKind; title: string; sourceRef: string; pageCount: number;
+}): Manual {
+  const existing = db().prepare(`SELECT id FROM manuals WHERE product_id=? AND pdf_path=?`)
+    .get(m.productId, m.sourceRef) as { id: string } | undefined;
+  const id = existing?.id ?? randomUUID();
+  if (existing) {
+    db().prepare(`UPDATE manuals SET title=?, kind=?, page_count=? WHERE id=?`)
+      .run(m.title, m.kind, m.pageCount, id);
+  } else {
+    db().prepare(`INSERT INTO manuals (id, product_id, kind, title, pdf_path, page_count) VALUES (?,?,?,?,?,?)`)
+      .run(id, m.productId, m.kind, m.title, m.sourceRef, m.pageCount);
+  }
+  return { id, productId: m.productId, kind: m.kind, title: m.title, pdfPath: m.sourceRef, pageCount: m.pageCount };
 }
 
 // ─── Page images ───────────────────────────────────────────────────────────
@@ -126,6 +150,17 @@ export function insertChunk(c: {
   tx();
 }
 
+// Drop all chunks + vectors for a product so an ingest can rebuild them cleanly
+// (e.g. after the contextual-embedding change). Page renders + captions are kept
+// (the expensive part), so a re-ingest only re-embeds.
+export function deleteChunksByProduct(productId: string): void {
+  const tx = db().transaction(() => {
+    db().prepare(`DELETE FROM vec_chunks WHERE product_id = ?`).run(productId);
+    db().prepare(`DELETE FROM chunks WHERE product_id = ?`).run(productId);
+  });
+  tx();
+}
+
 export function matchChunks(
   productId: string, queryEmbedding: Float32Array, k: number, kinds?: ChunkKind[],
 ): SearchResult[] {
@@ -156,6 +191,23 @@ export function matchChunks(
     }))
     .sort((a, b) => b.score - a.score)
     .slice(0, k);
+}
+
+// Cross-product KNN for master mode. Loops every product and runs the existing
+// per-partition search, tagging each hit with its product, then keeps the global
+// top-k. A loop (not a single un-partitioned query) so attribution is exact and
+// we don't depend on sqlite-vec partition-omission semantics. Product count is
+// small; this is plenty fast.
+export function matchAllChunks(
+  queryEmbedding: Float32Array, k: number, kinds?: ChunkKind[],
+): SearchResult[] {
+  const all: SearchResult[] = [];
+  for (const p of listProducts()) {
+    for (const hit of matchChunks(p.id, queryEmbedding, k, kinds)) {
+      all.push({ ...hit, productSlug: p.slug, productName: p.name });
+    }
+  }
+  return all.sort((a, b) => b.score - a.score).slice(0, k);
 }
 
 // ─── Providers ─────────────────────────────────────────────────────────────
@@ -221,7 +273,8 @@ export function getProviderApiKey(id: string): string | null {
 }
 
 // ─── Chats + messages ──────────────────────────────────────────────────────
-export function createChat(productId: string, id?: string, title = "New chat"): ChatSummary {
+// productId null → a master (no-product) chat.
+export function createChat(productId: string | null, id?: string, title = "New chat"): ChatSummary {
   const chatId = id ?? randomUUID();
   db().prepare(`INSERT OR IGNORE INTO chats (id, product_id, title) VALUES (?,?,?)`)
     .run(chatId, productId, title);
@@ -235,6 +288,14 @@ export function listChats(productId: string): ChatSummary[] {
     `SELECT id, product_id AS productId, title, created_at AS createdAt
      FROM chats WHERE product_id=? ORDER BY created_at DESC`,
   ).all(productId) as ChatSummary[];
+}
+
+// Master-mode chat list: the no-product conversations.
+export function listMasterChats(): ChatSummary[] {
+  return db().prepare(
+    `SELECT id, product_id AS productId, title, created_at AS createdAt
+     FROM chats WHERE product_id IS NULL ORDER BY created_at DESC`,
+  ).all() as ChatSummary[];
 }
 
 export function renameChat(id: string, title: string): void {
@@ -257,6 +318,83 @@ export function setSetting(key: string, value: string): void {
 export function getAllSettings(): Record<string, string> {
   const rows = db().prepare(`SELECT key, value FROM settings`).all() as { key: string; value: string }[];
   return Object.fromEntries(rows.map((r) => [r.key, r.value]));
+}
+
+// ─── Suggested questions (frequency-driven) ─────────────────────────────────
+// The most-asked opening questions for a product (or all products when
+// productId is null → master). We take the FIRST user message of each chat as
+// its "question", normalize it, and rank by how many chats started with it, then
+// recency. `minCount` keeps one-off/chit-chat noise out of the empty state until
+// a question has actually been asked repeatedly.
+export function getFrequentQuestions(productId: string | null, limit = 6, minCount = 2): string[] {
+  const rows = db().prepare(
+    `SELECT m.chat_id AS chatId, m.role, m.content_json AS content, m.created_at AS createdAt
+     FROM messages m JOIN chats c ON c.id = m.chat_id
+     WHERE (? IS NULL OR c.product_id = ?)
+     ORDER BY m.created_at ASC`,
+  ).all(productId, productId) as { chatId: string; role: string; content: string; createdAt: string }[];
+
+  // Per chat: its opening user question + whether the chat actually engaged the
+  // product (assistant searched, cited a page, or showed a page image). The
+  // grounded flag filters out chit-chat / off-topic openers, so only real
+  // product questions surface as suggestions.
+  const firstByChat = new Map<string, { text: string; at: string; grounded: boolean }>();
+  for (const r of rows) {
+    let entry = firstByChat.get(r.chatId);
+    if (r.role === "user") {
+      if (entry?.text) continue; // keep only the first user message
+      let text = "";
+      try {
+        const blocks = JSON.parse(r.content) as { type: string; text?: string }[];
+        text = (blocks.find((b) => b.type === "text")?.text ?? "").trim();
+      } catch { /* skip */ }
+      if (text) firstByChat.set(r.chatId, { text, at: r.createdAt, grounded: entry?.grounded ?? false });
+    } else if (r.role === "assistant") {
+      let grounded = false;
+      try {
+        const blocks = JSON.parse(r.content) as { type: string; tool?: string }[];
+        grounded = blocks.some((b) => b.type === "page_image" || b.type === "citation" || (b.type === "tool" && /search/.test(b.tool ?? "")));
+      } catch { /* skip */ }
+      if (grounded) firstByChat.set(r.chatId, { text: entry?.text ?? "", at: entry?.at ?? r.createdAt, grounded: true });
+    }
+  }
+
+  const agg = new Map<string, { text: string; count: number; at: string }>();
+  for (const { text, at, grounded } of firstByChat.values()) {
+    if (!grounded || !text) continue; // only count real, product-engaged questions
+    const key = text.toLowerCase().replace(/\s+/g, " ").replace(/[?.!]+$/, "").trim();
+    if (!key) continue;
+    const cur = agg.get(key);
+    if (cur) { cur.count++; if (at > cur.at) cur.at = at; }
+    else agg.set(key, { text, count: 1, at });
+  }
+
+  return [...agg.values()]
+    .filter((x) => x.count >= minCount)
+    .sort((a, b) => b.count - a.count || (a.at < b.at ? 1 : -1))
+    .slice(0, limit)
+    .map((x) => x.text);
+}
+
+// Suggestions for a product's empty state: most-asked questions first, padded
+// with the ingest-generated starters (cold start), deduped. Master (null) has no
+// generated starters — the UI falls back to a generic set when this is empty.
+export function getSuggestions(productId: string | null, limit = 4): string[] {
+  const frequent = getFrequentQuestions(productId, limit, 2);
+  let generated: string[] = [];
+  if (productId) {
+    const raw = getSetting(`starters:${productId}`);
+    if (raw) { try { const a = JSON.parse(raw); if (Array.isArray(a)) generated = a.filter((s) => typeof s === "string"); } catch { /* ignore */ } }
+  }
+  const merged: string[] = [];
+  const seen = new Set<string>();
+  for (const q of [...frequent, ...generated]) {
+    const k = q.toLowerCase().trim();
+    if (!k || seen.has(k)) continue;
+    seen.add(k); merged.push(q);
+    if (merged.length >= limit) break;
+  }
+  return merged;
 }
 
 export function addMessage(chatId: string, role: MessageRole, content: MessageBlock[]): ChatMessage {
@@ -289,7 +427,7 @@ export function nextArtifactVersion(chatId: string | null | undefined, groupKey:
 }
 
 export function createArtifact(a: {
-  productId: string; chatId?: string | null; title: string; kind: ArtifactKind; code: string;
+  productId: string | null; chatId?: string | null; title: string; kind: ArtifactKind; code: string;
   groupKey?: string; version?: number;
 }): Artifact {
   const id = randomUUID();

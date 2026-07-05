@@ -19,12 +19,15 @@ export function attachLiveWs(server: Server) {
     if (AGENT_SECRET && req.headers["x-prox-secret"] !== AGENT_SECRET) {
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n"); socket.destroy(); return;
     }
-    const product = getProductBySlug(url.searchParams.get("product") ?? "");
-    if (!product) { socket.write("HTTP/1.1 404 Not Found\r\n\r\n"); socket.destroy(); return; }
-    const manuals = getManualsByProduct(product.id);
+    // No product (or "master") → a master live session that can search across all
+    // products. A given-but-unknown slug is still a 404 (stale link / typo).
+    const slug = url.searchParams.get("product") ?? "";
+    const product = slug && slug !== "master" ? getProductBySlug(slug) : null;
+    if (slug && slug !== "master" && !product) { socket.write("HTTP/1.1 404 Not Found\r\n\r\n"); socket.destroy(); return; }
+    const manuals = product ? getManualsByProduct(product.id) : [];
     const chatId = url.searchParams.get("chat") ?? "";
     wss.handleUpgrade(req, socket, head, (ws) => {
-      void new LiveSession(ws, product, manuals, chatId).start();
+      void new LiveSession(ws, product ?? null, manuals, chatId).start();
     });
   });
   // The browser runs the voice models on-device now; the server just streams LLM

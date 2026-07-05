@@ -18,6 +18,10 @@ export const sseEventSchema = z.discriminatedUnion("type", [
     manualKind: z.string(),
     manualTitle: z.string().optional(),
     caption: z.string().nullable().optional(),
+    // Which product this page belongs to — set so a cross-product citation opens
+    // the right product's page. Omitted/null in single-product mode.
+    productSlug: z.string().nullable().optional(),
+    productName: z.string().nullable().optional(),
   }),
   z.object({
     type: z.literal("artifact"),
@@ -32,6 +36,7 @@ export const sseEventSchema = z.discriminatedUnion("type", [
     citationId: z.string(),
     page: z.number(),
     manualKind: z.string(),
+    productSlug: z.string().nullable().optional(),
   }),
   z.object({ type: z.literal("title"), title: z.string() }),
   z.object({ type: z.literal("ask_user"), askId: z.string(), questions: z.array(askQuestionSchema) }),

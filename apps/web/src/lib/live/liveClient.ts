@@ -25,8 +25,9 @@ export class LiveClient {
   private static MAX_RECONNECT = 4;
   constructor(private h: LiveHandlers) {}
 
-  connect(productSlug: string, chatId: string) {
-    this.slug = productSlug; this.chatId = chatId;
+  connect(productSlug: string | null, chatId: string) {
+    // null slug = master mode → the server maps "master" to a no-product session.
+    this.slug = productSlug ?? "master"; this.chatId = chatId;
     this.closedByUser = false;
     this.open();
   }

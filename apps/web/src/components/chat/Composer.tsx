@@ -81,11 +81,11 @@ export function Composer({
         <textarea
           ref={taRef}
           name="message"
-          aria-label="Ask anything about this product"
+          aria-label="Ask anything"
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !(e.nativeEvent as any).isComposing) { e.preventDefault(); submit(); } }}
-          placeholder="Ask anything about this product…"
+          placeholder="Ask anything…"
           rows={1}
           className="prox-scroll block max-h-[200px] w-full resize-none bg-transparent px-4 pt-3.5 text-chat text-foreground outline-none placeholder:text-faint"
         />

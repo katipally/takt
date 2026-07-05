@@ -15,7 +15,7 @@ const PHASE_LABEL: Record<LivePhase, string> = {
 // Full-screen immersive Live conversation — a natural call: a reactive orb (or
 // the camera as the stage when it's on), minimal overlay captions, hands-free by
 // default with a push-to-talk override. The full transcript is saved to the chat.
-export function LiveStage({ chatId, productSlug, onExit }: { chatId: string; productSlug: string; onExit: () => void }) {
+export function LiveStage({ chatId, productSlug, onExit }: { chatId: string; productSlug: string | null; onExit: () => void }) {
   const { start, stop, toggleMute, setPtt, holdTalk, toggleCamera, getLevels, getSpeechProgress, refreshDevices, setMic, setCam } = useLiveSession(chatId, productSlug);
   const { active, phase, downloadPct, muted, pttEnabled, cameraOn, cameraStream, userCaption, userPartial, agentCaption, error, mics, cams, micId, camId } = useLiveStore();
 

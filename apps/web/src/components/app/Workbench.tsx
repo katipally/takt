@@ -23,8 +23,11 @@ import { STARTERS } from "@/lib/starters";
 import { quick } from "@/lib/motion";
 import { cn } from "@/lib/cn";
 
-export function Workbench({ slug, productName, starters }: { slug: string; productName: string; starters?: string[] }) {
+export function Workbench({ slug, productName, starters }: { slug: string | null; productName?: string; starters?: string[] }) {
   const wb = useWorkbench(slug);
+  const isMaster = !slug;
+  const basePath = slug ? `/${slug}` : "/master";
+  const heading = productName ?? (isMaster ? "Prox" : "");
   const empty = wb.messages.length === 0;
   const prompts = starters?.length ? starters : STARTERS;
   const { sidebarWidth, canvasWidth, setSidebarWidth, setCanvasWidth, sidebarCollapsed, toggleSidebar, liveOpen, setLiveOpen } = useUi();
@@ -77,7 +80,7 @@ export function Workbench({ slug, productName, starters }: { slug: string; produ
       wb.loadChat(chat);
     } else if (q) {
       wb.send(q);
-      window.history.replaceState(null, "", `/${slug}?chat=${wb.chatId}`);
+      window.history.replaceState(null, "", `${basePath}?chat=${wb.chatId}`);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -148,8 +151,10 @@ export function Workbench({ slug, productName, starters }: { slug: string; produ
               <div className="flex flex-1 flex-col items-center justify-center px-6 pb-12">
                 <div className="w-full max-w-2xl text-center">
                   <Wordmark size="lg" className="mb-4 inline-block" />
-                  <h1 className="text-[22px] font-semibold tracking-tight">{productName}</h1>
-                  <p className="mt-1.5 text-[13px] text-muted-foreground">Ask anything — answers are grounded in the manual, cited to the page, and drawn when words aren&apos;t enough.</p>
+                  <h1 className="text-[22px] font-semibold tracking-tight">{heading}</h1>
+                  <p className="mt-1.5 text-[13px] text-muted-foreground">{isMaster
+                    ? "Ask across all your products at once — or anything else. Answers cite the product and page they come from."
+                    : "Ask anything — answers are grounded in the manual, cited to the page, and drawn when words aren't enough."}</p>
                   <div className="mt-6 grid grid-cols-1 gap-2 sm:grid-cols-2">
                     {prompts.map((s) => (
                       <button key={s} onClick={() => wb.send(s)}
@@ -162,8 +167,8 @@ export function Workbench({ slug, productName, starters }: { slug: string; produ
               </div>
             ) : (
               <Transcript messages={wb.messages} branchInfo={wb.branchInfo} switchBranch={wb.switchBranch}
-                onCitation={wb.openCitation}
-                onOpenSource={(b) => wb.openSource({ url: b.url, page: b.page, manualKind: b.manualKind, manualTitle: b.manualTitle, caption: b.caption })}
+                onCitation={(page, product) => wb.openCitation(page, undefined, product)}
+                onOpenSource={(b) => wb.openSource({ url: b.url, page: b.page, manualKind: b.manualKind, manualTitle: b.manualTitle, caption: b.caption, productSlug: b.productSlug, productName: b.productName })}
                 onOpenArtifact={(b) => wb.openArtifact(b.artifactId)}
                 onRegenerate={wb.regenerate} onEdit={(node, text) => wb.editUser(node, text)} />
             )}
@@ -227,7 +232,7 @@ export function Workbench({ slug, productName, starters }: { slug: string; produ
       </AnimatePresence>
 
       <SourceModal source={wb.source} onClose={wb.closeSource}
-        onNavigate={(p) => wb.openCitation(p, wb.source?.manualKind)} />
+        onNavigate={(p) => wb.openCitation(p, wb.source?.manualKind, wb.source?.productSlug)} />
       <SettingsModal />
     </div>
   );

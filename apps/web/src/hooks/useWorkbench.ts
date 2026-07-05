@@ -11,7 +11,7 @@ export type { Node, Part, PageImagePart, ArtifactPart, CanvasState, Attachment, 
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random() + Date.now()));
 
-export function useWorkbench(productSlug: string) {
+export function useWorkbench(productSlug: string | null) {
   const [chatId, setChatId] = useState(uid);
   const voiceEnabled = useUi((s) => s.voiceEnabled);
   const setVoiceEnabled = useUi((s) => s.setVoiceEnabled);
@@ -43,10 +43,14 @@ export function useWorkbench(productSlug: string) {
   const openArtifact = useCallback((artifactId: string) => chatStore.openArtifact(chatId, artifactId), [chatId]);
   const closeCanvas = useCallback(() => chatStore.closeCanvas(chatId), [chatId]);
   const toggleCanvas = useCallback(() => chatStore.toggleCanvas(chatId), [chatId]);
-  const openCitation = useCallback(async (page: number, manual?: string) => {
+  // `product` overrides the workbench's slug — a cross-product citation (master
+  // mode) carries its own product so it opens the right page.
+  const openCitation = useCallback(async (page: number, manual?: string, product?: string | null) => {
+    const slug = product ?? productSlug;
+    if (!slug) return;
     try {
-      const r = await api.page(productSlug, page, manual);
-      chatStore.openSource(chatId, { url: r.url, page: r.page, manualKind: r.manualKind, manualTitle: r.manualTitle, caption: r.caption });
+      const r = await api.page(slug, page, manual);
+      chatStore.openSource(chatId, { url: r.url, page: r.page, manualKind: r.manualKind, manualTitle: r.manualTitle, caption: r.caption, productSlug: slug });
     } catch { /* page not found */ }
   }, [productSlug, chatId]);
 

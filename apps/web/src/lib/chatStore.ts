@@ -8,7 +8,7 @@ import { api } from "./api";
 // any branch point. Streams keep running per chatId even when another chat is
 // viewed — switching never cancels an in-flight answer.
 
-export interface PageImagePart { id: string; kind: "page_image"; citationId: string; url: string; page: number; manualKind: string; manualTitle?: string; caption?: string | null; }
+export interface PageImagePart { id: string; kind: "page_image"; citationId: string; url: string; page: number; manualKind: string; manualTitle?: string; caption?: string | null; productSlug?: string | null; productName?: string | null; }
 export interface ArtifactPart { id: string; kind: "artifact"; artifactId: string; title: string; artifactKind: "react" | "html"; groupKey: string; version: number; }
 export interface ReasoningPart { id: string; kind: "reasoning"; text: string; }
 export interface ToolPart { id: string; kind: "tool"; tool: string; summary?: string; detail?: string; status: "running" | "done"; }
@@ -22,7 +22,7 @@ export type Node =
   | { id: string; parentId: string | null; role: "user"; text: string; attachments?: Attachment[] }
   | { id: string; parentId: string | null; role: "assistant"; parts: Part[]; streaming: boolean; status?: string | null };
 
-export interface CanvasSource { url: string; page: number; manualKind: string; manualTitle?: string; caption?: string | null; }
+export interface CanvasSource { url: string; page: number; manualKind: string; manualTitle?: string; caption?: string | null; productSlug?: string | null; productName?: string | null; }
 // The right-hand canvas holds artifacts only. Manual pages (sources) open in a
 // modal instead — see `Session.source` and the SourceModal.
 export interface CanvasState { open: boolean; artifactId?: string }
@@ -30,7 +30,7 @@ export interface CanvasState { open: boolean; artifactId?: string }
 export interface Usage { contextTokens: number; outputTokens: number; costUsd: number; }
 
 export interface Session {
-  chatId: string; productSlug: string;
+  chatId: string; productSlug: string | null;
   nodes: Record<string, Node>;
   children: Record<string, string[]>; // parentKey -> ordered child ids
   active: Record<string, string>;     // parentKey -> selected child id
@@ -49,7 +49,7 @@ export interface BranchInfo { index: number; total: number; }
 const ROOT = "__root__";
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random() + Date.now()));
 const keyOf = (parentId: string | null) => parentId ?? ROOT;
-const blank = (chatId: string, productSlug: string): Session => ({
+const blank = (chatId: string, productSlug: string | null): Session => ({
   chatId, productSlug, nodes: {}, children: {}, active: {}, streaming: false,
   canvas: { open: false }, usage: { contextTokens: 0, outputTokens: 0, costUsd: 0 },
 });
@@ -58,7 +58,7 @@ const sessions = new Map<string, Session>();
 const perChat = new Map<string, Set<() => void>>();
 const notify = (chatId: string) => perChat.get(chatId)?.forEach((l) => l());
 
-export function getSession(chatId: string, productSlug = ""): Session {
+export function getSession(chatId: string, productSlug: string | null = null): Session {
   let s = sessions.get(chatId);
   if (!s) { s = blank(chatId, productSlug); sessions.set(chatId, s); }
   return s;
@@ -137,7 +137,7 @@ function applyStreamEvent(chatId: string, assistantId: string, e: import("@prox/
   else if (e.type === "tool_start") update(chatId, (s) => setStatus(patchAssistant(s, assistantId, (p) => [...p, { id: e.id, kind: "tool", tool: e.tool, summary: e.summary, status: "running" }]), assistantId, null));
   else if (e.type === "tool_done") update(chatId, (s) => patchAssistant(s, assistantId, (p) => p.map((q) => (q.kind === "tool" && q.id === e.id ? { ...q, status: "done", detail: e.detail } : q))));
   else if (e.type === "page_image") update(chatId, (s) =>
-    patchAssistant(s, assistantId, (p) => [...p, { id: uid(), kind: "page_image", citationId: e.citationId, url: e.url, page: e.page, manualKind: e.manualKind, manualTitle: e.manualTitle, caption: e.caption }]),
+    patchAssistant(s, assistantId, (p) => [...p, { id: uid(), kind: "page_image", citationId: e.citationId, url: e.url, page: e.page, manualKind: e.manualKind, manualTitle: e.manualTitle, caption: e.caption, productSlug: e.productSlug ?? null, productName: e.productName ?? null }]),
   );
   else if (e.type === "artifact") update(chatId, (s) => {
     const withPart = patchAssistant(s, assistantId, (p) => [...p, { id: uid(), kind: "artifact", artifactId: e.artifactId, title: e.title, artifactKind: e.kind, groupKey: e.groupKey, version: e.version }]);
@@ -155,7 +155,7 @@ function applyStreamEvent(chatId: string, assistantId: string, e: import("@prox/
 }
 
 // ── streaming ───────────────────────────────────────────────────────────────
-async function runStream(chatId: string, productSlug: string, userNodeId: string, attachments: Attachment[] | undefined, onFinalText?: (t: string) => void) {
+async function runStream(chatId: string, productSlug: string | null, userNodeId: string, attachments: Attachment[] | undefined, onFinalText?: (t: string) => void) {
   const assistantId = uid();
   const abort = new AbortController();
   update(chatId, (s) => {
@@ -193,7 +193,7 @@ export const chatStore = {
   // The live WebSocket drives turns instead of runStream. We still create the
   // user + assistant nodes and reuse applyStreamEvent, so a live conversation
   // renders in the normal transcript and its artifacts land on the Canvas.
-  liveUserTurn(chatId: string, productSlug: string, text: string): string {
+  liveUserTurn(chatId: string, productSlug: string | null, text: string): string {
     const s = getSession(chatId, productSlug);
     const path = activePath(s);
     const parentId = path.length ? path[path.length - 1]!.id : null;
@@ -236,7 +236,7 @@ export const chatStore = {
   toggleCanvas(chatId: string) { update(chatId, (s) => ({ ...s, canvas: { ...s.canvas, open: !s.canvas.open } })); },
 
   stop(chatId: string) { getSession(chatId).abort?.abort(); update(chatId, (s) => ({ ...s, streaming: false })); },
-  reset(chatId: string, productSlug: string) { sessions.set(chatId, blank(chatId, productSlug)); notify(chatId); },
+  reset(chatId: string, productSlug: string | null) { sessions.set(chatId, blank(chatId, productSlug)); notify(chatId); },
 
   // Switch which sibling branch is active at a node's level.
   switchBranch(chatId: string, node: Node, dir: -1 | 1) {
@@ -249,7 +249,7 @@ export const chatStore = {
     });
   },
 
-  async send(chatId: string, productSlug: string, text: string, attachments: Attachment[] | undefined, onFinalText?: (t: string) => void) {
+  async send(chatId: string, productSlug: string | null, text: string, attachments: Attachment[] | undefined, onFinalText?: (t: string) => void) {
     const s = getSession(chatId, productSlug);
     if (s.streaming || !text.trim()) return;
     const path = activePath(s);
@@ -259,14 +259,14 @@ export const chatStore = {
     await runStream(chatId, productSlug, userId, attachments, onFinalText);
   },
 
-  async editUser(chatId: string, productSlug: string, node: Node, text: string, onFinalText?: (t: string) => void) {
+  async editUser(chatId: string, productSlug: string | null, node: Node, text: string, onFinalText?: (t: string) => void) {
     if (node.role !== "user") return;
     const userId = uid();
     update(chatId, (x) => addNode(x, { id: userId, parentId: node.parentId, role: "user", text: text.trim(), attachments: node.attachments }));
     await runStream(chatId, productSlug, userId, node.attachments, onFinalText);
   },
 
-  async regenerate(chatId: string, productSlug: string, onFinalText?: (t: string) => void) {
+  async regenerate(chatId: string, productSlug: string | null, onFinalText?: (t: string) => void) {
     const s = getSession(chatId);
     if (s.streaming) return;
     const path = activePath(s);
@@ -290,7 +290,7 @@ export const chatStore = {
             if (b.type === "text" && b.text) parts.push({ id: uid(), kind: "text", text: b.text });
             else if (b.type === "reasoning" && b.text) parts.push({ id: uid(), kind: "reasoning", text: b.text });
             else if (b.type === "tool") parts.push({ id: uid(), kind: "tool", tool: b.tool, summary: b.summary, detail: b.detail, status: "done" });
-            else if (b.type === "page_image") parts.push({ id: uid(), kind: "page_image", citationId: b.citationId, url: b.url, page: b.page, manualKind: b.manualKind, manualTitle: b.manualTitle ?? undefined, caption: b.caption });
+            else if (b.type === "page_image") parts.push({ id: uid(), kind: "page_image", citationId: b.citationId, url: b.url, page: b.page, manualKind: b.manualKind, manualTitle: b.manualTitle ?? undefined, caption: b.caption, productSlug: b.productSlug ?? null, productName: b.productName ?? null });
             else if (b.type === "artifact") parts.push({ id: uid(), kind: "artifact", artifactId: b.artifactId, title: b.title, artifactKind: b.kind, groupKey: b.groupKey ?? b.artifactId, version: b.version ?? 1 });
             else if (b.type === "ask_user") parts.push({ id: uid(), kind: "ask", askId: b.askId, questions: b.questions, answers: b.answers, cancelled: b.cancelled });
           }

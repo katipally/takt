@@ -23,8 +23,10 @@ async function modelCost(provider: any, model: string): Promise<{ input: number;
 // Claude Agent SDK's query()). We own the message list, tool dispatch, and the
 // mapping from the normalized ProviderEvent stream to our SSE frames.
 export async function runAgent(req: ChatRequest, emit: Emit, signal?: AbortSignal): Promise<void> {
-  const product = getProductBySlug(req.productSlug);
-  if (!product) { await emit({ type: "error", message: `Unknown product "${req.productSlug}"` }); return; }
+  // No slug → master mode (search across all products). A slug that doesn't
+  // resolve is still an error (stale link / typo).
+  const product = (req.productSlug ? getProductBySlug(req.productSlug) : null) ?? null;
+  if (req.productSlug && !product) { await emit({ type: "error", message: `Unknown product "${req.productSlug}"` }); return; }
 
   // Tear down the turn when the user presses Stop (or navigates away): the web
   // proxy forwards its request abort signal all the way here.
@@ -34,7 +36,7 @@ export async function runAgent(req: ChatRequest, emit: Emit, signal?: AbortSigna
     else signal.addEventListener("abort", () => ac.abort(), { once: true });
   }
 
-  const manuals = getManualsByProduct(product.id);
+  const manuals = product ? getManualsByProduct(product.id) : [];
   const { provider, model, apiKey, effort } = resolveChat();
   if (!model) { await emit({ type: "error", message: "No model selected. Open Settings → Models and pick a model." }); return; }
   if (!apiKey && !provider.keyless) {

@@ -47,7 +47,9 @@ function buildHtml() {
     "motion/react": "https://esm.sh/framer-motion@11?external=react,react-dom",
     "recharts": "https://esm.sh/recharts@2.15.0?external=react,react-dom",
     "d3": "https://esm.sh/d3@7",
-    "three": "https://esm.sh/three@0.160.0"
+    "three": "https://esm.sh/three@0.160.0",
+    "mermaid": "https://esm.sh/mermaid@11",
+    "@google/model-viewer": "https://esm.sh/@google/model-viewer@4"
   }
 }
 </script>
@@ -272,6 +274,36 @@ function buildHtml() {
     });
   }
 
+  // Render any <pre class="mermaid"> / .mermaid nodes into diagrams. We stash the
+  // original diagram text on data-src so a theme switch can re-render from source
+  // (mermaid.run replaces the text with an SVG, so we can't re-theme in place).
+  async function runMermaid(){
+    var nodes = Array.prototype.slice.call(rootEl.querySelectorAll('.mermaid'));
+    if (!nodes.length) return;
+    try {
+      var mermaid = (await import('mermaid')).default;
+      var dark = document.documentElement.classList.contains('dark');
+      nodes.forEach(function(n){
+        if (n.dataset.src){ n.textContent = n.dataset.src; n.removeAttribute('data-processed'); }
+        else { n.dataset.src = n.textContent; }
+      });
+      mermaid.initialize({ startOnLoad:false, theme: dark ? 'dark' : 'default', securityLevel:'strict' });
+      await mermaid.run({ nodes: nodes });
+    } catch (e) { /* leave the diagram source visible if it won't parse */ }
+    postHeight();
+  }
+
+  // Load the <model-viewer> web component on demand when a 3D model is embedded.
+  // GLB must come from our own origin (the CSP + lint enforce /assets/ only).
+  var modelViewerLoaded = false;
+  async function loadModelViewer(){
+    if (modelViewerLoaded || !rootEl.querySelector('model-viewer')) return;
+    modelViewerLoaded = true;
+    try { await import('@google/model-viewer'); postHeight(); } catch (e) { /* stays inert */ }
+  }
+
+  function enhance(){ void runMermaid(); void loadModelViewer(); }
+
   function showError(err){
     rootEl.innerHTML = '<div class="prox-err">Artifact error:\\n' + (err && err.message ? err.message : err) + '</div>';
     postHeight(); ack();
@@ -279,7 +311,7 @@ function buildHtml() {
 
   async function renderArtifact(code, kind){
     try {
-      if (kind === 'html'){ rootEl.innerHTML = code; watchImages(); postHeight(); ack(); return; }
+      if (kind === 'html'){ rootEl.innerHTML = code; watchImages(); enhance(); postHeight(); ack(); return; }
       // Transform TSX/JSX → ES module (automatic runtime keeps imports intact;
       // the import map resolves them to esm.sh).
       var out = Babel.transform(code, {
@@ -297,7 +329,7 @@ function buildHtml() {
       var Comp = mod.default || window.__PROX_APP;
       if (!Comp) throw new Error('No component found. Export a component named App, e.g. export default function App() { ... }');
       root.render(React.createElement(Comp));
-      requestAnimationFrame(function(){ watchImages(); postHeight(); ack(); });
+      requestAnimationFrame(function(){ watchImages(); enhance(); postHeight(); ack(); });
     } catch (err) { showError(err); }
   }
 
@@ -310,7 +342,7 @@ function buildHtml() {
   window.addEventListener('message', (e) => {
     const d = e.data || {};
     if (!d || !d.__prox) return;
-    if (d.type === 'theme') { applyTheme(d.theme); return; }
+    if (d.type === 'theme') { applyTheme(d.theme); void runMermaid(); return; }
     if (d.type === 'render') {
       gotCode = true;
       if (readyTimer) { clearInterval(readyTimer); readyTimer = 0; }

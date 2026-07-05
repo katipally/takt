@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Settings, ArrowRight, Sparkles, ArrowUpRight, Plus } from "lucide-react";
+import { Settings, ArrowRight, Sparkles, ArrowUpRight, Plus, Boxes } from "lucide-react";
 import gsap from "gsap";
 import type { Product } from "@prox/shared";
 import { api } from "@/lib/api";
@@ -105,6 +105,11 @@ function Showcase({ products, active, setActive, product }: {
           </button>
         ))}
         <AddProductPill />
+        {/* Master mode — Prox across every product at once. */}
+        <Link href="/master" title="Ask across all products"
+          className="flex items-center gap-2 rounded-full border border-dashed border-border px-3 py-1.5 text-[13px] text-muted-foreground transition hover:border-border-heavy hover:text-foreground">
+          <Boxes className="size-4" /> Ask across all
+        </Link>
       </div>
 
       {/* Browser-chrome showcase card */}
@@ -203,7 +208,7 @@ function EmptyState() {
         <Plus className="size-4" /> Add product
       </button>
       <p className="mt-6 text-[12.5px] text-muted-foreground">Or from the command line:</p>
-      <pre className="mt-2 overflow-x-auto rounded-xl border border-border bg-surface p-4 font-mono text-[12px] text-foreground prox-scroll">pnpm ingest --product vulcan-omnipro-220 --name &quot;Vulcan OmniPro 220&quot; --manufacturer &quot;Vulcan&quot; --dir ../files</pre>
+      <pre className="mt-2 overflow-x-auto rounded-xl border border-border bg-surface p-4 font-mono text-[12px] text-foreground prox-scroll">pnpm ingest --product my-product --name &quot;My Product&quot; --dir ./files --url https://…</pre>
     </div>
   );
 }

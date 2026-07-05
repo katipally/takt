@@ -26,7 +26,7 @@ export class LiveSession {
   private lookPending: { reqId: string; resolve: (f: Frame | null) => void } | null = null;
   private awaitingLookFrame = false;
 
-  constructor(private ws: WebSocket, private product: Product, private manuals: Manual[], private chatId: string) {
+  constructor(private ws: WebSocket, private product: Product | null, private manuals: Manual[], private chatId: string) {
     const lookTool: ProxTool = {
       name: "look",
       description: "Capture a fresh, higher-resolution frame from the user's camera and see it right now. Use when you need a closer or more current look at what the user is showing you. If the camera is off this returns nothing — then ask the user to turn it on.",
@@ -53,7 +53,7 @@ export class LiveSession {
     // doesn't make the agent forget what was already said). No model warming —
     // the browser owns the voice models now.
     if (this.chatId) {
-      createChat(this.product.id, this.chatId);
+      createChat(this.product?.id ?? null, this.chatId);
       const prior = this.rehydrate();
       if (prior.length) this.runner.seed(prior);
     }
@@ -143,7 +143,7 @@ export class LiveSession {
       else if (e.type === "reasoning_delta") appendText("reasoning", e.text);
       else if (e.type === "tool_start") blocks.push({ type: "tool", id: e.id, tool: e.tool, summary: e.summary, status: "done" });
       else if (e.type === "tool_done") { const t = blocks.find((b) => b.type === "tool" && b.id === e.id); if (t && t.type === "tool") t.detail = e.detail; }
-      else if (e.type === "page_image") blocks.push({ type: "page_image", citationId: e.citationId, url: e.url, page: e.page, manualKind: e.manualKind as any, manualTitle: e.manualTitle ?? null, caption: e.caption ?? null });
+      else if (e.type === "page_image") blocks.push({ type: "page_image", citationId: e.citationId, url: e.url, page: e.page, manualKind: e.manualKind as any, manualTitle: e.manualTitle ?? null, caption: e.caption ?? null, productSlug: e.productSlug ?? null, productName: e.productName ?? null });
       else if (e.type === "artifact") blocks.push({ type: "artifact", artifactId: e.artifactId, title: e.title, kind: e.kind, groupKey: e.groupKey, version: e.version });
       this.send({ t: "sse", event: e });
     };

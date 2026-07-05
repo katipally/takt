@@ -31,7 +31,7 @@ export function AssistantMessage({
   isLast: boolean;
   branch: BranchInfo | null;
   onSwitch: (dir: -1 | 1) => void;
-  onCitation: (page: number) => void;
+  onCitation: (page: number, productSlug?: string | null) => void;
   onOpenSource: (b: PageImagePart) => void;
   onOpenArtifact: (b: ArtifactPart) => void;
   onRegenerate: () => void;
@@ -39,10 +39,20 @@ export function AssistantMessage({
   const speakingId = useSyncExternalStore(speech.subscribe, speech.speakingId, () => null);
   const speaking = speakingId === node.id;
 
+  // Which product this message's text `[p.N]` citations belong to. In master mode
+  // pages come from search_all_products/get_page_image tagged with a product; if
+  // this message references exactly one, its citation chips open that product.
+  const citeProduct = (() => {
+    const slugs = [...new Set(
+      node.parts.filter((p): p is PageImagePart => p.kind === "page_image").map((p) => p.productSlug).filter(Boolean),
+    )] as string[];
+    return slugs.length === 1 ? slugs[0]! : null;
+  })();
+
   const renderLink = ({ href }: { href: string; children: ReactNode }) => {
     if (href.startsWith("prox:cite:")) {
       const page = Number(href.slice("prox:cite:".length));
-      return <CitationChip page={page} onClick={() => onCitation(page)} />;
+      return <CitationChip page={page} onClick={() => onCitation(page, citeProduct)} />;
     }
     return undefined;
   };

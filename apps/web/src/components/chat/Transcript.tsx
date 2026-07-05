@@ -11,7 +11,7 @@ export function Transcript({
   messages: Node[];
   branchInfo: (n: Node) => BranchInfo | null;
   switchBranch: (n: Node, dir: -1 | 1) => void;
-  onCitation: (page: number) => void;
+  onCitation: (page: number, productSlug?: string | null) => void;
   onOpenSource: (b: PageImagePart) => void;
   onOpenArtifact: (b: ArtifactPart) => void;
   onRegenerate: () => void;

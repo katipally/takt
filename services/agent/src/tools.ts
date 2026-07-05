@@ -5,12 +5,32 @@ import sharp from "sharp";
 import { transform as esbuildTransform } from "esbuild";
 import { z, type ZodRawShape } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import type { Product, Manual, ManualKind, SseEvent, AskAnswer } from "@prox/shared";
+import type { Product, Manual, ManualKind, ChunkKind, SearchResult, SseEvent, AskAnswer } from "@prox/shared";
 import { artifactInputSchema, askQuestionsSchema } from "@prox/shared";
 import {
-  DATA_DIR, matchChunks, getPageImage, createArtifact, nextArtifactVersion, listProducts,
+  DATA_DIR, matchChunks, matchAllChunks, getPageImage, createArtifact, nextArtifactVersion,
+  listProducts, getProductBySlug,
 } from "@prox/db";
-import { embedQuery } from "@prox/embed";
+import { embedQuery, rerank } from "@prox/embed";
+
+// Retrieve: over-fetch KNN, then rerank to the requested top-k with the local
+// cross-encoder. Over-fetching gives the reranker room to promote the truly
+// relevant chunk that pure vector similarity ranked a few slots too low.
+async function retrieve(
+  query: string, product: Product | null, k: number, kinds?: ChunkKind[],
+): Promise<SearchResult[]> {
+  const vec = await embedQuery(query);
+  const fetchK = Math.max(k * 4, 24);
+  const pool = product ? matchChunks(product.id, vec, fetchK, kinds) : matchAllChunks(vec, fetchK, kinds);
+  if (pool.length <= k) return pool;
+  try {
+    const ranked = await rerank(query, pool.map((r) => r.content), k);
+    return ranked.map((r) => ({ ...pool[r.index]!, score: r.score }));
+  } catch {
+    // Reranker unavailable (model download failed etc.) → fall back to KNN order.
+    return pool.slice(0, k);
+  }
+}
 import { awaitAnswers } from "./pending.js";
 
 export type Emit = (e: SseEvent) => Promise<void> | void;
@@ -32,6 +52,20 @@ export interface ToolResult {
 const WEB_URL = () => process.env.WEB_PUBLIC_URL ?? "http://localhost:3000";
 const text = (t: string): ToolResult => ({ output: t });
 const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 64) || "artifact";
+
+// Minimal HTML → text for fetch_url: drop script/style, strip tags, unescape the
+// common entities, collapse whitespace. ponytail: naive strip, not a full
+// readability parse — enough to give the model the page's words.
+function htmlToText(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&quot;/g, '"')
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 // Zod shape → JSON Schema for the model. Inline refs and drop $schema so every
 // provider adapter (Anthropic input_schema / OpenAI parameters / Google) accepts it.
@@ -65,18 +99,31 @@ export function lintArtifact(code: string): string[] {
   if (/<(div|p|li)\b[^>]*>\s*[.:;,]+\s*<\/\1>/i.test(code)) {
     issues.push("Remove stray punctuation elements (a block whose only content is '.' or ':').");
   }
+  // 5. A <model-viewer> 3D model must load an ingested asset (/assets/…), never
+  //    an external URL — the sandbox CSP only allows our own origin.
+  const badModel = [...code.matchAll(/<model-viewer[^>]*\bsrc=["']([^"']+)["']/gi)]
+    .map((m) => m[1]!).find((u) => !u.includes("/assets/") && !u.startsWith("data:") && !u.startsWith("blob:"));
+  if (badModel) issues.push(`3D model src "${badModel}" is not an ingested asset. A <model-viewer> src must point to an ingested /assets/ .glb — never an external URL.`);
   return issues;
 }
 
 const formatAnswer = (a: AskAnswer) =>
   a.skipped ? "(skipped — no preference)" : Array.isArray(a.answer) ? a.answer.join(", ") : a.answer;
 
-export function buildProxTools(ctx: { product: Product; manuals: Manual[]; emit: Emit; chatId?: string }): ProxTool[] {
+export function buildProxTools(ctx: { product: Product | null; manuals: Manual[]; emit: Emit; chatId?: string }): ProxTool[] {
   const { product, emit, chatId } = ctx;
+  // Master mode = no single product selected → cross-product tools; the page
+  // tools then require a `product` slug to say which product to read from.
+  const masterMode = !product;
+
+  // Which product a page tool should read: the bound one in single-product mode,
+  // or the slug the model passed in master mode.
+  const pageProduct = (args: any): Product | null =>
+    product ?? (args.product ? getProductBySlug(String(args.product)) ?? null : null);
 
   const searchManual: ProxTool = {
     name: "search_manual",
-    description: "Search this product's manuals (text and image/diagram/table captions) for relevant passages. Returns page-cited snippets. Call this before stating any spec, setting, or procedure.",
+    description: "Search this product's manuals (text and image/diagram/table captions) for relevant passages. Returns page-cited snippets. Use this whenever the answer depends on the product's documentation — specs, settings, procedures, numbers.",
     parameters: params({
       query: z.string().describe("What to look up, in natural language"),
       kinds: z.array(z.enum(["text", "image_caption"])).optional()
@@ -86,12 +133,35 @@ export function buildProxTools(ctx: { product: Product; manuals: Manual[]; emit:
     execute: async (args) => {
       const id = randomUUID();
       await emit({ type: "tool_start", id, tool: "search_manual", summary: args.query });
-      const vec = await embedQuery(args.query);
-      const results = matchChunks(product.id, vec, args.k ?? 6, args.kinds as any);
+      const results = await retrieve(args.query, product, args.k ?? 6, args.kinds as any);
       await emit({ type: "tool_done", id, detail: `${results.length} passage${results.length === 1 ? "" : "s"}` });
       if (!results.length) return text("No matching passages found in the manuals.");
       const body = results
         .map((r) => `[${r.manualTitle} p.${r.pageNumber} · ${r.kind}]\n${r.content}`)
+        .join("\n\n---\n\n");
+      return text(body);
+    },
+  };
+
+  // Master-mode search across every product. Each snippet says which product it
+  // came from so the model can attribute and compare.
+  const searchAllProducts: ProxTool = {
+    name: "search_all_products",
+    description: "Search across ALL indexed products at once (text + image/diagram/table captions). Returns page-cited snippets, each tagged with the product it came from. Use this in master mode to answer or compare across products; always tell the user which product a fact came from. To then read a specific page, call get_page_image with that product's slug.",
+    parameters: params({
+      query: z.string().describe("What to look up, in natural language"),
+      kinds: z.array(z.enum(["text", "image_caption"])).optional()
+        .describe("Restrict to chunk kinds; omit for all"),
+      k: z.number().int().min(1).max(16).optional().describe("How many results total (default 8)"),
+    }),
+    execute: async (args) => {
+      const id = randomUUID();
+      await emit({ type: "tool_start", id, tool: "search_all_products", summary: args.query });
+      const results = await retrieve(args.query, null, args.k ?? 8, args.kinds as any);
+      await emit({ type: "tool_done", id, detail: `${results.length} passage${results.length === 1 ? "" : "s"}` });
+      if (!results.length) return text("No matching passages found in any product's sources.");
+      const body = results
+        .map((r) => `[${r.productName} · ${r.manualTitle} p.${r.pageNumber} · ${r.kind}]\n${r.content}`)
         .join("\n\n---\n\n");
       return text(body);
     },
@@ -104,18 +174,22 @@ export function buildProxTools(ctx: { product: Product; manuals: Manual[]; emit:
       page: z.number().int().min(1).describe("Page number"),
       manual: z.enum(["owner", "quick_start", "selection_chart", "other"]).optional()
         .describe("Which manual (omit to use any)"),
+      ...(masterMode ? { product: z.string().describe("Which product's page — pass its slug (required in master mode). Get slugs from list_products / search_all_products.") } : {}),
     }),
     execute: async (args) => {
       const id = randomUUID();
       await emit({ type: "tool_start", id, tool: "get_page_image", summary: `page ${args.page}` });
-      const pi = getPageImage(product.id, (args.manual as ManualKind) ?? null, args.page);
+      const prod = pageProduct(args);
+      if (!prod) { await emit({ type: "tool_done", id, detail: "no product" }); return text("Specify which product to read from by passing its `product` slug (see list_products)."); }
+      const pi = getPageImage(prod.id, (args.manual as ManualKind) ?? null, args.page);
       await emit({ type: "tool_done", id, detail: pi ? `p.${pi.pageNumber}` : "not found" });
-      if (!pi) return text(`No page ${args.page} found for ${args.manual ?? "this product"}.`);
+      if (!pi) return text(`No page ${args.page} found for ${args.manual ?? prod.name}.`);
       const citationId = randomUUID();
       const url = `${WEB_URL()}/assets/${pi.pngPath}`;
       await emit({
         type: "page_image", citationId, url,
         page: pi.pageNumber, manualKind: pi.manualKind, manualTitle: pi.manualTitle, caption: pi.caption,
+        productSlug: prod.slug, productName: prod.name,
       });
       let images: ToolResult["images"];
       try {
@@ -139,12 +213,15 @@ export function buildProxTools(ctx: { product: Product; manuals: Manual[]; emit:
       y: z.number().min(0).max(1).describe("Top edge of the crop, as a fraction of page height (0-1)"),
       w: z.number().min(0.02).max(1).describe("Crop width, as a fraction of page width (0-1)"),
       h: z.number().min(0.02).max(1).describe("Crop height, as a fraction of page height (0-1)"),
+      ...(masterMode ? { product: z.string().describe("Which product's page — pass its slug (required in master mode).") } : {}),
     }),
     execute: async (args) => {
       const id = randomUUID();
       await emit({ type: "tool_start", id, tool: "crop_page_image", summary: `page ${args.page}` });
-      const pi = getPageImage(product.id, (args.manual as ManualKind) ?? null, args.page);
-      if (!pi) { await emit({ type: "tool_done", id, detail: "not found" }); return text(`No page ${args.page} found for ${args.manual ?? "this product"}.`); }
+      const prod = pageProduct(args);
+      if (!prod) { await emit({ type: "tool_done", id, detail: "no product" }); return text("Specify which product to read from by passing its `product` slug (see list_products)."); }
+      const pi = getPageImage(prod.id, (args.manual as ManualKind) ?? null, args.page);
+      if (!pi) { await emit({ type: "tool_done", id, detail: "not found" }); return text(`No page ${args.page} found for ${args.manual ?? prod.name}.`); }
       const src = resolve(DATA_DIR, pi.pngPath);
       // Read real pixel dims from the file — don't trust the DB column.
       let imgW = 0, imgH = 0;
@@ -172,6 +249,7 @@ export function buildProxTools(ctx: { product: Product; manuals: Manual[]; emit:
       await emit({
         type: "page_image", citationId, url,
         page: pi.pageNumber, manualKind: pi.manualKind, manualTitle: pi.manualTitle, caption: pi.caption,
+        productSlug: prod.slug, productName: prod.name,
       });
       await emit({ type: "tool_done", id, detail: `p.${pi.pageNumber} crop` });
       let images: ToolResult["images"];
@@ -183,7 +261,8 @@ export function buildProxTools(ctx: { product: Product; manuals: Manual[]; emit:
 
   const emitArtifact: ProxTool = {
     name: "emit_artifact",
-    description: "Publish the answer as a designed artifact in the user's Artifacts panel — the primary deliverable for substantive questions. You have full design freedom over layout, components and interactions; design what best fits THIS question. Kinds: 'html' for designed/explanatory answers, 'react' for interactive ones (`export default function App(){...}`, real ES module imports from react, lucide-react, framer-motion, recharts, d3, three).\n" +
+    description: "Publish the answer as a designed artifact in the user's Artifacts panel — reach for this when a designed, visual, or interactive answer beats plain text (a diagram, calculator, schematic, annotated page, comparison, procedure); skip it for simple replies. You have full design freedom over layout, components and interactions; design what best fits THIS question. Kinds: 'html' for designed/explanatory answers, 'react' for interactive ones (`export default function App(){...}`, real ES module imports from react, lucide-react, framer-motion, recharts, d3, three).\n" +
+      "DIAGRAMS: for flowcharts/sequences/state/gantt, put Mermaid syntax inside a `<pre class=\"mermaid\">…</pre>` — it renders as a themed diagram (works in html and react). 3D: embed an ingested model with `<model-viewer src=\"/assets/…​.glb\" camera-controls>` (the src MUST be a real /assets/ asset, never an external URL).\n" +
       "ONE HARD RULE — theme consistency: the artifact must read perfectly in BOTH light and dark. For ANY color/background/border/text-color use ONLY the theme tokens var(--prox-fg/-muted/-card/-surface/-border/-accent/-arc/-success/-danger) and their -soft tints — NEVER bg-white, bg-gray-50, bg-blue-50, text-black, #fff, color:#000 (they break dark mode). Tailwind for LAYOUT only.\n" +
       "Practical: size to content (no min-h-screen/h-screen/100vh); stay readable narrow AND wide. Images: embed ONLY a real crop_page_image/get_page_image URL (contains /assets/) at FULL WIDTH inside a .prox-figure — NEVER crop or shift an image with a CSS transform (scale/translate) or .prox-crop (it clips labels); if a label is cut off, call crop_page_image again with a wider region. Never invent an image URL. Citations: inline plain text right after the claim (e.g. `... [p.18].`) — NEVER put a citation alone in a box/card/callout/border (it renders as an empty box). No empty elements or stray punctuation. The artifact is checked before it's shown; if it's rejected, fix exactly what's listed and re-emit with the SAME `key`. To revise, call emit_artifact again with the SAME `key` (new VERSION); use a NEW `key` for a different artifact.",
     parameters: params(artifactInputSchema.shape),
@@ -214,7 +293,7 @@ export function buildProxTools(ctx: { product: Product; manuals: Manual[]; emit:
       const groupKey = parsed.data.key ? slugify(parsed.data.key) : slugify(parsed.data.title);
       const version = nextArtifactVersion(chatId, groupKey);
       const artifact = createArtifact({
-        productId: product.id, chatId: chatId ?? null, title: parsed.data.title, kind: parsed.data.kind, code: parsed.data.code,
+        productId: product?.id ?? null, chatId: chatId ?? null, title: parsed.data.title, kind: parsed.data.kind, code: parsed.data.code,
         groupKey, version,
       });
       await emit({ type: "artifact", artifactId: artifact.id, title: artifact.title, kind: artifact.kind, groupKey, version });
@@ -225,11 +304,40 @@ export function buildProxTools(ctx: { product: Product; manuals: Manual[]; emit:
 
   const listProductsTool: ProxTool = {
     name: "list_products",
-    description: "List all products Prox can answer about (you are currently focused on one).",
+    description: "List every product Prox has indexed data for (name, manufacturer, slug).",
     parameters: params({}),
     execute: async () => {
       const products = listProducts();
       return text(products.map((p) => `- ${p.name}${p.manufacturer ? ` (${p.manufacturer})` : ""} [${p.slug}]`).join("\n"));
+    },
+  };
+
+  // General-agent capability: read a web page's text. Zero-key. Available in both
+  // single-product and master mode so Prox can pull in outside context on request.
+  const fetchUrl: ProxTool = {
+    name: "fetch_url",
+    description: "Fetch a web page and return its readable text. Use when the user asks about a specific URL or wants information from a page. Returns plain text (scripts/markup stripped).",
+    parameters: params({
+      url: z.string().describe("The absolute http(s) URL to fetch"),
+    }),
+    execute: async (args) => {
+      const id = randomUUID();
+      const raw = String(args.url ?? "").trim();
+      await emit({ type: "tool_start", id, tool: "fetch_url", summary: raw });
+      let url: URL;
+      try { url = new URL(raw); } catch { await emit({ type: "tool_done", id, detail: "bad url" }); return text(`"${raw}" is not a valid URL.`); }
+      if (url.protocol !== "http:" && url.protocol !== "https:") { await emit({ type: "tool_done", id, detail: "blocked" }); return text("Only http(s) URLs are allowed."); }
+      try {
+        const res = await fetch(url, { signal: AbortSignal.timeout(15_000), headers: { "user-agent": "ProxBot/1.0" } });
+        if (!res.ok) { await emit({ type: "tool_done", id, detail: `HTTP ${res.status}` }); return text(`Fetch failed: HTTP ${res.status}.`); }
+        const html = await res.text();
+        const body = htmlToText(html).slice(0, 20_000);
+        await emit({ type: "tool_done", id, detail: `${body.length} chars` });
+        return text(body || "(no readable text found on the page)");
+      } catch (e: any) {
+        await emit({ type: "tool_done", id, detail: "error" });
+        return text(`Could not fetch the page: ${String(e?.message ?? e)}`);
+      }
     },
   };
 
@@ -255,5 +363,8 @@ export function buildProxTools(ctx: { product: Product; manuals: Manual[]; emit:
     },
   };
 
-  return [searchManual, getPageImageTool, cropPageImage, emitArtifact, listProductsTool, askUser];
+  // Single-product mode searches the bound product; master mode searches across
+  // all. list_products + fetch_url are available in both.
+  const searchTool = masterMode ? searchAllProducts : searchManual;
+  return [searchTool, getPageImageTool, cropPageImage, emitArtifact, listProductsTool, askUser, fetchUrl];
 }

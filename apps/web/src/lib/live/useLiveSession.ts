@@ -12,7 +12,7 @@ import { useLiveStore } from "./liveStore";
 // on-device; this hook wires it to the /live socket (final text + camera frames
 // + cancel), the camera, and the chat store, and owns a single leak-proof
 // teardown that every close path routes through.
-export function useLiveSession(chatId: string, productSlug: string) {
+export function useLiveSession(chatId: string, productSlug: string | null) {
   const set = useLiveStore((s) => s.set);
   const client = useRef<LiveClient | null>(null);
   const engine = useRef<VoiceEngine | null>(null);

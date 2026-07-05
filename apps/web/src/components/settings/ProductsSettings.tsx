@@ -66,6 +66,7 @@ function AddProduct() {
   const [name, setName] = useState("");
   const [manufacturer, setManufacturer] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const [urls, setUrls] = useState("");
   const [hero, setHero] = useState<File | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const [estimate, setEstimate] = useState<Estimate | null>(null);
@@ -75,9 +76,10 @@ function AddProduct() {
 
   const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
   const busy = phase === "estimating" || phase === "ingesting";
+  const hasUrls = urls.split(/[\n,]+/).some((u) => /^https?:\/\//i.test(u.trim()));
 
   function reset() {
-    setName(""); setManufacturer(""); setFiles([]); setHero(null);
+    setName(""); setManufacturer(""); setFiles([]); setUrls(""); setHero(null);
     setEstimate(null); setPhase("done");
   }
 
@@ -103,6 +105,7 @@ function AddProduct() {
     const fd = new FormData();
     fd.set("name", name.trim()); fd.set("slug", slug); fd.set("manufacturer", manufacturer.trim());
     files.forEach((f) => fd.append("pdfs", f));
+    if (urls.trim()) fd.set("urls", urls.trim());
     if (hero) fd.set("hero", hero);
     try {
       const res = await fetch("/api/products/ingest", { method: "POST", body: fd });
@@ -133,7 +136,7 @@ function AddProduct() {
     <section>
       <h2 className="text-[15px] font-semibold">Add a product</h2>
       <p className="mt-1 text-[12.5px] text-muted-foreground">
-        Upload the product&apos;s manuals (PDF). Prox renders every page, reads diagrams and tables with the ingestion model, and builds the search index — then it shows up here, no redeploy.
+        Add the product&apos;s manuals as PDFs (Prox renders every page and reads its diagrams/tables), and/or paste source links — web pages and YouTube videos are ingested as searchable text. Everything lands in one index, no redeploy.
       </p>
       <div className="mt-4 grid grid-cols-2 gap-2">
         <input className={inputCls} name="product-name" placeholder="Product name" aria-label="Product name" value={name} onChange={(e) => setName(e.target.value)} />
@@ -169,6 +172,12 @@ function AddProduct() {
         </div>
       )}
 
+      <textarea className={cn(inputCls, "mt-2 min-h-[64px] resize-y font-mono text-[12px]")}
+        placeholder={"Source links (optional) — one per line\nhttps://en.wikipedia.org/wiki/…\nhttps://youtube.com/watch?v=…"}
+        aria-label="Source URLs" value={urls}
+        onChange={(e) => { setUrls(e.target.value); setEstimate(null); if (phase !== "ingesting") setPhase("idle"); }} />
+      {hasUrls && !files.length && <p className="mt-1 text-[11px] text-muted-foreground">Text-only sources index for free (no page rendering).</p>}
+
       {/* Estimate / confirm panel — shown before any paid call runs. */}
       {phase === "confirm" && estimate && (
         <div className="mt-3 rounded-xl border border-border bg-surface p-4">
@@ -202,7 +211,9 @@ function AddProduct() {
 
       {phase !== "confirm" && (
         <div className="mt-3 flex items-center gap-3">
-          <button onClick={getEstimate} disabled={busy || !name.trim() || !files.length}
+          {/* PDFs go through the cost estimate first; URL-only sources are text-only
+              (free) so they ingest directly. */}
+          <button onClick={() => (files.length ? getEstimate() : runIngest())} disabled={busy || !name.trim() || (!files.length && !hasUrls)}
             className="flex items-center gap-2 rounded-lg bg-foreground px-3.5 py-2 text-[13px] font-medium text-background transition hover:opacity-90 disabled:opacity-30">
             {busy && <Loader2 className="size-4 animate-spin" />} {phase === "estimating" ? "Estimating…" : phase === "ingesting" ? "Indexing…" : "Add product"}
           </button>

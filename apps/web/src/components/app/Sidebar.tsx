@@ -14,12 +14,14 @@ import { ThemeToggle } from "@/components/ui/ThemeToggle";
 export function Sidebar({
   currentSlug, onNewChat, onSelectChat, activeChatId,
 }: {
-  currentSlug: string;
+  currentSlug: string | null;
   onNewChat: () => void;
   onSelectChat: (id: string) => void;
   activeChatId: string;
 }) {
-  const { data: chats = [] } = useQuery({ queryKey: ["chats", currentSlug], queryFn: () => api.chats(currentSlug), refetchInterval: 4000 });
+  // null slug = master mode → the no-product chat list (server maps "master").
+  const chatKey = currentSlug ?? "master";
+  const { data: chats = [] } = useQuery({ queryKey: ["chats", chatKey], queryFn: () => api.chats(chatKey), refetchInterval: 4000 });
   const openSettings = useUi((s) => s.openSettings);
   const toggleSidebar = useUi((s) => s.toggleSidebar);
 
@@ -42,13 +44,13 @@ export function Sidebar({
       <div className="prox-scroll mt-3 flex-1 overflow-y-auto px-2.5">
         {chats.length > 0 && <div className="px-2 pb-1 text-[11px] uppercase tracking-wide text-faint">Recent</div>}
         {chats.map((c) => (
-          <ChatRow key={c.id} chat={c} active={c.id === activeChatId} productSlug={currentSlug}
+          <ChatRow key={c.id} chat={c} active={c.id === activeChatId} productSlug={chatKey}
             onSelect={() => onSelectChat(c.id)} onNewChat={onNewChat} />
         ))}
       </div>
 
       <div className="border-t border-border p-2.5">
-        <SideLink href={`/gallery/${currentSlug}`} icon={<Boxes className="size-4" />}>Artifact gallery</SideLink>
+        {currentSlug && <SideLink href={`/gallery/${currentSlug}`} icon={<Boxes className="size-4" />}>Artifact gallery</SideLink>}
         <div className="flex items-center gap-1">
           <button onClick={() => openSettings()} className="flex flex-1 items-center gap-2 rounded-full px-2.5 py-2 text-[13px] text-muted-foreground transition hover:bg-foreground/[0.06] hover:text-foreground">
             <Settings className="size-4" /> Settings

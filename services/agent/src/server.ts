@@ -4,7 +4,7 @@ import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
 import type { ChatRequest, MessageBlock, SseEvent } from "@prox/shared";
 import { askAnswerPayloadSchema } from "@prox/shared";
-import { getProductBySlug, createChat, listChats, addMessage, renameChat, loadEnv } from "@prox/db";
+import { getProductBySlug, createChat, listChats, listMasterChats, addMessage, renameChat, loadEnv } from "@prox/db";
 import { ingestProduct, countPdfPages } from "@prox/ingest";
 import { extname } from "node:path";
 import { catalogModels } from "@prox/harness";
@@ -47,11 +47,12 @@ app.get("/health", (c) => c.json({ ok: true }));
 
 app.post("/chat", async (c) => {
   const req = (await c.req.json()) as ChatRequest;
-  const product = getProductBySlug(req.productSlug);
+  const product = req.productSlug ? getProductBySlug(req.productSlug) : undefined;
   const lastUser = req.messages[req.messages.length - 1]?.text ?? "";
   const isFirstTurn = req.messages.length <= 1;
 
-  if (product && req.chatId) createChat(product.id, req.chatId);
+  // Create the chat (master chats have a null product_id).
+  if (req.chatId) createChat(product?.id ?? null, req.chatId);
 
   return streamSSE(c, async (stream) => {
     // Accumulate the assistant turn AS AN ORDERED block list so reasoning, tool
@@ -71,7 +72,7 @@ app.post("/chat", async (c) => {
         const t = blocks.find((b) => b.type === "tool" && b.id === e.id);
         if (t && t.type === "tool") t.detail = e.detail;
       } else if (e.type === "page_image")
-        blocks.push({ type: "page_image", citationId: e.citationId, url: e.url, page: e.page, manualKind: e.manualKind as any, manualTitle: e.manualTitle ?? null, caption: e.caption ?? null });
+        blocks.push({ type: "page_image", citationId: e.citationId, url: e.url, page: e.page, manualKind: e.manualKind as any, manualTitle: e.manualTitle ?? null, caption: e.caption ?? null, productSlug: e.productSlug ?? null, productName: e.productName ?? null });
       else if (e.type === "artifact")
         blocks.push({ type: "artifact", artifactId: e.artifactId, title: e.title, kind: e.kind, groupKey: e.groupKey, version: e.version });
       else if (e.type === "ask_user")
@@ -113,7 +114,10 @@ app.post("/chat/answer", async (c) => {
 });
 
 app.get("/chats", (c) => {
-  const product = getProductBySlug(c.req.query("product") ?? "");
+  const slug = c.req.query("product") ?? "";
+  // "master" (or empty) → the no-product chat list; otherwise this product's.
+  if (!slug || slug === "master") return c.json(listMasterChats());
+  const product = getProductBySlug(slug);
   return c.json(product ? listChats(product.id) : []);
 });
 
@@ -146,21 +150,25 @@ app.post("/ingest", async (c) => {
   const slug = String(form.get("slug") ?? "").trim();
   const manufacturer = String(form.get("manufacturer") ?? "").trim() || null;
   const pdfFiles = form.getAll("pdfs").filter((f) => typeof f !== "string") as unknown as File[];
+  // Web/YouTube source URLs (newline- or comma-separated), text-only.
+  const urls = String(form.get("urls") ?? "").split(/[\n,]+/).map((u) => u.trim()).filter((u) => /^https?:\/\//i.test(u));
   const heroFile = form.get("hero");
 
   return streamSSE(c, async (stream) => {
     const emit = (e: SseEvent) => stream.writeSSE({ data: JSON.stringify(e) });
-    if (!name || !slug || !pdfFiles.length) { await emit({ type: "error", message: "Name and at least one PDF are required." }); return; }
+    if (!name || !slug || (!pdfFiles.length && !urls.length)) { await emit({ type: "error", message: "A name and at least one PDF or source URL are required." }); return; }
     const cap = resolveCaption();
-    if (!cap.model) { await emit({ type: "error", message: "No ingestion model selected. Pick one in Settings → Models before adding a product." }); return; }
-    if (!cap.apiKey && !cap.provider.keyless) { await emit({ type: "error", message: `No API key for ${cap.provider.name}. Add your key in Settings → Models before adding a product.` }); return; }
+    // A model is only strictly required when captioning PDF pages; URL-only
+    // products are text-only, but we still want a model for starter questions.
+    if (pdfFiles.length && !cap.model) { await emit({ type: "error", message: "No ingestion model selected. Pick one in Settings → Models before adding a product." }); return; }
+    if (pdfFiles.length && !cap.apiKey && !cap.provider.keyless) { await emit({ type: "error", message: `No API key for ${cap.provider.name}. Add your key in Settings → Models before adding a product.` }); return; }
     try {
       const pdfs = await Promise.all(pdfFiles.map(async (f) => ({ filename: f.name, data: new Uint8Array(await f.arrayBuffer()) })));
       const hero = heroFile && typeof heroFile !== "string"
         ? { ext: extname((heroFile as File).name) || ".png", data: new Uint8Array(await (heroFile as File).arrayBuffer()) }
         : undefined;
       const result = await ingestProduct({
-        slug, name, manufacturer, pdfs, hero,
+        slug, name, manufacturer, pdfs, webSources: urls.map((url) => ({ url })), hero,
         captionProvider: cap.provider, captionModel: cap.model, apiKey: cap.apiKey ?? undefined,
         onProgress: (m) => emit({ type: "tool_start", id: "ingest", tool: "ingest", summary: m }),
       });
