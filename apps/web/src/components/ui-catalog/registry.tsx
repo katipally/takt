@@ -22,7 +22,7 @@ export const REGISTRY: Record<string, R> = {
   Chart: (p) => <Chart props={p.props} />,
   Mermaid: (p) => <Mermaid props={p.props} />,
   Model3D: (p) => <Model3D props={p.props} />,
-  Sandbox: (p) => <Sandbox props={p.props} />,
+  Sandbox: (p) => <Sandbox props={p.props} onAction={(v) => p.ctx.onAction?.((p.props as { actionId?: string }).actionId ?? "sandbox", v)} />,
 };
 
 export const CONTAINERS = new Set(["Section", "Columns", "Card"]);
