@@ -1,4 +1,4 @@
-import type { ChatRequest, AskQuestion, AskAnswer } from "@takt/shared";
+import type { ChatRequest, AskQuestion, AskAnswer, UISurface } from "@takt/shared";
 import { streamChat } from "./sse-client";
 import { api } from "./api";
 
@@ -14,7 +14,13 @@ export interface ReasoningPart { id: string; kind: "reasoning"; text: string; }
 export interface ToolPart { id: string; kind: "tool"; tool: string; summary?: string; detail?: string; status: "running" | "done"; }
 export interface TextPart { id: string; kind: "text"; text: string; }
 export interface AskPart { id: string; kind: "ask"; askId: string; questions: AskQuestion[]; answers?: AskAnswer[]; cancelled?: boolean; }
-export type Part = ReasoningPart | ToolPart | TextPart | PageImagePart | ArtifactPart | AskPart;
+export interface UIPart { id: string; kind: "ui"; partId: string; surface: UISurface; }
+export type Part = ReasoningPart | ToolPart | TextPart | PageImagePart | ArtifactPart | AskPart | UIPart;
+
+// Parts that render on the STAGE (the rendered answer) vs. the PROCESS RAIL
+// (the "how" — thinking + tool calls). page_image + citations ride the stage.
+export const STAGE_PART_KINDS = new Set(["text", "ui", "page_image", "ask"]);
+export const RAIL_PART_KINDS = new Set(["reasoning", "tool"]);
 
 export interface Attachment { id: string; mediaType: string; dataUrl: string; }
 
@@ -143,6 +149,17 @@ function applyStreamEvent(chatId: string, assistantId: string, e: import("@takt/
     const withPart = patchAssistant(s, assistantId, (p) => [...p, { id: uid(), kind: "artifact", artifactId: e.artifactId, title: e.title, artifactKind: e.kind, groupKey: e.groupKey, version: e.version }]);
     return { ...setStatus(withPart, assistantId, null), canvas: { open: true, artifactId: e.artifactId } };
   });
+  else if (e.type === "ui_surface") update(chatId, (s) => {
+    // Replace a surface with the same partId (re-emit / new version), else append.
+    const withPart = patchAssistant(s, assistantId, (p) => {
+      const i = p.findIndex((q) => q.kind === "ui" && q.partId === e.partId);
+      const part: UIPart = { id: uid(), kind: "ui", partId: e.partId, surface: e.surface };
+      if (i >= 0) { const next = p.slice(); next[i] = part; return next; }
+      return [...p, part];
+    });
+    return setStatus(withPart, assistantId, null);
+  });
+  else if (e.type === "ui_action_result") { /* client ack only — no state change */ }
   else if (e.type === "ask_user") update(chatId, (s) => {
     const withPart = patchAssistant(s, assistantId, (p) =>
       p.some((q) => q.kind === "ask" && q.askId === e.askId) ? p : [...p, { id: uid(), kind: "ask", askId: e.askId, questions: e.questions }]);
@@ -292,6 +309,7 @@ export const chatStore = {
             else if (b.type === "tool") parts.push({ id: uid(), kind: "tool", tool: b.tool, summary: b.summary, detail: b.detail, status: "done" });
             else if (b.type === "page_image") parts.push({ id: uid(), kind: "page_image", citationId: b.citationId, url: b.url, page: b.page, manualKind: b.manualKind, manualTitle: b.manualTitle ?? undefined, caption: b.caption, productSlug: b.productSlug ?? null, productName: b.productName ?? null });
             else if (b.type === "artifact") parts.push({ id: uid(), kind: "artifact", artifactId: b.artifactId, title: b.title, artifactKind: b.kind, groupKey: b.groupKey ?? b.artifactId, version: b.version ?? 1 });
+            else if (b.type === "ui") parts.push({ id: uid(), kind: "ui", partId: b.partId, surface: b.surface });
             else if (b.type === "ask_user") parts.push({ id: uid(), kind: "ask", askId: b.askId, questions: b.questions, answers: b.answers, cancelled: b.cancelled });
           }
           next = addNode(next, { id, parentId, role: "assistant", parts, streaming: false });

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { askQuestionSchema, askAnswerSchema } from "./ask-spec";
+import { uiSurfaceSchema } from "./ui-spec";
 
 // The wire protocol between the agent service and the browser. One JSON object
 // per SSE `data:` line. The agent emits these; the web `/api/chat` route is a
@@ -38,6 +39,10 @@ export const sseEventSchema = z.discriminatedUnion("type", [
     manualKind: z.string(),
     productSlug: z.string().nullable().optional(),
   }),
+  // A complete, validated declarative UI surface rendered inline on the stage.
+  z.object({ type: z.literal("ui_surface"), partId: z.string(), surface: uiSurfaceSchema }),
+  // Resolution of an interactive Button/Form/Select action (ack to the client).
+  z.object({ type: z.literal("ui_action_result"), actionId: z.string(), ok: z.boolean().optional() }),
   z.object({ type: z.literal("title"), title: z.string() }),
   z.object({ type: z.literal("ask_user"), askId: z.string(), questions: z.array(askQuestionSchema) }),
   z.object({ type: z.literal("ask_answer"), askId: z.string(), answers: z.array(askAnswerSchema).optional(), cancelled: z.boolean().optional() }),

@@ -1,6 +1,7 @@
 // Domain types shared across the web app, agent service, and ingest pipeline.
 
 import type { AskQuestion, AskAnswer } from "./ask-spec";
+import type { UISurface } from "./ui-spec";
 
 export type ManualKind = "owner" | "quick_start" | "selection_chart" | "other";
 // A provider id from the harness registry (BUILTIN_PROVIDERS): "anthropic",
@@ -95,6 +96,7 @@ export type MessageBlock =
   | { type: "tool"; id?: string; tool: string; summary?: string; detail?: string; status: "running" | "done" }
   | { type: "page_image"; citationId: string; url: string; page: number; manualKind: ManualKind; manualTitle?: string | null; caption: string | null; productSlug?: string | null; productName?: string | null }
   | { type: "artifact"; artifactId: string; title: string; kind: ArtifactKind; groupKey?: string; version?: number }
+  | { type: "ui"; partId: string; surface: UISurface }
   | { type: "ask_user"; askId: string; questions: AskQuestion[]; answers?: AskAnswer[]; cancelled?: boolean }
   | { type: "citation"; citationId: string; page: number; manualKind: ManualKind; productSlug?: string | null };
 
