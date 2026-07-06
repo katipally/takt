@@ -20,6 +20,7 @@ import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import type { RenderCtx } from "@/components/ui-catalog/ctx";
 import { useWorkbench } from "@/hooks/useWorkbench";
 import { useUi } from "@/lib/uiStore";
+import { useLiveStore } from "@/lib/live/liveStore";
 import { STARTERS } from "@/lib/starters";
 import { quick } from "@/lib/motion";
 import { cn } from "@/lib/cn";
@@ -42,6 +43,7 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
   const empty = wb.messages.length === 0;
   const prompts = starters?.length ? starters : STARTERS;
   const { sidebarCollapsed, toggleSidebar, railOpen, toggleRail, liveOpen, setLiveOpen } = useUi();
+  const liveActive = useLiveStore((s) => s.active);
   const reduce = useReducedMotion();
   const [drawerOpen, setDrawerOpen] = useState(false); // mobile sidebar
   const [sheetOpen, setSheetOpen] = useState(false);    // mobile activity sheet
@@ -121,9 +123,10 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
           </div>
         </div>
 
-        {/* The Stage is ALWAYS mounted — even during a live call, so artifacts
-            render live as Takt talks. Live swaps the composer for the voice bar
-            (LiveDock) instead of taking over the whole stage. */}
+        {/* The Stage is ALWAYS mounted — even during a live call, so concept
+            visuals render live. In live mode it shows visuals only (no transcript).
+            The composer stays visible under the setup modal, then MORPHS into the
+            voice bar once the call is live (shared layoutId="takt-dock"). */}
         <Stage
           empty={empty && !liveOpen}
           userText={view?.userText}
@@ -137,14 +140,15 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
             : "Ask anything — answers are grounded in the manual, cited to the page, and designed when words aren't enough."}
           starters={prompts}
           onStarter={send}
+          liveMode={liveOpen}
         />
-        {liveOpen ? (
-          <LiveDock chatId={wb.chatId} productSlug={slug} onExit={() => setLiveOpen(false)} />
-        ) : (
+        {/* Composer shows until the call goes live; it morphs into the voice bar. */}
+        {!liveActive && (
           <FloatingComposer onSend={send} onStop={wb.stop} isStreaming={wb.isStreaming}
             voiceEnabled={wb.voiceEnabled} setVoiceEnabled={wb.setVoiceEnabled} onOpenLive={() => setLiveOpen(true)}
-            above={!wb.ask ? <StatusBar node={latest?.assistant} streaming={wb.isStreaming} todos={wb.todos} /> : undefined} />
+            above={!wb.ask && !liveOpen ? <StatusBar node={latest?.assistant} streaming={wb.isStreaming} todos={wb.todos} /> : undefined} />
         )}
+        {liveOpen && <LiveDock chatId={wb.chatId} productSlug={slug} onExit={() => setLiveOpen(false)} />}
 
         <AnimatePresence>
           {wb.ask && <AskModal key="ask" ask={wb.ask} onSubmit={wb.submitAsk} onCancel={wb.cancelAsk} />}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { motion } from "motion/react";
 import { Mic, MicOff, Video, VideoOff, PhoneOff, Hand } from "lucide-react";
 import { useLiveStore, type LivePhase } from "@/lib/live/liveStore";
 import { Orb } from "./Orb";
@@ -44,17 +45,17 @@ export function VoiceBar({
       <div className="h-14 bg-gradient-to-t from-card to-transparent" />
       <div className="pointer-events-auto bg-card/85 backdrop-blur-sm">
         <div className="mx-auto w-full max-w-3xl px-5 pb-5">
-          <div className="flex items-center gap-3 rounded-[20px] border border-border bg-surface px-3 py-2.5 shadow-[var(--shadow-card)]">
-            {/* orb, inside the bar */}
-            <div className="grid size-11 shrink-0 place-items-center"><Orb phase={phase} getLevels={getLevels} size={44} /></div>
+          <motion.div layoutId="takt-dock" className="flex items-center gap-3 rounded-[20px] border border-border bg-surface px-3 py-2.5 shadow-[var(--shadow-card)]">
+            {/* orb, inside the bar — the elements fade in as the composer morphs */}
+            <motion.div initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.12 }} className="grid size-11 shrink-0 place-items-center"><Orb phase={phase} getLevels={getLevels} size={44} /></motion.div>
 
             {/* one-line streaming subtitle */}
-            <div className="min-w-0 flex-1 truncate text-[14px] leading-snug [&_p]:m-0 [&_p]:truncate [&_p]:p-0 [&_p]:text-[14px]" aria-live="polite">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.14 }} className="min-w-0 flex-1 truncate text-[14px] leading-snug [&_p]:m-0 [&_p]:truncate [&_p]:p-0 [&_p]:text-[14px]" aria-live="polite">
               {subtitle}
-            </div>
+            </motion.div>
 
             {/* controls */}
-            <div className="flex shrink-0 items-center gap-1.5">
+            <motion.div initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.1 }} className="flex shrink-0 items-center gap-1.5">
               <IconBtn on={pttEnabled} title={pttEnabled ? "Hands-free" : "Push-to-talk"} onClick={() => setPtt(!pttEnabled)} icon={Hand} />
               {pttEnabled ? (
                 <button onPointerDown={() => holdTalk(true)} onPointerUp={() => holdTalk(false)} onPointerLeave={() => holdTalk(false)}
@@ -69,8 +70,8 @@ export function VoiceBar({
                 className="grid size-9 place-items-center rounded-full bg-danger text-white transition hover:opacity-90 active:scale-95">
                 <PhoneOff className="size-4" />
               </button>
-            </div>
-          </div>
+            </motion.div>
+          </motion.div>
         </div>
       </div>
     </div>

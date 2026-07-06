@@ -19,7 +19,7 @@ const linkify = (t: string) => t.replace(/\[p\.\s*(\d+)\]/g, (_m, n) => `[p.${n}
 // prompt as an eyebrow, then the assistant's presentational parts (prose + UI
 // surfaces + source images) in order. Thinking/tools live in the ProcessRail.
 export function Stage({
-  userText, node, isLatest, ctx, onRegenerate, empty, heading, subheading, starters, onStarter,
+  userText, node, isLatest, ctx, onRegenerate, empty, heading, subheading, starters, onStarter, liveMode,
 }: {
   userText?: string;
   node?: Extract<Node, { role: "assistant" }>;
@@ -31,6 +31,7 @@ export function Stage({
   subheading?: string;
   starters?: string[];
   onStarter?: (s: string) => void;
+  liveMode?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   // Stick to bottom while the latest answer streams.
@@ -39,6 +40,25 @@ export function Stage({
     const el = scrollRef.current;
     if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 240) el.scrollTop = el.scrollHeight;
   });
+
+  // During a live call the canvas EXPLAINS the concept — it renders only the
+  // visual surfaces (diagrams the worker builds), never the spoken transcript
+  // (that's the subtitle + the rail's live-session card).
+  if (liveMode) {
+    const surfaces = node?.parts.filter((p): p is UIPart => p.kind === "ui") ?? [];
+    return (
+      <div ref={scrollRef} className="takt-scroll relative min-h-0 flex-1 overflow-y-auto">
+        <div aria-hidden className="pointer-events-none absolute inset-0 bg-[radial-gradient(55%_45%_at_50%_28%,var(--accent-soft,rgba(120,130,255,0.1)),transparent_70%)]" />
+        <div className="relative mx-auto w-full max-w-3xl px-6 pb-44 pt-8">
+          {surfaces.length ? (
+            <div className="space-y-5">{surfaces.map((p) => <UIRenderer key={p.id} surface={p.surface} ctx={{ ...ctx, readOnly: true }} animate />)}</div>
+          ) : (
+            <LiveIdle />
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div ref={scrollRef} className="takt-scroll relative min-h-0 flex-1 overflow-y-auto">
@@ -52,6 +72,17 @@ export function Stage({
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+// Calm placeholder shown on the live stage before any visual exists — Takt is
+// talking; visuals appear here only when they help explain something.
+function LiveIdle() {
+  return (
+    <div className="flex min-h-[60vh] flex-col items-center justify-center text-center">
+      <div className="text-[13px] text-muted-foreground">Talking with Takt</div>
+      <div className="mt-1 max-w-xs text-[12px] text-faint">Diagrams and visuals appear here when they help explain something.</div>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { motion } from "motion/react";
 import { ArrowUp, Square, Mic, Volume2, VolumeX, Plus, X, AudioLines } from "lucide-react";
 import type { Attachment } from "@/lib/chatStore";
 import { cn } from "@/lib/cn";
@@ -65,7 +66,7 @@ export function Composer({
 
   return (
     <div className="mx-auto w-full max-w-3xl px-5 pb-5">
-      <div className="rounded-[20px] border border-border bg-surface transition focus-within:border-border-heavy">
+      <motion.div layoutId="takt-dock" className="rounded-[20px] border border-border bg-surface transition focus-within:border-border-heavy">
         {attachments.length > 0 && (
           <div className="flex flex-wrap gap-2 px-3 pt-3">
             {attachments.map((a) => (
@@ -117,7 +118,7 @@ export function Composer({
             )}
           </div>
         </div>
-      </div>
+      </motion.div>
       <p className={cn("mt-2 text-center text-[11px]", micNote ? "text-muted-foreground" : "text-faint")} role={micNote ? "status" : undefined}>
         {micNote ?? "Grounded in the manual · cited to the page · runs in the background"}
       </p>
