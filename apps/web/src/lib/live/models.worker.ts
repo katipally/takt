@@ -68,12 +68,14 @@ self.onmessage = async (e: MessageEvent) => {
     if (msg.type === "load") {
       const device: Device = msg.device;
       const dtype = device === "webgpu" ? "fp32" : "q8";
-      const progress_callback = (p: any) => post({ type: "progress", data: p });
-      asr = await pipeline("automatic-speech-recognition", device === "wasm" ? STT_MODEL_WASM : STT_MODEL, { device, dtype, progress_callback });
-      tts = await KokoroTTS.from_pretrained(TTS_MODEL, { device, dtype, progress_callback });
+      // Tag each file's progress with the model it belongs to so the UI can show a
+      // per-model breakdown ("Speech recognition", "Voice", "Turn-taking").
+      const tagged = (model: "stt" | "tts" | "turn") => (p: any) => post({ type: "progress", data: { ...p, model } });
+      asr = await pipeline("automatic-speech-recognition", device === "wasm" ? STT_MODEL_WASM : STT_MODEL, { device, dtype, progress_callback: tagged("stt") });
+      tts = await KokoroTTS.from_pretrained(TTS_MODEL, { device, dtype, progress_callback: tagged("tts") });
       // Smart-Turn is tiny → always CPU/WASM. Non-fatal if it fails to load.
       try {
-        turnProc = await AutoProcessor.from_pretrained(TURN_PROCESSOR, { progress_callback });
+        turnProc = await AutoProcessor.from_pretrained(TURN_PROCESSOR, { progress_callback: tagged("turn") });
         const buf = await cachedArrayBuffer(SMART_TURN_URL);
         turnSession = await ort.InferenceSession.create(buf, { executionProviders: ["wasm"] });
       } catch (err) { console.warn("[live] Smart-Turn unavailable:", err); turnSession = null; turnProc = null; }

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Mic, MicOff, Video, VideoOff, PhoneOff, X, AudioLines, Hand, SlidersHorizontal } from "lucide-react";
 import { useLiveStore, type LivePhase, type DeviceOpt } from "@/lib/live/liveStore";
+import type { ModelProgress } from "@/lib/live/models";
 import { useLiveSession } from "@/lib/live/useLiveSession";
 import { Orb } from "./Orb";
 import { cn } from "@/lib/cn";
@@ -17,7 +18,7 @@ const PHASE_LABEL: Record<LivePhase, string> = {
 // default with a push-to-talk override. The full transcript is saved to the chat.
 export function LiveStage({ chatId, productSlug, onExit }: { chatId: string; productSlug: string | null; onExit: () => void }) {
   const { start, stop, download, toggleMute, setPtt, holdTalk, toggleCamera, getLevels, getSpeechProgress, refreshDevices, setMic, setCam } = useLiveSession(chatId, productSlug);
-  const { active, phase, modelsDownloaded, downloading, downloadPct, muted, pttEnabled, cameraOn, cameraStream, userCaption, userPartial, agentCaption, error, mics, cams, micId, camId } = useLiveStore();
+  const { active, phase, modelsDownloaded, downloading, downloadPct, downloadLoaded, downloadTotal, downloadModels, muted, pttEnabled, cameraOn, cameraStream, userCaption, userPartial, agentCaption, error, mics, cams, micId, camId } = useLiveStore();
   const [showDevices, setShowDevices] = useState(false);
 
   useEffect(() => { void refreshDevices(); }, [refreshDevices]);
@@ -74,13 +75,14 @@ export function LiveStage({ chatId, productSlug, onExit }: { chatId: string; pro
       {!active ? (
         <PreCall mics={mics} cams={cams} micId={micId} camId={camId} onMic={(id) => void setMic(id)} onCam={setCam}
           error={error} modelsDownloaded={modelsDownloaded} downloading={downloading} downloadPct={downloadPct}
-          onDownload={() => void download()} onStart={() => void start()} />
+          downloadLoaded={downloadLoaded} downloadTotal={downloadTotal} downloadModels={downloadModels}
+          refreshDevices={refreshDevices} onDownload={() => void download()} onStart={() => void start()} />
       ) : (
         <div className="relative z-10 flex min-h-0 flex-1 flex-col animate-live-in">
           {/* ── stage ── centered orb, or a centered rounded camera card ── */}
           <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center gap-5 overflow-hidden px-6">
             {loading ? (
-              <DownloadBar pct={downloadPct} phase={phase} />
+              <DownloadBar pct={downloadPct} loaded={downloadLoaded} total={downloadTotal} models={downloadModels} phase={phase} />
             ) : cameraOn ? (
               <div className="flex flex-col items-center gap-4">
                 <div className="relative aspect-[4/3] w-full max-w-md overflow-hidden rounded-3xl border border-border/60 bg-black shadow-2xl shadow-black/40 transition-all duration-300">
@@ -133,20 +135,45 @@ export function LiveStage({ chatId, productSlug, onExit }: { chatId: string; pro
   );
 }
 
-function DownloadBar({ pct, phase }: { pct: number; phase: LivePhase }) {
+const mb = (bytes: number) => (bytes / 1_048_576).toFixed(bytes >= 100 * 1_048_576 ? 0 : 1);
+const MODEL_ROLE: Record<string, string> = { stt: "hears you", tts: "speaks back", turn: "knows when you're done" };
+
+// Shared, transparent progress: overall bar + real MB, and a per-model checklist
+// so the user sees EXACTLY what's downloading and why (not a vague "~150 MB").
+function DownloadProgress({ pct, loaded, total, models }: { pct: number; loaded: number; total: number; models: ModelProgress[] }) {
   return (
-    <div className="flex w-64 max-w-[80vw] flex-col items-center gap-2">
-      <p className="text-[12px] font-medium text-muted-foreground">
-        {phase === "connecting" ? "Connecting…" : "Preparing on-device AI…"}
+    <div className="flex w-72 max-w-[82vw] flex-col gap-2.5">
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-foreground/10">
+        <div className="h-full rounded-full bg-accent transition-[width] duration-200" style={{ width: `${Math.round(pct * 100)}%` }} />
+      </div>
+      <p className="text-center text-[11px] text-muted-foreground">
+        {Math.round(pct * 100)}%{total ? ` · ${mb(loaded)} / ${mb(total)} MB` : ""} · one-time, then instant
       </p>
-      {phase === "loading" && (
-        <>
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-foreground/10">
-            <div className="h-full rounded-full bg-accent transition-[width] duration-200" style={{ width: `${Math.round(pct * 100)}%` }} />
-          </div>
-          <p className="text-[11px] text-muted-foreground">{Math.round(pct * 100)}% · one-time download, then instant</p>
-        </>
+      {models.length > 0 && (
+        <ul className="space-y-1">
+          {models.map((m) => {
+            const done = m.total > 0 && m.loaded >= m.total;
+            return (
+              <li key={m.key} className="flex items-center gap-2 text-[11px]">
+                <span className={cn("grid size-3.5 shrink-0 place-items-center rounded-full text-[8px]", done ? "bg-accent text-accent-foreground" : "border border-border text-transparent")}>✓</span>
+                <span className="text-foreground">{m.name}</span>
+                <span className="text-faint">· {MODEL_ROLE[m.key]}</span>
+                <span className="ml-auto tabular-nums text-muted-foreground">{m.total ? `${mb(m.loaded)}/${mb(m.total)}` : "…"}</span>
+              </li>
+            );
+          })}
+        </ul>
       )}
+    </div>
+  );
+}
+
+function DownloadBar({ pct, loaded, total, models, phase }: { pct: number; loaded: number; total: number; models: ModelProgress[]; phase: LivePhase }) {
+  if (phase === "connecting") return <p className="text-[12px] font-medium text-muted-foreground">Connecting…</p>;
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <p className="text-[12px] font-medium text-muted-foreground">Setting up on-device AI…</p>
+      <DownloadProgress pct={pct} loaded={loaded} total={total} models={models} />
     </div>
   );
 }
@@ -190,46 +217,119 @@ function DeviceSelect({ icon: Icon, opts, value, onChange }: { icon: typeof Mic;
   );
 }
 
-function PreCall({ mics, cams, micId, camId, onMic, onCam, error, modelsDownloaded, downloading, downloadPct, onDownload, onStart }: {
+function PreCall({ mics, cams, micId, camId, onMic, onCam, error, modelsDownloaded, downloading, downloadPct, downloadLoaded, downloadTotal, downloadModels, refreshDevices, onDownload, onStart }: {
   mics: DeviceOpt[]; cams: DeviceOpt[]; micId?: string; camId?: string;
   onMic: (id: string) => void; onCam: (id: string) => void; error?: string;
-  modelsDownloaded: boolean; downloading: boolean; downloadPct: number; onDownload: () => void; onStart: () => void;
+  modelsDownloaded: boolean; downloading: boolean; downloadPct: number;
+  downloadLoaded: number; downloadTotal: number; downloadModels: ModelProgress[];
+  refreshDevices: () => Promise<void>; onDownload: () => void; onStart: () => void;
 }) {
   return (
-    <div className="relative z-10 flex flex-1 flex-col items-center justify-center gap-5 px-6 pb-10 text-center">
-      <div className="grid size-16 place-items-center rounded-2xl bg-accent/10 text-accent">
-        <AudioLines className="size-7" />
-      </div>
-      <div className="space-y-1.5">
+    <div className="relative z-10 flex flex-1 flex-col items-center justify-center gap-4 px-6 pb-10 text-center">
+      <div className="space-y-1">
         <h2 className="text-[18px] font-semibold tracking-tight">Talk with Takt</h2>
-        <p className="max-w-sm text-[13px] text-muted-foreground">A real conversation — it listens as you speak, answers out loud, and can see through your camera. Runs privately on your device.</p>
+        <p className="max-w-sm text-[13px] text-muted-foreground">It listens as you speak, answers out loud, and can see through your camera. Runs privately on your device.</p>
       </div>
+
+      {/* live camera preview + mic level, so you can check yourself BEFORE starting */}
+      <CameraPreview camId={camId} onGranted={refreshDevices} />
+      <MicMeter micId={micId} onGranted={refreshDevices} />
+
       <div className="w-full max-w-xs space-y-2">
         <DeviceSelect icon={Mic} opts={mics} value={micId} onChange={onMic} />
         <DeviceSelect icon={Video} opts={cams} value={camId} onChange={onCam} />
       </div>
 
       {downloading ? (
-        <div className="flex w-64 max-w-[80vw] flex-col items-center gap-2">
+        <div className="flex flex-col items-center gap-2">
           <p className="text-[12px] font-medium text-muted-foreground">Downloading on-device AI…</p>
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-foreground/10">
-            <div className="h-full rounded-full bg-accent transition-[width] duration-200" style={{ width: `${Math.round(downloadPct * 100)}%` }} />
-          </div>
-          <p className="text-[11px] text-muted-foreground">{Math.round(downloadPct * 100)}%</p>
+          <DownloadProgress pct={downloadPct} loaded={downloadLoaded} total={downloadTotal} models={downloadModels} />
         </div>
       ) : !modelsDownloaded ? (
         <div className="flex flex-col items-center gap-2">
           <button onClick={onDownload} className="rounded-full bg-accent px-6 py-2.5 text-[14px] font-medium text-accent-foreground transition duration-150 hover:scale-[1.03] hover:opacity-90 active:scale-95">
             Download AI models
           </button>
-          <p className="text-[11px] text-faint">~one-time, ~150 MB · runs fully on your device</p>
+          <p className="max-w-[16rem] text-[11px] text-faint">A one-time download of 3 small AI models (speech, voice, turn-taking) that run fully on your device — nothing is sent to a server.</p>
         </div>
       ) : (
         <button onClick={onStart} className="rounded-full bg-accent px-7 py-2.5 text-[14px] font-medium text-accent-foreground transition duration-150 hover:scale-[1.03] hover:opacity-90 active:scale-95">
           Start
         </button>
       )}
-      {error && <p className="text-[12px] text-danger">{error}</p>}
+      {error && <p className="max-w-sm text-[12px] text-danger">{error}</p>}
+    </div>
+  );
+}
+
+// Live camera preview on the pre-call screen. Opens its OWN stream (separate from
+// the call) and releases it on unmount — when Start flips `active`, PreCall
+// unmounts and this cleanup stops the preview right as the call opens its own.
+function CameraPreview({ camId, onGranted }: { camId?: string; onGranted: () => void }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const [state, setState] = useState<"loading" | "on" | "denied">("loading");
+  useEffect(() => {
+    let stream: MediaStream | null = null;
+    let stopped = false;
+    setState("loading");
+    (async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: camId ? { deviceId: { exact: camId } } : true });
+        if (stopped) { stream.getTracks().forEach((t) => t.stop()); return; }
+        if (ref.current) ref.current.srcObject = stream;
+        setState("on"); onGranted();
+      } catch { if (!stopped) setState("denied"); }
+    })();
+    return () => { stopped = true; stream?.getTracks().forEach((t) => t.stop()); };
+  }, [camId, onGranted]);
+  return (
+    <div className="relative aspect-[4/3] w-full max-w-[18rem] overflow-hidden rounded-2xl border border-border/60 bg-black shadow-lg">
+      <video ref={ref} autoPlay muted playsInline className={cn("h-full w-full object-cover transition-opacity", state === "on" ? "opacity-100" : "opacity-0")} />
+      {state !== "on" && (
+        <div className="absolute inset-0 grid place-items-center gap-1 text-center">
+          <VideoOff className="size-6 text-muted-foreground" />
+          <p className="text-[11px] text-muted-foreground">{state === "denied" ? "Camera off or blocked" : "Starting camera…"}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Live mic level on the pre-call screen (own stream, released on unmount). Uses a
+// lightweight AnalyserNode RMS — the VoiceEngine's meter is coupled to the call.
+function MicMeter({ micId, onGranted }: { micId?: string; onGranted: () => void }) {
+  const [level, setLevel] = useState(0);
+  const [denied, setDenied] = useState(false);
+  useEffect(() => {
+    let stream: MediaStream | null = null, ctx: AudioContext | null = null, raf = 0, stopped = false;
+    setDenied(false);
+    (async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: micId ? { deviceId: { exact: micId } } : true });
+        if (stopped) { stream.getTracks().forEach((t) => t.stop()); return; }
+        onGranted();
+        ctx = new AudioContext();
+        const analyser = ctx.createAnalyser(); analyser.fftSize = 512;
+        ctx.createMediaStreamSource(stream).connect(analyser);
+        const buf = new Float32Array(analyser.fftSize);
+        const loop = () => {
+          analyser.getFloatTimeDomainData(buf);
+          let sum = 0; for (let i = 0; i < buf.length; i++) sum += buf[i]! * buf[i]!;
+          setLevel(Math.min(1, Math.sqrt(sum / buf.length) * 3.5)); // scale RMS → 0..1
+          raf = requestAnimationFrame(loop);
+        };
+        loop();
+      } catch { if (!stopped) setDenied(true); }
+    })();
+    return () => { stopped = true; cancelAnimationFrame(raf); stream?.getTracks().forEach((t) => t.stop()); ctx?.close().catch(() => {}); };
+  }, [micId, onGranted]);
+  return (
+    <div className="flex w-full max-w-[18rem] items-center gap-2">
+      <Mic className={cn("size-3.5 shrink-0", denied ? "text-danger" : "text-muted-foreground")} />
+      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-foreground/10">
+        <div className="h-full rounded-full bg-[color:var(--takt-success,#22c55e)] transition-[width] duration-75" style={{ width: `${Math.round(level * 100)}%` }} />
+      </div>
+      {denied && <span className="text-[10px] text-danger">mic blocked</span>}
     </div>
   );
 }

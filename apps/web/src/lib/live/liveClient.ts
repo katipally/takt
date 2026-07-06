@@ -22,7 +22,9 @@ export class LiveClient {
   private closedByUser = false;
   private attempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private healthyTimer: ReturnType<typeof setTimeout> | null = null;
   private static MAX_RECONNECT = 4;
+  private static HEALTHY_MS = 3000; // a connection must survive this long to "count"
   constructor(private h: LiveHandlers) {}
 
   connect(productSlug: string | null, chatId: string) {
@@ -37,8 +39,15 @@ export class LiveClient {
       || `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
     const ws = new WebSocket(`${base}/live?product=${encodeURIComponent(this.slug)}&chat=${encodeURIComponent(this.chatId)}`);
     ws.binaryType = "arraybuffer";
-    ws.onopen = () => { this.attempts = 0; this.h.onOpen?.(); };
-    ws.onclose = () => {
+    ws.onopen = () => {
+      this.h.onOpen?.();
+      // Do NOT zero `attempts` here: on the container path the socket can open and
+      // then instantly flap closed, and resetting on every open made "Reconnecting…"
+      // loop forever. Only a connection that SURVIVES counts as recovered.
+      this.healthyTimer = setTimeout(() => { this.attempts = 0; }, LiveClient.HEALTHY_MS);
+    };
+    ws.onclose = (ev) => {
+      if (this.healthyTimer) { clearTimeout(this.healthyTimer); this.healthyTimer = null; }
       if (this.closedByUser) { this.h.onClose?.(); return; }
       // Unexpected drop → reconnect a few times. The server rehydrates the
       // conversation from the DB, so the agent keeps its context across the drop.
@@ -47,13 +56,17 @@ export class LiveClient {
         const delay = Math.min(2000, 300 * 2 ** this.attempts++);
         this.reconnectTimer = setTimeout(() => this.open(), delay);
       } else {
-        this.h.onError?.("Lost connection. Please try again.");
+        // The server closes with a reason (e.g. "agent HTTP 401") — surface it so
+        // the user learns why instead of staring at an endless spinner.
+        const why = ev?.reason?.trim();
+        this.h.onError?.(why ? `Live disconnected: ${why}` : "Couldn't connect to live mode. Please try again.");
         this.h.onClose?.();
       }
     };
     ws.onerror = () => { /* onclose follows; reconnect handles it */ };
     ws.onmessage = (ev) => {
       if (typeof ev.data !== "string") return; // server sends no binary now
+      this.attempts = 0; // a real message proves the whole path works → reset budget
       let m: any;
       try { m = JSON.parse(ev.data); } catch { return; }
       switch (m.t) {
@@ -83,6 +96,7 @@ export class LiveClient {
   close() {
     this.closedByUser = true;
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+    if (this.healthyTimer) { clearTimeout(this.healthyTimer); this.healthyTimer = null; }
     this.control("end");
     try { this.ws?.close(); } catch { /* */ }
     this.ws = null;

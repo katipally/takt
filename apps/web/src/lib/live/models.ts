@@ -3,14 +3,19 @@
 // an aggregate progress bar. Weights are cached by the browser Cache API AND the
 // worker is kept warm for the whole tab (see disposeModels) — so opening Live a
 // second time reuses the loaded pipelines with zero download and no shader recompile.
-export type LoadProgress = { pct: number; label: string };
+export type ModelKey = "stt" | "tts" | "turn";
+export type ModelProgress = { key: ModelKey; name: string; loaded: number; total: number };
+export type LoadProgress = { pct: number; loaded: number; total: number; models: ModelProgress[] };
+
+const MODEL_NAMES: Record<ModelKey, string> = { stt: "Speech recognition", tts: "Voice", turn: "Turn-taking" };
 
 let worker: Worker | null = null;
 let ready = false;
 let turnAvailable = false;
 let seq = 0;
 const pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
-const files = new Map<string, { loaded: number; total: number }>();
+// keyed by "<model>:<file>" so the same filename under two models never collides.
+const files = new Map<string, { model: ModelKey; loaded: number; total: number }>();
 
 export function hasWebGPU(): boolean {
   return typeof navigator !== "undefined" && "gpu" in navigator;
@@ -29,10 +34,20 @@ export function loadModels(onProgress: (p: LoadProgress) => void): Promise<void>
         case "progress": {
           const d = m.data;
           if (d?.file && d.total) {
-            files.set(d.file, { loaded: d.loaded ?? 0, total: d.total });
+            const key: ModelKey = d.model === "tts" ? "tts" : d.model === "turn" ? "turn" : "stt";
+            files.set(`${key}:${d.file}`, { model: key, loaded: d.loaded ?? 0, total: d.total });
             let load = 0, tot = 0;
-            for (const f of files.values()) { load += Math.min(f.loaded, f.total); tot += f.total; }
-            onProgress({ pct: tot ? load / tot : 0, label: d.file.split("/").pop() ?? "" });
+            const per = new Map<ModelKey, { loaded: number; total: number }>();
+            for (const f of files.values()) {
+              const l = Math.min(f.loaded, f.total);
+              load += l; tot += f.total;
+              const p = per.get(f.model) ?? { loaded: 0, total: 0 };
+              p.loaded += l; p.total += f.total; per.set(f.model, p);
+            }
+            const models: ModelProgress[] = (["stt", "tts", "turn"] as ModelKey[])
+              .filter((k) => per.has(k))
+              .map((k) => ({ key: k, name: MODEL_NAMES[k], loaded: per.get(k)!.loaded, total: per.get(k)!.total }));
+            onProgress({ pct: tot ? load / tot : 0, loaded: load, total: tot, models });
           }
           break;
         }

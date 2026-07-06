@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { ModelProgress } from "./models";
 
 export type LivePhase = "off" | "connecting" | "loading" | "reconnecting" | "idle" | "listening" | "thinking" | "speaking";
 
@@ -11,6 +12,9 @@ interface LiveState {
   modelsDownloaded: boolean; // on-device models present (cached/warm) → skip download
   downloading: boolean;      // model download in progress on the pre-call screen
   downloadPct: number; // 0..1 model-download progress (phase === "loading")
+  downloadLoaded: number; // bytes downloaded so far (across all models)
+  downloadTotal: number;  // bytes total known so far
+  downloadModels: ModelProgress[]; // per-model breakdown for the download UI
   muted: boolean;
   pttEnabled: boolean; // push-to-talk: mic only listens while held
   cameraOn: boolean;
@@ -35,6 +39,9 @@ export const useLiveStore = create<LiveState>((set) => ({
   modelsDownloaded: false,
   downloading: false,
   downloadPct: 0,
+  downloadLoaded: 0,
+  downloadTotal: 0,
+  downloadModels: [],
   muted: false,
   pttEnabled: false,
   cameraOn: false,

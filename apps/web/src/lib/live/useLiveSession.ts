@@ -43,7 +43,7 @@ export function useLiveSession(chatId: string, productSlug: string | null) {
     set({ error: undefined, phase: "connecting", active: true, downloadPct: 0, turns: [], userCaption: "", userPartial: false, agentCaption: "" });
     try {
       // 1. Models (download-on-demand, cached). Shows a progress bar the first time.
-      if (!modelsReady()) { set({ phase: "loading" }); await loadModels((p) => set({ downloadPct: p.pct })); }
+      if (!modelsReady()) { set({ phase: "loading" }); await loadModels((p) => set({ downloadPct: p.pct, downloadLoaded: p.loaded, downloadTotal: p.total, downloadModels: p.models })); }
       if (tornDown.current) return;
 
       // 2. Mic stream — chosen device + browser AEC (so the agent's own voice is
@@ -71,12 +71,16 @@ export function useLiveSession(chatId: string, productSlug: string | null) {
       await eng.start(stream);
       if (tornDown.current) return;
 
-      // 4. Socket.
+      // 4. Socket. Phase stays "connecting" until the socket actually opens — no
+      //    more optimistic "Listening" that lies when the connection never lands.
+      set({ phase: "connecting" });
       const c = new LiveClient({
+        onOpen: () => set({ phase: "idle", error: undefined }),
         onReconnecting: () => set({ phase: "reconnecting" }),
         onClose: () => teardown(),
         onError: (m) => set({ error: m }),
         onSse: (e) => {
+          if (e.type === "error") { set({ error: e.message }); return; }
           if (e.type === "text_delta") engine.current?.feedAgentDelta(e.text);
           if (e.type === "done") {
             engine.current?.endAgentTurn();
@@ -98,7 +102,6 @@ export function useLiveSession(chatId: string, productSlug: string | null) {
 
       onPageHide.current = () => teardown();
       window.addEventListener("pagehide", onPageHide.current);
-      set({ phase: "idle" });
       await refreshDevices();
     } catch (e: any) {
       const denied = e?.name === "NotAllowedError" || e?.name === "SecurityError";
@@ -131,7 +134,7 @@ export function useLiveSession(chatId: string, productSlug: string | null) {
     if (modelsReady()) { set({ modelsDownloaded: true }); return; }
     set({ downloading: true, downloadPct: 0, error: undefined });
     try {
-      await loadModels((p) => set({ downloadPct: p.pct }));
+      await loadModels((p) => set({ downloadPct: p.pct, downloadLoaded: p.loaded, downloadTotal: p.total, downloadModels: p.models }));
       set({ modelsDownloaded: true, downloading: false });
     } catch (e: any) {
       set({ downloading: false, error: `Couldn't download the AI models: ${String(e?.message ?? e)}` });
