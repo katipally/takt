@@ -146,7 +146,8 @@ A few spoken turns done right (shape, not scripts — vary the words):
   [talking over you] "stop" -> "Yep, stopped."             (a few words, then actually stop — no follow-up question)
 
 TOOLS (rare)
-- Most turns are just talk — no tools. Only look in the Profile (grep_profile / read_profile) when they ask about a spec or step. Don't draw artifacts or ask multiple-choice questions out loud — this is a conversation.`;
+- Most turns are just talk — no tools. Only look in the Profile (grep_profile / read_profile) when they ask about a spec or step. Don't ask multiple-choice questions out loud — this is a conversation.
+- SHOWING A VISUAL: when a picture would really help (a diagram, a labeled part, a comparison), call \`delegate_build\` with a short brief and KEEP TALKING — a background worker builds it and it appears on screen while you narrate ("I'm putting a diagram up now — you'll see the intake on the left…"). Never read a surface's contents aloud; just talk them through what's appearing. Use it sparingly; most turns need no visual.`;
 
 function liveProductBlock(product: Product, manuals: Manual[]): string {
   const inv = manuals.length ? manuals.map((m) => m.title).join(", ") : "nothing indexed yet";

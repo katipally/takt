@@ -5,6 +5,7 @@ import { LIVE_TAG, liveClientMsgSchema } from "@takt/shared";
 import { createChat, addMessage, listMessages } from "@takt/db";
 import type { Message } from "@takt/harness";
 import type { Emit, TaktTool } from "../tools.js";
+import { runBuildSubagent } from "../subagent.js";
 import { LiveTurnRunner } from "./turn-runner.js";
 
 type Frame = { data: string; mime: string };
@@ -123,8 +124,18 @@ export class LiveSession {
     const emit = this.blockEmit(blocks, ac.signal);
 
     if (this.chatId) addMessage(this.chatId, "user", [{ type: "text", text }]);
+    // Background builds delegated this turn use a SESSION-stable emit — the
+    // blockEmit guarded by a never-aborting signal, so it only stops when the
+    // whole session closes (not on a barge-in that aborts the spoken turn). The
+    // surface still lands on the stage while the main agent keeps talking.
+    const spawnBuild = (brief: string, key?: string) => {
+      void runBuildSubagent({
+        brief, key, product: this.product, manuals: this.manuals, context: [],
+        emit: this.blockEmit(blocks, new AbortController().signal), signal: new AbortController().signal,
+      });
+    };
     try {
-      await this.runner.runTurn(text, frames, emit, ac.signal);
+      await this.runner.runTurn(text, frames, emit, ac.signal, spawnBuild);
     } catch (e) {
       if (!ac.signal.aborted) console.error("[live] turn:", e);
     } finally {

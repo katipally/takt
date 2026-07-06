@@ -35,7 +35,7 @@ export class LiveTurnRunner {
     this.messages.splice(1, this.messages.length - 1, ...history);
   }
 
-  async runTurn(userText: string, frames: { data: string; mime: string }[], emit: Emit, signal: AbortSignal): Promise<void> {
+  async runTurn(userText: string, frames: { data: string; mime: string }[], emit: Emit, signal: AbortSignal, spawnBuild?: (brief: string, key?: string) => void): Promise<void> {
     const { provider, model, apiKey } = resolveLive();
     if (!model) { await emit({ type: "error", message: "No model selected. Open Settings → Models and pick a model." }); return; }
     if (!apiKey && !provider.keyless) { await emit({ type: "error", message: `No API key for ${provider.name}. Add one in Settings → Models.` }); return; }
@@ -48,7 +48,7 @@ export class LiveTurnRunner {
     // Build tools with THIS turn's emit so their artifact/page_image events are
     // dropped by the same epoch guard when a barge-in interrupts the turn. Drop
     // the tools that can't work in a spoken call.
-    const tools = [...buildTaktTools({ product: this.product, manuals: this.manuals, emit, chatId: this.chatId }), ...this.extraTools]
+    const tools = [...buildTaktTools({ product: this.product, manuals: this.manuals, emit, chatId: this.chatId, spawnBuild }), ...this.extraTools]
       .filter((t) => !LIVE_TOOL_DENY.has(t.name));
     const toolDefs = tools.map(({ name, description, parameters }) => ({ name, description, parameters }));
 
