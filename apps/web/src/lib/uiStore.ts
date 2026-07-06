@@ -10,6 +10,8 @@ interface UiState {
   closeSettings: () => void;
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
+  railOpen: boolean;
+  toggleRail: () => void;
   sidebarWidth: number;
   canvasWidth: number;
   setSidebarWidth: (w: number) => void;
@@ -30,6 +32,8 @@ export const useUi = create<UiState>()(
       closeSettings: () => set({ settingsOpen: false }),
       sidebarCollapsed: false,
       toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+      railOpen: false,
+      toggleRail: () => set((s) => ({ railOpen: !s.railOpen })),
       sidebarWidth: 248,
       canvasWidth: 480,
       setSidebarWidth: (w) => set({ sidebarWidth: w }),
@@ -40,6 +44,6 @@ export const useUi = create<UiState>()(
       setLiveOpen: (v) => set({ liveOpen: v }),
       toggleLive: () => set((s) => ({ liveOpen: !s.liveOpen })),
     }),
-    { name: "takt-ui", partialize: (s) => ({ sidebarWidth: s.sidebarWidth, canvasWidth: s.canvasWidth, voiceEnabled: s.voiceEnabled, sidebarCollapsed: s.sidebarCollapsed }) },
+    { name: "takt-ui", partialize: (s) => ({ sidebarWidth: s.sidebarWidth, canvasWidth: s.canvasWidth, voiceEnabled: s.voiceEnabled, sidebarCollapsed: s.sidebarCollapsed, railOpen: s.railOpen }) },
   ),
 );
