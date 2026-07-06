@@ -3,7 +3,8 @@ import type { Product, Manual, SseEvent } from "@takt/shared";
 import { buildTaktTools, type Emit } from "./tools.js";
 import { collectTurn } from "./turn.js";
 import { resolveBuild } from "./providers.js";
-import { catalogPromptSection, validateSurface, surfacePartId } from "@takt/shared";
+import { validateSurface, surfacePartId } from "@takt/shared";
+import { DESIGN_GUIDE } from "./prompt.js";
 
 const MAX_STEPS = 20;
 
@@ -36,17 +37,20 @@ export async function runBuildSubagent(opts: {
     .filter((t) => t.name !== "ask_user" && t.name !== "delegate_build");
   const toolDefs = tools.map(({ name, description, parameters }) => ({ name, description, parameters }));
 
-  const sys = `You are Takt's BUILD worker. Another agent is talking to the user; your ONLY job is to compose ONE designed UI surface that answers this brief, then stop. You do not talk to the user and never write prose — you gather what you need and call emit_ui exactly once.
+  const sys = `You are Takt's BUILD worker. Another agent is talking to the user; your ONLY job is to compose ONE designed PAGE that answers this brief, then stop. You never write prose to the user — you gather what you need and call emit_ui exactly once with a single \`Page\` node.
 
 BRIEF: ${brief}
 
 Gather REAL material first when the brief involves a product — reach for the tool that fits:
-- A part / fault / procedure / spec and how it connects → \`find_entity\`, then \`get_anchors\` on it to get the EXACT media to show: the \`crop_page_image\` call for a manual figure, the \`/assets/*.glb\` for a 3D part (Model3D), or a video clip. Use \`walk_graph\` to pull related faults/steps.
+- A part / fault / procedure / spec and how it connects → \`find_entity\`, then \`get_anchors\` on it to get the EXACT media to show: the \`crop_page_image\` call for a manual figure, the \`/assets/*.glb\` for a 3D part, or a video clip. Use \`walk_graph\` to pull related faults/steps.
 - A described symptom in plain words → \`search_product\` (semantic). An exact code / part number → \`grep_profile\`. Full concept text → \`read_profile\`.
 - A product overview / map → \`product_map\`.
-Always embed only a real \`/assets/\` URL a tool returned (crop_page_image, get_anchors) — never invent one. NEVER embed a whole manual page (a \`/assets/pages/…\` URL) as an Image — always \`crop_page_image\` to the exact region (the table, the diagram, the labeled part); whole pages have headers/margins/whitespace and read like a screenshot. Then call emit_ui with a flat list of catalog nodes${key ? ` and key "${key}"` : ""}. SHOW, DON'T TELL: every surface MUST include at least one real visual — a manual figure cropped to the RELEVANT region (Image), a 3D part (Model3D), a video clip (Video), or a Gallery — chosen for THIS brief. When the brief is about a specific PART or says "show me the part", ALWAYS include its interactive Model3D if get_anchors returns a mesh_node for it (a rotatable 3D part beats a photo). When a repair/how-to video clip is relevant, include the Video snippet. Keep Prose to a sentence or two; carry the answer in visuals + structure (Steps, KeyValue, Table), cite facts inline as [p.NN]. Match the layout to the brief (a how-to → Steps + the cropped figure; a part → Model3D + KeyValue specs + related faults; a comparison → Table/Columns). Use resources efficiently — crop tight to what matters, pull only the relevant part's 3D, don't dump the whole manual. Catalog:
-${catalogPromptSection()}
-BE DECISIVE: a few tool calls to gather is plenty — one or two find_entity/search calls and the get_anchors/crop for the figures you'll show. Do NOT keep re-searching. As soon as you have enough for a useful surface, call emit_ui — you MUST emit_ui before you run out of steps, so build with what you have rather than gathering more. When the surface is emitted you are done — do not narrate.`;
+Always embed only a real \`/assets/\` URL a tool returned — never invent one. NEVER embed a whole manual page (a \`/assets/pages/…\` URL) — always \`crop_page_image\` to the exact region (the table, the diagram, the labeled part); whole pages have headers/margins/whitespace and read like a screenshot.
+
+Then call emit_ui ONCE with a surface whose root is a single \`Page\` node${key ? ` and key "${key}"` : ""}: \`{ "root":"pg", "nodes":[{ "id":"pg", "type":"Page", "props":{ "html":"…", "css":"…" } }] }\`.
+${DESIGN_GUIDE}
+SHOW, DON'T TELL: the page MUST include at least one real visual island — a cropped manual figure (\`<takt-figure src="…" caption="…">\`), a 3D part (\`<takt-model src="…">\` — ALWAYS include it when get_anchors returns a mesh_node; a rotatable part beats a photo), or a video clip (\`<takt-video src="…">\`) — chosen for THIS brief. Carry the answer in visuals + structure (a \`.takt-grid\`, an \`<ol>\` of steps, a spec \`<table>\`, \`.takt-stat\` tiles), keep prose tight, cite facts with \`<takt-cite page="NN">\`. Crop tight, pull only the relevant part's 3D, don't dump the whole manual.
+BE DECISIVE: a few tool calls to gather is plenty — one or two find_entity/search calls and the get_anchors/crop for the figures you'll show. Do NOT keep re-searching. As soon as you have enough, call emit_ui — you MUST emit_ui before you run out of steps, so build with what you have. When the surface is emitted you are done — do not narrate.`;
 
   const messages: Message[] = [
     { role: "system", text: sys },
@@ -91,10 +95,11 @@ BE DECISIVE: a few tool calls to gather is plenty — one or two find_entity/sea
     // model flake), emit a minimal grounded Prose surface from the best material
     // it gathered — so the canvas never ends up empty.
     if (!emitted && !signal.aborted) {
+      const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] ?? c));
       const md = (lastGood || `Here's what I found for: ${brief}`).replace(/```[\s\S]*?```/g, "").slice(0, 1400).trim();
-      const fb = { id: "fallback", ...(key ? { key } : {}), title: brief.slice(0, 64), root: "root", nodes: [
-        { id: "root", type: "Section", props: { title: "Summary" }, children: ["body"] },
-        { id: "body", type: "Prose", props: { markdown: md || "No details available." } },
+      const html = `<p class="takt-eyebrow">Summary</p><h1>${esc(brief.slice(0, 80))}</h1><p class="takt-lead">${esc(md || "No details available.")}</p>`;
+      const fb = { id: "fallback", ...(key ? { key } : {}), title: brief.slice(0, 64), root: "pg", nodes: [
+        { id: "pg", type: "Page", props: { html } },
       ] };
       const v = validateSurface(fb);
       if (v.ok) await buildEmit({ type: "ui_surface", partId: surfacePartId(v.surface), surface: v.surface });

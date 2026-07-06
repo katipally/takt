@@ -128,8 +128,19 @@ export function getAnchors(slug: string, id: string): Anchor[] {
   return getEntityAnchors(loadGraph(slug), id);
 }
 
-// Mix fusion → one cited context block. Combines: semantic/lexical chunks +
-// dual-level entity hits + a one-hop graph expansion around the top entity.
+// Graph-guided chunk selection (LightRAG WEIGHT poll): rank source_ids by how
+// many of the retrieved entities cite them — a chunk central to the answer's
+// entity cluster surfaces first, a pure-KG signal a vector search can't produce.
+export function rankChunksByEntityCitations(entities: Entity[]): string[] {
+  const weight = new Map<string, number>();
+  for (const e of entities) for (const sid of e.source_ids) weight.set(sid, (weight.get(sid) ?? 0) + 1);
+  return [...weight.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
+}
+
+// Mix fusion → one cited context block. Combines: dual-level entity hits + a
+// one-hop graph expansion, graph-guided chunks (entity-cited) AND semantic chunks
+// (graph-cited first, deduped). Entity confidence is shown so the model can flag
+// INFERRED/AMBIGUOUS facts rather than stating them as certain.
 export interface QueryResult { context: string; entities: Entity[]; chunks: Chunk[] }
 
 export async function queryProduct(slug: string, query: string, opts: { budget?: number } = {}): Promise<QueryResult> {
@@ -137,18 +148,26 @@ export async function queryProduct(slug: string, query: string, opts: { budget?:
   const g = loadGraph(slug);
   const low = tokens(query);
   const entities = findEntitiesInGraph(g, low, low).slice(0, 6);
-  const chunkHits = await searchProduct(slug, query, 6);
+  const semHits = await searchProduct(slug, query, 6);
+
+  // graph-cited chunks first, then semantic; deduped by id.
+  const byId = new Map(loadChunks(slug).map((c) => [c.id, c]));
+  const graphChunks = rankChunksByEntityCitations(entities)
+    .map((id) => byId.get(id)).filter((c): c is Chunk => !!c).slice(0, 4);
+  const seen = new Set<string>();
+  const chunks: Chunk[] = [];
+  for (const c of [...graphChunks, ...semHits.map((h) => h.chunk)]) if (!seen.has(c.id)) { seen.add(c.id); chunks.push(c); }
 
   const parts: string[] = [];
   if (entities.length) {
     parts.push("## Product graph");
     for (const e of entities.slice(0, 3)) parts.push(traverseToText(g, e.id, { depth: 1, budget: 900 }));
   }
-  if (chunkHits.length) {
+  if (chunks.length) {
     parts.push("## Sources");
-    for (const h of chunkHits) {
-      const cite = h.chunk.page ? ` [p.${h.chunk.page}]` : ` [${h.chunk.conceptId}]`;
-      parts.push(`### ${h.chunk.title}${cite}\n${h.chunk.text.slice(0, 800)}`);
+    for (const c of chunks.slice(0, 6)) {
+      const cite = c.page ? ` [p.${c.page}]` : ` [${c.conceptId}]`;
+      parts.push(`### ${c.title}${cite}\n${c.text.slice(0, 800)}`);
     }
   }
   let context = "";
@@ -156,7 +175,7 @@ export async function queryProduct(slug: string, query: string, opts: { budget?:
     if (context.length + p.length > budget) break;
     context += (context ? "\n\n" : "") + p;
   }
-  return { context: context || "(no matching product knowledge found)", entities, chunks: chunkHits.map((h) => h.chunk) };
+  return { context: context || "(no matching product knowledge found)", entities, chunks };
 }
 
 // ── self-check: `tsx src/retrieve.ts` ────────────────────────────────────────
@@ -183,6 +202,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   assert(byLow[0]?.entity.id === "fault:jam", "low-level keyword matches entity by alias");
   const dual = findEntitiesInGraph(g, ["jam"], ["fixes"]);
   assert(dual.some((e) => e.id === "proc:cold-pull"), "high-level keyword pulls the fixing procedure via the edge");
+
+  // graph-guided chunk ranking: a chunk cited by two entities outranks one cited by one
+  const ranked = rankChunksByEntityCitations([
+    { id: "a", name: "A", type: "Part", description: "", confidence: "EXTRACTED", source_ids: ["owner#p42", "owner#p10"], anchors: [] },
+    { id: "b", name: "B", type: "Part", description: "", confidence: "EXTRACTED", source_ids: ["owner#p42"], anchors: [] },
+  ]);
+  assert(ranked[0] === "owner#p42", "chunk cited by more entities ranks first (WEIGHT poll)");
 
   console.log("retrieve self-check ok");
 }

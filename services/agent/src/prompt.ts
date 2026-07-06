@@ -40,6 +40,17 @@ function masterBlock(): string {
   return `No single product is selected right now — you have access to ALL indexed products at once. Use \`list_profile\` (no product) to see what's available, then \`grep_profile\` / \`read_profile\` with a product's \`product\` slug to search or read its knowledge — and ALWAYS say which product a fact came from. To show a page, pass the slug to the page tools. For anything that isn't about a product, just answer normally.`;
 }
 
+// Compact editorial design guide for the freeform Page canvas. The design system
+// (tokens, fonts, base classes) is already loaded in the canvas host — this tells
+// the model HOW to compose a page that looks intentionally designed, not stacked.
+// (M3 layers on the fuller craft rules + an anti-slop linter.)
+export const DESIGN_GUIDE = `DESIGN — the Takt look is editorial and high-craft. The design system (fonts, colors, classes) is ALREADY loaded; don't re-declare colors or fonts, just compose:
+  • STRUCTURE: a short \`.takt-eyebrow\` kicker → a serif \`<h1>\` headline → a \`.takt-lead\` standfirst → sections with \`<h2>\`. Use REAL hierarchy (big vs small, dense vs airy), never one flat size.
+  • LAYOUT with CSS grid so it fills the canvas: \`<div class="takt-grid takt-cols-2">…</div>\` (also takt-cols-3 / takt-cols-4 / takt-split). Put a figure BESIDE its explanation — don't stack everything in one column. It reflows to one column when narrow, automatically.
+  • BLOCKS: \`.takt-card\` / \`.takt-panel\` group things; \`.takt-callout\` (add \`data-tone="warn|danger|ok|tip"\`) for a warning/tip; \`.takt-stat\` (\`<div class="takt-stat"><span class="n">215 °C</span><span class="l">Nozzle</span></div>\`) for a key number; \`<blockquote>\` for a pulled line; plain \`<table>\` for specs; inline \`<svg>\` for a chart or schematic.
+  • GROUNDED MEDIA + CITATIONS are ISLANDS (never a plain <img> for a manual figure): \`<takt-figure src="/assets/…" caption="…"></takt-figure>\`, \`<takt-model src="/assets/*.glb" caption="…"></takt-model>\`, \`<takt-video src="/assets/…"></takt-video>\`, and a citation chip right after the claim: \`<takt-cite page="42" product="slug"></takt-cite>\`. Interactive: \`<takt-action id="actionId" value="…">Label</takt-action>\`.
+  • Only ever use a real /assets URL a tool returned; never invent a URL or a number. Aim for a page that reads like a designed manual spread — mostly visual + structured, with tight cited prose.`;
+
 // The shared capabilities + artifact-quality guidance. These are CAPABILITIES to
 // use when they help — not forcing rules — except GROUND, which stays firm
 // (never state product specifics from prior knowledge), and the theme/citation/
@@ -65,7 +76,10 @@ function capabilities(): string {
    Two ways to build:
    • \`delegate_build\` (DEFAULT for any product visual): your FIRST action — call it with a clear, specific brief, drop a ONE-LINE chat note, and keep chatting. The worker gathers the real figures/3D/video and composes the surface; the canvas shows a skeleton meanwhile, then the artifact. Do NOT gather the figures yourself for it (no get_anchors/crop just to feed a build).
    • \`emit_ui\` (only for a trivial surface you ALREADY have all the data for): compose it inline.
-   Either way it's the real deliverable — make it good; for a multi-step turn call \`update_todos\` so the user sees progress. A surface is a FLAT list of \`nodes\` — each \`{ id, type, props, children? }\` — with exactly one \`root\` (usually a Section). Build ONLY from these catalog components (props must match each signature):
+   Either way it's the real deliverable — make it good; for a multi-step turn call \`update_todos\` so the user sees progress.
+   THE CANVAS IS A FREEFORM PAGE. Your DEFAULT deliverable is a single \`Page\` node — a full, designed HTML page that OWNS THE WHOLE CANVAS (edge to edge), composed like a great manual/magazine spread, NOT a stacked column of cards. Emit a surface whose \`root\` is one \`Page\`: \`{ "id":"s", "key":"answer", "root":"pg", "nodes":[{ "id":"pg", "type":"Page", "props":{ "html":"…", "css":"…" } }] }\`.
+${DESIGN_GUIDE}
+   (The catalog components below still exist for a genuinely SIMPLE surface, but PREFER a Page for anything rich. A surface is a FLAT list of \`nodes\` with one \`root\`; props must match each signature.)
 ${catalogPromptSection()}
    GROUNDED MULTIMODAL ANSWERS: to show the RIGHT figure/part, don't guess — \`find_entity\` the thing the answer is about, then \`get_anchors\` on it: it hands you the exact \`crop_page_image\` call for the manual figure, the \`/assets/*.glb\` for a 3D part (Model3D), or a video clip (Video). Assemble those into the surface. For a product overview or when the user wants to "explore" the product, call \`product_map\` (it renders the interactive Graph itself).
    INTERACTIVE (client-side): for a small calculator/configurator, add a surface \`data\` object and give input nodes (Input/Slider/Toggle/Select) a \`bind\` (a JSON-Pointer like \`/wireDia\`); a Stat with the same \`bind\` shows the live value — two-way, no round-trip. To collect input and CONTINUE the answer, use a Form/Button with an \`actionId\` (it feeds the agent). For anything beyond that (a real formula, a novel widget), use Sandbox.
@@ -100,21 +114,17 @@ const CONVERSATION = `A few turns done right — these show the SHAPE, never reu
 // question's intent and composes it from the catalog — these describe STRUCTURE,
 // not any product, so nothing anchors the model to one domain. A single generic
 // JSON skeleton shows the wire shape without prescribing content.
-const UI_SHAPE = `MATCH THE LAYOUT TO THE QUESTION — pick the archetype that fits, compose it from the catalog, fill it with the real (cited) data. These are shapes to reach for, never templates to copy, and never force one shape onto every answer:
-  • Simple answer → a short \`Prose\`, plus a \`Stat\` or \`Callout\` if one number/warning stands out. (Or just chat text — not everything needs a surface.)
-  • How-to / procedure → a \`Section\`: a one-line \`Prose\` intro, then \`Steps\`, with an \`Image\` crop or \`Model3D\` beside the step that needs it.
-  • Compare → a \`Table\`, or \`Columns\` of \`Card\`s (one per option).
-  • Diagnose a fault → a \`Section\`: the symptom in \`Prose\`, a \`Callout\` for any safety warning, \`Steps\` to isolate it, the anchored figure/3D of the part, related numbers as \`KeyValue\`.
-  • Spec sheet → \`KeyValue\` or \`Table\` of values; a \`Chart\` when it's a range or curve.
-  • Explore the product → the \`product_map\` Graph.
-Think like a good manual page or explainer, not "prompt as a header, answer as a paragraph." The wire shape (flat nodes, one root Section, children by id):
+const UI_SHAPE = `MATCH THE PAGE TO THE QUESTION — compose the Page's HTML to fit the intent, fill it with real cited data. Shapes to reach for (never a rigid template, never forced onto every answer):
+  • How-to / procedure → headline + \`.takt-lead\`, then a \`.takt-grid.takt-split\`: numbered \`<ol>\` steps on one side, the \`<takt-figure>\`/\`<takt-model>\` for the key step on the other; a \`.takt-callout[data-tone="warn"]\` for any safety note.
+  • Diagnose a fault → the symptom as the lead, a warning callout, a \`.takt-grid.takt-cols-2\` of likely causes (each a \`.takt-card\` with the anchored figure + the fix), specs as a \`<table>\`.
+  • Compare → a \`<table>\` or a \`.takt-grid.takt-cols-3\` of \`.takt-card\`s (one per option), each with a \`.takt-stat\` for its headline number.
+  • Spec sheet → a \`.takt-grid\` of \`.takt-stat\` tiles for headline values + a full \`<table>\`; inline \`<svg>\` for a range/curve.
+  • Simple answer → a tight paragraph with a \`.takt-stat\` or \`.takt-callout\` if one number/warning stands out (or just chat text — not everything needs a Page).
+Think "a designed manual spread that fills the page", not "header + paragraph". A minimal Page surface:
 \`\`\`json
-{ "id": "s1", "key": "answer", "title": "…", "root": "root", "nodes": [
-  { "id": "root", "type": "Section", "props": { "title": "…" }, "children": ["intro", "steps", "fig"] },
-  { "id": "intro", "type": "Prose", "props": { "markdown": "… cited fact [p.NN]." } },
-  { "id": "steps", "type": "Steps", "props": { "steps": [ { "title": "…", "body": "…" } ] } },
-  { "id": "fig", "type": "Image", "props": { "src": "<real crop_page_image URL>", "caption": "… [p.NN]" } }
-] }
+{ "id":"s1", "key":"answer", "root":"pg", "nodes":[ { "id":"pg", "type":"Page", "props":{
+  "html":"<p class=\\"takt-eyebrow\\">Maintenance</p><h1>Clearing a filament jam</h1><p class=\\"takt-lead\\">A cold pull removes the clog without tools.<takt-cite page=\\"42\\" product=\\"prusa-mk4s\\"></takt-cite></p><div class=\\"takt-grid takt-split\\"><ol><li>Heat the hotend to 215&nbsp;°C.</li><li>Pull the filament out firmly.</li></ol><takt-figure src=\\"<real crop URL>\\" caption=\\"Hotend assembly [p.42]\\"></takt-figure></div>"
+} } ] }
 \`\`\``;
 
 // Product-aware OR master (no-product) system prompt. `product` is optional: when

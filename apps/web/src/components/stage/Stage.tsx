@@ -12,6 +12,11 @@ import { Wordmark } from "@/components/brand/Wordmark";
 // all of that lives in the chat/activity. While the agent composes an artifact
 // the canvas shows a ghost skeleton; between artifacts it holds the last one, or
 // a calm idle state.
+// A surface is a full-bleed freeform Page when its root node is a `Page`.
+function isPageSurface(p: UIPart): boolean {
+  return p.surface.nodes.find((n) => n.id === p.surface.root)?.type === "Page";
+}
+
 export function Stage({
   surfaces, building, streaming, isLatest, ctx, empty, heading, subheading, starters, onStarter, liveMode,
 }: {
@@ -35,16 +40,22 @@ export function Stage({
     if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 240) el.scrollTop = el.scrollHeight;
   });
 
+  // A freeform `Page` surface owns the WHOLE canvas (full-bleed, its own layout +
+  // internal padding via the design system). Legacy catalog surfaces stay in a
+  // centered reading column. Empty/building/idle keep the narrow, calm layout.
+  const showingSurfaces = !empty && !building && surfaces.length > 0;
+  const pageMode = showingSurfaces && surfaces.every(isPageSurface);
+
   return (
     <div ref={scrollRef} className="takt-scroll relative min-h-0 flex-1 overflow-y-auto">
       {liveMode && <div aria-hidden className="pointer-events-none absolute inset-0 bg-[radial-gradient(55%_45%_at_50%_28%,var(--accent-soft,rgba(120,130,255,0.1)),transparent_70%)]" />}
-      <div className="relative mx-auto w-full max-w-3xl px-6 pb-40 pt-8">
+      <div className={pageMode ? "relative w-full pb-40" : "relative mx-auto w-full max-w-3xl px-6 pb-40 pt-8"}>
         {empty ? (
           <EmptyState heading={heading} subheading={subheading} starters={starters} onStarter={onStarter} />
         ) : building ? (
           <ArtifactSkeleton live={liveMode} />
         ) : surfaces.length ? (
-          <div className="space-y-6">
+          <div className={pageMode ? "" : "space-y-6"}>
             {surfaces.map((p) => <UIRenderer key={p.id} surface={p.surface} ctx={{ ...ctx, readOnly: ctx.readOnly ?? !isLatest }} animate={isLatest && streaming} />)}
           </div>
         ) : (

@@ -5,6 +5,7 @@ import { Mermaid } from "./Mermaid";
 import { Model3D } from "./Model3D";
 import { Graph } from "./Graph";
 import { Sandbox } from "./Sandbox";
+import { CanvasFrame } from "@/components/canvas/CanvasFrame";
 import type { NodeProps } from "./ctx";
 
 // type name → renderer. The union of these keys IS the catalog the agent may use
@@ -26,6 +27,8 @@ export const REGISTRY: Record<string, R> = {
   Model3D: (p) => <Model3D props={p.props} />,
   Graph: (p) => <Graph props={p.props} />,
   Sandbox: (p) => <Sandbox props={p.props} onAction={(v) => p.ctx.onAction?.((p.props as { actionId?: string }).actionId ?? "sandbox", v)} />,
+  // full freeform page — sandboxed iframe + host-controlled islands
+  Page: (p) => <CanvasFrame props={p.props} ctx={p.ctx} />,
 };
 
 export const CONTAINERS = new Set(["Section", "Columns", "Card"]);
