@@ -7,7 +7,6 @@ export type ManualKind = "owner" | "quick_start" | "selection_chart" | "other";
 // A provider id from the harness registry (BUILTIN_PROVIDERS): "anthropic",
 // "openai", "google", "openrouter", "ollama", … — no longer Anthropic-only.
 export type ProviderKind = string;
-export type ArtifactKind = "react" | "html";
 export type MessageRole = "user" | "assistant" | "tool";
 
 export interface Product {
@@ -45,7 +44,7 @@ export interface PageImage {
 // Slugs the product router reserves — a product can never take one (they'd shadow
 // a static route like /master, /gallery, /api). Enforced at the ingest boundary.
 export const RESERVED_SLUGS = [
-  "master", "all", "gallery", "api", "assets", "artifact-host", "health", "live", "chat", "settings",
+  "master", "all", "api", "assets", "sandbox-host", "health", "live", "chat", "settings",
 ] as const;
 export function isReservedSlug(slug: string): boolean {
   return (RESERVED_SLUGS as readonly string[]).includes(slug.trim().toLowerCase());
@@ -59,19 +58,6 @@ export interface Provider {
   keyLast4: string | null;
   hasKey: boolean;
   isDefault: boolean;
-}
-
-export interface Artifact {
-  id: string;
-  productId: string | null;
-  chatId: string | null;
-  title: string;
-  kind: ArtifactKind;
-  code: string;
-  groupKey: string | null;
-  version: number;
-  thumbnailPath: string | null;
-  createdAt: string;
 }
 
 export interface ChatSummary {
@@ -95,10 +81,8 @@ export type MessageBlock =
   | { type: "reasoning"; text: string }
   | { type: "tool"; id?: string; tool: string; summary?: string; detail?: string; status: "running" | "done" }
   | { type: "page_image"; citationId: string; url: string; page: number; manualKind: ManualKind; manualTitle?: string | null; caption: string | null; productSlug?: string | null; productName?: string | null }
-  | { type: "artifact"; artifactId: string; title: string; kind: ArtifactKind; groupKey?: string; version?: number }
   | { type: "ui"; partId: string; surface: UISurface }
-  | { type: "ask_user"; askId: string; questions: AskQuestion[]; answers?: AskAnswer[]; cancelled?: boolean }
-  | { type: "citation"; citationId: string; page: number; manualKind: ManualKind; productSlug?: string | null };
+  | { type: "ask_user"; askId: string; questions: AskQuestion[]; answers?: AskAnswer[]; cancelled?: boolean };
 
 /** Request body the web app POSTs to /api/chat (and the agent service).
  * `productSlug` is null in master mode (no product selected — search across all). */

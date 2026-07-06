@@ -4,10 +4,11 @@ import { z } from "zod";
 // one schema, reused on both sides. The model uses this to ask the user 1–4
 // clarifying questions mid-answer; the browser renders them in the Ask modal.
 
-// A small visual that explains a question or an option. "ascii" is plain text /
-// SVG shown verbatim; "react"/"html" render in the sandboxed artifact iframe.
+// A small visual that explains a question or an option — plain text / ASCII / SVG
+// shown verbatim. (Rich react/html renders were retired with the old artifact
+// pipeline; a designed answer is the stage's job via emit_ui.)
 export const askRenderSchema = z.object({
-  kind: z.enum(["ascii", "react", "html"]),
+  kind: z.enum(["ascii"]),
   content: z.string().min(1).max(60_000),
 });
 

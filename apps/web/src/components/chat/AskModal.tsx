@@ -5,7 +5,6 @@ import { motion, useReducedMotion } from "motion/react";
 import { X, ArrowLeft, ArrowRight, SkipForward, Check, Sparkles } from "lucide-react";
 import type { AskAnswer, AskQuestion, AskRender } from "@takt/shared";
 import type { AskState } from "@/lib/chatStore";
-import { InlineArtifactFrame } from "@/components/canvas/ArtifactFrame";
 import { cn } from "@/lib/cn";
 
 interface Draft { values: string[]; custom: string; skipped: boolean }
@@ -191,10 +190,7 @@ function RenderArea({ render, fromOption }: { render?: AskRender; fromOption: bo
   if (!render) {
     return <div className="grid h-full place-items-center p-8 text-center text-[12px] text-faint">No diagram for this {fromOption ? "option" : "question"}.</div>;
   }
-  if (render.kind === "ascii") {
-    return <pre className="takt-scroll m-0 overflow-x-auto p-5 font-mono text-[12px] leading-[1.5] text-foreground whitespace-pre-wrap">{render.content}</pre>;
-  }
-  return <InlineArtifactFrame code={render.content} kind={render.kind} />;
+  return <pre className="takt-scroll m-0 overflow-x-auto p-5 font-mono text-[12px] leading-[1.5] text-foreground whitespace-pre-wrap">{render.content}</pre>;
 }
 
 function ReviewBody({ questions, answers, onJump }: { questions: AskQuestion[]; answers: AskAnswer[]; onJump: (i: number) => void }) {

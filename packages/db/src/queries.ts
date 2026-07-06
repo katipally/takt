@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import type {
   Product, Manual, PageImage, Provider,
-  Artifact, ChatSummary, ChatMessage, ManualKind,
-  ProviderKind, ArtifactKind, MessageBlock, MessageRole,
+  ChatSummary, ChatMessage, ManualKind,
+  ProviderKind, MessageBlock, MessageRole,
 } from "@takt/shared";
 import { isReservedSlug } from "@takt/shared";
 import { getDb } from "./connection";
@@ -280,7 +280,7 @@ export function getFrequentQuestions(productId: string | null, limit = 6, minCou
       let grounded = false;
       try {
         const blocks = JSON.parse(r.content) as { type: string; tool?: string }[];
-        grounded = blocks.some((b) => b.type === "page_image" || b.type === "citation" || (b.type === "tool" && /search/.test(b.tool ?? "")));
+        grounded = blocks.some((b) => b.type === "page_image" || (b.type === "tool" && /search/.test(b.tool ?? "")));
       } catch { /* skip */ }
       if (grounded) firstByChat.set(r.chatId, { text: entry?.text ?? "", at: entry?.at ?? r.createdAt, grounded: true });
     }
@@ -341,43 +341,3 @@ export function listMessages(chatId: string): ChatMessage[] {
   return rows.map((r) => ({ ...r, content: JSON.parse(r.content) as MessageBlock[] }));
 }
 
-// ─── Artifacts ─────────────────────────────────────────────────────────────
-const ARTIFACT_COLS = `id, product_id AS productId, chat_id AS chatId, title, kind, code,
-  group_key AS groupKey, version, thumbnail_path AS thumbnailPath, created_at AS createdAt`;
-
-// Next version number for an artifact lineage (chat + groupKey). 1 if none yet.
-export function nextArtifactVersion(chatId: string | null | undefined, groupKey: string): number {
-  const row = db().prepare(
-    `SELECT COALESCE(MAX(version), 0) AS maxV FROM artifacts WHERE group_key=? AND chat_id IS ?`,
-  ).get(groupKey, chatId ?? null) as { maxV: number };
-  return row.maxV + 1;
-}
-
-export function createArtifact(a: {
-  productId: string | null; chatId?: string | null; title: string; kind: ArtifactKind; code: string;
-  groupKey?: string; version?: number;
-}): Artifact {
-  const id = randomUUID();
-  const groupKey = a.groupKey ?? id;
-  const version = a.version ?? 1;
-  db().prepare(
-    `INSERT INTO artifacts (id, product_id, chat_id, title, kind, code, group_key, version) VALUES (?,?,?,?,?,?,?,?)`,
-  ).run(id, a.productId, a.chatId ?? null, a.title, a.kind, a.code, groupKey, version);
-  return getArtifact(id)!;
-}
-
-export function getArtifact(id: string): Artifact | undefined {
-  return db().prepare(`SELECT ${ARTIFACT_COLS} FROM artifacts WHERE id=?`).get(id) as Artifact | undefined;
-}
-
-export function listArtifacts(productId: string): Artifact[] {
-  return db().prepare(
-    `SELECT ${ARTIFACT_COLS} FROM artifacts WHERE product_id=? ORDER BY created_at DESC`,
-  ).all(productId) as Artifact[];
-}
-
-export function listArtifactsByChat(chatId: string): Artifact[] {
-  return db().prepare(
-    `SELECT ${ARTIFACT_COLS} FROM artifacts WHERE chat_id=? ORDER BY created_at ASC`,
-  ).all(chatId) as Artifact[];
-}

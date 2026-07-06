@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Boxes, Settings, Check, Pencil, Trash2, X, PanelLeftClose } from "lucide-react";
+import { Plus, Settings, Check, Pencil, Trash2, X, PanelLeftClose } from "lucide-react";
 import type { ChatSummary } from "@takt/shared";
 import { api } from "@/lib/api";
 import { useUi } from "@/lib/uiStore";
@@ -50,7 +50,6 @@ export function Sidebar({
       </div>
 
       <div className="border-t border-border p-2.5">
-        {currentSlug && <SideLink href={`/gallery/${currentSlug}`} icon={<Boxes className="size-4" />}>Artifact gallery</SideLink>}
         <div className="flex items-center gap-1">
           <button onClick={() => openSettings()} className="flex flex-1 items-center gap-2 rounded-full px-2.5 py-2 text-[13px] text-muted-foreground transition hover:bg-foreground/[0.06] hover:text-foreground">
             <Settings className="size-4" /> Settings
@@ -95,10 +94,3 @@ function ChatRow({ chat, active, productSlug, onSelect, onNewChat }: {
   );
 }
 
-function SideLink({ href, icon, children }: { href: string; icon: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <Link href={href} className="flex items-center gap-2 rounded-full px-2.5 py-2 text-[13px] text-muted-foreground transition hover:bg-foreground/[0.06] hover:text-foreground">
-      {icon}{children}
-    </Link>
-  );
-}

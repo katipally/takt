@@ -7,7 +7,7 @@ import { speech } from "@/lib/speech";
 import { useUi } from "@/lib/uiStore";
 import { api } from "@/lib/api";
 
-export type { Node, Part, PageImagePart, ArtifactPart, CanvasState, Attachment, BranchInfo } from "@/lib/chatStore";
+export type { Node, Part, PageImagePart, Attachment, BranchInfo } from "@/lib/chatStore";
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random() + Date.now()));
 
@@ -40,9 +40,6 @@ export function useWorkbench(productSlug: string | null) {
   const closeSource = useCallback(() => chatStore.closeSource(chatId), [chatId]);
   const submitAsk = useCallback((answers: AskAnswer[]) => chatStore.submitAsk(chatId, answers), [chatId]);
   const cancelAsk = useCallback(() => chatStore.cancelAsk(chatId), [chatId]);
-  const openArtifact = useCallback((artifactId: string) => chatStore.openArtifact(chatId, artifactId), [chatId]);
-  const closeCanvas = useCallback(() => chatStore.closeCanvas(chatId), [chatId]);
-  const toggleCanvas = useCallback(() => chatStore.toggleCanvas(chatId), [chatId]);
   // `product` overrides the workbench's slug — a cross-product citation (master
   // mode) carries its own product so it opens the right page.
   const openCitation = useCallback(async (page: number, manual?: string, product?: string | null) => {
@@ -55,9 +52,9 @@ export function useWorkbench(productSlug: string | null) {
   }, [productSlug, chatId]);
 
   return {
-    chatId, messages: chatStore.activePath(session), isStreaming: session.streaming, canvas: session.canvas, source: session.source, ask: session.ask, usage: session.usage,
+    chatId, messages: chatStore.activePath(session), isStreaming: session.streaming, source: session.source, ask: session.ask, usage: session.usage,
     voiceEnabled, setVoiceEnabled,
     send, stop, regenerate, editUser, switchBranch, branchInfo, newChat, loadChat,
-    openSource, closeSource, openArtifact, closeCanvas, toggleCanvas, openCitation, submitAsk, cancelAsk,
+    openSource, closeSource, openCitation, submitAsk, cancelAsk,
   };
 }

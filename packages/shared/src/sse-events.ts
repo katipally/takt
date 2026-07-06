@@ -24,21 +24,6 @@ export const sseEventSchema = z.discriminatedUnion("type", [
     productSlug: z.string().nullable().optional(),
     productName: z.string().nullable().optional(),
   }),
-  z.object({
-    type: z.literal("artifact"),
-    artifactId: z.string(),
-    title: z.string(),
-    kind: z.enum(["react", "html"]),
-    groupKey: z.string(),
-    version: z.number(),
-  }),
-  z.object({
-    type: z.literal("citation"),
-    citationId: z.string(),
-    page: z.number(),
-    manualKind: z.string(),
-    productSlug: z.string().nullable().optional(),
-  }),
   // A complete, validated declarative UI surface rendered inline on the stage.
   z.object({ type: z.literal("ui_surface"), partId: z.string(), surface: uiSurfaceSchema }),
   // Resolution of an interactive Button/Form/Select action (ack to the client).

@@ -1,4 +1,4 @@
-import type { Product, Provider, Artifact, ChatSummary, ChatMessage, AskAnswerPayload } from "@takt/shared";
+import type { Product, Provider, ChatSummary, ChatMessage, AskAnswerPayload } from "@takt/shared";
 
 export interface ModelInfo {
   id: string; display_name: string; created_at?: string;
@@ -31,8 +31,6 @@ export const api = {
   settings: () => fetch("/api/settings").then(j<AppSettings>),
   updateSettings: (b: Partial<AppSettings>) =>
     fetch("/api/settings", { method: "PUT", body: JSON.stringify(b) }).then(j<AppSettings>),
-  artifacts: (product: string) => fetch(`/api/artifacts?product=${product}`).then(j<Artifact[]>),
-  artifact: (id: string) => fetch(`/api/artifacts/${id}`).then(j<Artifact>),
   chats: (product: string) => fetch(`/api/chats?product=${product}`).then(j<ChatSummary[]>),
   messages: (chat: string) => fetch(`/api/chats?chat=${chat}`).then(j<ChatMessage[]>),
   renameChat: (id: string, title: string) =>

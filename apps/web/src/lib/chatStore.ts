@@ -9,13 +9,12 @@ import { api } from "./api";
 // viewed — switching never cancels an in-flight answer.
 
 export interface PageImagePart { id: string; kind: "page_image"; citationId: string; url: string; page: number; manualKind: string; manualTitle?: string; caption?: string | null; productSlug?: string | null; productName?: string | null; }
-export interface ArtifactPart { id: string; kind: "artifact"; artifactId: string; title: string; artifactKind: "react" | "html"; groupKey: string; version: number; }
 export interface ReasoningPart { id: string; kind: "reasoning"; text: string; }
 export interface ToolPart { id: string; kind: "tool"; tool: string; summary?: string; detail?: string; status: "running" | "done"; }
 export interface TextPart { id: string; kind: "text"; text: string; }
 export interface AskPart { id: string; kind: "ask"; askId: string; questions: AskQuestion[]; answers?: AskAnswer[]; cancelled?: boolean; }
 export interface UIPart { id: string; kind: "ui"; partId: string; surface: UISurface; }
-export type Part = ReasoningPart | ToolPart | TextPart | PageImagePart | ArtifactPart | AskPart | UIPart;
+export type Part = ReasoningPart | ToolPart | TextPart | PageImagePart | AskPart | UIPart;
 
 // Parts that render on the STAGE (the rendered answer) vs. the PROCESS RAIL
 // (the "how" — thinking + tool calls). page_image + citations ride the stage.
@@ -29,9 +28,6 @@ export type Node =
   | { id: string; parentId: string | null; role: "assistant"; parts: Part[]; streaming: boolean; status?: string | null };
 
 export interface CanvasSource { url: string; page: number; manualKind: string; manualTitle?: string; caption?: string | null; productSlug?: string | null; productName?: string | null; }
-// The right-hand canvas holds artifacts only. Manual pages (sources) open in a
-// modal instead — see `Session.source` and the SourceModal.
-export interface CanvasState { open: boolean; artifactId?: string }
 
 export interface Usage { contextTokens: number; outputTokens: number; costUsd: number; }
 
@@ -41,7 +37,6 @@ export interface Session {
   children: Record<string, string[]>; // parentKey -> ordered child ids
   active: Record<string, string>;     // parentKey -> selected child id
   streaming: boolean;
-  canvas: CanvasState;
   source?: CanvasSource; // manual page open in the source modal (null/undefined = closed)
   ask?: AskState;        // ask_user questions awaiting answers (undefined = none open)
   usage: Usage;
@@ -57,7 +52,7 @@ const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random(
 const keyOf = (parentId: string | null) => parentId ?? ROOT;
 const blank = (chatId: string, productSlug: string | null): Session => ({
   chatId, productSlug, nodes: {}, children: {}, active: {}, streaming: false,
-  canvas: { open: false }, usage: { contextTokens: 0, outputTokens: 0, costUsd: 0 },
+  usage: { contextTokens: 0, outputTokens: 0, costUsd: 0 },
 });
 
 const sessions = new Map<string, Session>();
@@ -145,10 +140,6 @@ function applyStreamEvent(chatId: string, assistantId: string, e: import("@takt/
   else if (e.type === "page_image") update(chatId, (s) =>
     patchAssistant(s, assistantId, (p) => [...p, { id: uid(), kind: "page_image", citationId: e.citationId, url: e.url, page: e.page, manualKind: e.manualKind, manualTitle: e.manualTitle, caption: e.caption, productSlug: e.productSlug ?? null, productName: e.productName ?? null }]),
   );
-  else if (e.type === "artifact") update(chatId, (s) => {
-    const withPart = patchAssistant(s, assistantId, (p) => [...p, { id: uid(), kind: "artifact", artifactId: e.artifactId, title: e.title, artifactKind: e.kind, groupKey: e.groupKey, version: e.version }]);
-    return { ...setStatus(withPart, assistantId, null), canvas: { open: true, artifactId: e.artifactId } };
-  });
   else if (e.type === "ui_surface") update(chatId, (s) => {
     // Replace a surface with the same partId (re-emit / new version), else append.
     const withPart = patchAssistant(s, assistantId, (p) => {
@@ -248,10 +239,6 @@ export const chatStore = {
 
   openSource(chatId: string, source: CanvasSource) { update(chatId, (s) => ({ ...s, source })); },
   closeSource(chatId: string) { update(chatId, (s) => ({ ...s, source: undefined })); },
-  openArtifact(chatId: string, artifactId: string) { update(chatId, (s) => ({ ...s, canvas: { open: true, artifactId } })); },
-  closeCanvas(chatId: string) { update(chatId, (s) => ({ ...s, canvas: { ...s.canvas, open: false } })); },
-  toggleCanvas(chatId: string) { update(chatId, (s) => ({ ...s, canvas: { ...s.canvas, open: !s.canvas.open } })); },
-
   stop(chatId: string) { getSession(chatId).abort?.abort(); update(chatId, (s) => ({ ...s, streaming: false })); },
   reset(chatId: string, productSlug: string | null) { sessions.set(chatId, blank(chatId, productSlug)); notify(chatId); },
 
@@ -308,7 +295,6 @@ export const chatStore = {
             else if (b.type === "reasoning" && b.text) parts.push({ id: uid(), kind: "reasoning", text: b.text });
             else if (b.type === "tool") parts.push({ id: uid(), kind: "tool", tool: b.tool, summary: b.summary, detail: b.detail, status: "done" });
             else if (b.type === "page_image") parts.push({ id: uid(), kind: "page_image", citationId: b.citationId, url: b.url, page: b.page, manualKind: b.manualKind, manualTitle: b.manualTitle ?? undefined, caption: b.caption, productSlug: b.productSlug ?? null, productName: b.productName ?? null });
-            else if (b.type === "artifact") parts.push({ id: uid(), kind: "artifact", artifactId: b.artifactId, title: b.title, artifactKind: b.kind, groupKey: b.groupKey ?? b.artifactId, version: b.version ?? 1 });
             else if (b.type === "ui") parts.push({ id: uid(), kind: "ui", partId: b.partId, surface: b.surface });
             else if (b.type === "ask_user") parts.push({ id: uid(), kind: "ask", askId: b.askId, questions: b.questions, answers: b.answers, cancelled: b.cancelled });
           }
