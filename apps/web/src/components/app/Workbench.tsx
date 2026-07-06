@@ -23,6 +23,16 @@ import { STARTERS } from "@/lib/starters";
 import { quick } from "@/lib/motion";
 import { cn } from "@/lib/cn";
 
+// Turn an interactive submit into a readable follow-up message.
+function formatAction(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object") {
+    const pairs = Object.entries(value as Record<string, unknown>).filter(([, v]) => v !== "" && v != null);
+    if (pairs.length) return pairs.map(([k, v]) => `${k}: ${v}`).join(", ");
+  }
+  return String(value);
+}
+
 export function Workbench({ slug, productName, starters }: { slug: string | null; productName?: string; starters?: string[] }) {
   const wb = useWorkbench(slug);
   const isMaster = !slug;
@@ -57,9 +67,11 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
   const ctx: RenderCtx = {
     onCitation: (page, slug) => wb.openCitation(page, undefined, slug),
     onSource: (s) => { if (s.url) wb.openSource({ url: s.url, page: s.page ?? 0, manualKind: "other" }); else if (s.page) wb.openCitation(s.page); },
-    // ponytail: interim — a Button/Form submit sends its value as a follow-up.
-    // Phase 5 resumes the SAME turn via the ask/pending channel instead.
-    onAction: (_actionId, value) => send(typeof value === "string" ? value : JSON.stringify(value)),
+    // A Button/Form/Select submit continues the conversation with the chosen
+    // values. The agent commonly re-emits the surface with the same key, so it
+    // reads as an in-place update. ponytail: a follow-up turn (works across every
+    // provider) rather than mid-turn blocking; only the LATEST answer is armed.
+    onAction: (_actionId, value) => send(formatAction(value)),
   };
 
   // Deep-links: ?chat=<id> loads a conversation; ?q=<text> opens a fresh chat.
