@@ -3,6 +3,7 @@ import * as C from "./components";
 import { Chart } from "./Chart";
 import { Mermaid } from "./Mermaid";
 import { Model3D } from "./Model3D";
+import { Graph } from "./Graph";
 import { Sandbox } from "./Sandbox";
 import type { NodeProps } from "./ctx";
 
@@ -18,10 +19,12 @@ export const REGISTRY: Record<string, R> = {
   Table: C.Table, Timeline: C.Timeline, Steps: C.Steps,
   Citation: C.Citation, SourceCard: C.SourceCard,
   Button: C.Button, Select: C.Select, Form: C.Form,
+  Input: C.Input, Slider: C.Slider, Toggle: C.Toggle,
   // components that take only `props`
   Chart: (p) => <Chart props={p.props} />,
   Mermaid: (p) => <Mermaid props={p.props} />,
   Model3D: (p) => <Model3D props={p.props} />,
+  Graph: (p) => <Graph props={p.props} />,
   Sandbox: (p) => <Sandbox props={p.props} onAction={(v) => p.ctx.onAction?.((p.props as { actionId?: string }).actionId ?? "sandbox", v)} />,
 };
 

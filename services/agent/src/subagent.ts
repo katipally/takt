@@ -5,7 +5,7 @@ import { collectTurn } from "./turn.js";
 import { resolveBuild } from "./providers.js";
 import { catalogPromptSection } from "@takt/shared";
 
-const MAX_STEPS = 12;
+const MAX_STEPS = 20;
 
 // The BUILD subagent. Runs as an independent instance (its own model, message
 // list, and loop) so the main agent can keep talking while this gathers sources
@@ -40,9 +40,13 @@ export async function runBuildSubagent(opts: {
 
 BRIEF: ${brief}
 
-Use the tools to gather REAL material first when the brief involves a product: search the Profile (list_profile → grep_profile → read_profile) for exact facts, and crop_page_image for any figure you show (embed the returned /assets/ URL — never invent one). Then call emit_ui with a flat list of catalog nodes${key ? ` and key "${key}"` : ""}. Prefer rich, multimodal surfaces: real cropped images, charts, tables, diagrams, steps. Catalog:
+Gather REAL material first when the brief involves a product — reach for the tool that fits:
+- A part / fault / procedure / spec and how it connects → \`find_entity\`, then \`get_anchors\` on it to get the EXACT media to show: the \`crop_page_image\` call for a manual figure, the \`/assets/*.glb\` for a 3D part (Model3D), or a video clip. Use \`walk_graph\` to pull related faults/steps.
+- A described symptom in plain words → \`search_product\` (semantic). An exact code / part number → \`grep_profile\`. Full concept text → \`read_profile\`.
+- A product overview / map → \`product_map\`.
+Always embed only a real \`/assets/\` URL a tool returned (crop_page_image, get_anchors) — never invent one. Then call emit_ui with a flat list of catalog nodes${key ? ` and key "${key}"` : ""}. SHOW, DON'T TELL: every surface MUST include at least one real visual — a manual figure cropped to the RELEVANT region (Image), a 3D part (Model3D), a video clip (Video), or a Gallery — chosen for THIS brief. Keep Prose to a sentence or two; carry the answer in visuals + structure (Steps, KeyValue, Table), cite facts inline as [p.NN]. Match the layout to the brief (a how-to → Steps + the cropped figure; a part → Model3D + KeyValue specs + related faults; a comparison → Table/Columns). Use resources efficiently — crop tight to what matters, pull only the relevant part's 3D, don't dump the whole manual. Catalog:
 ${catalogPromptSection()}
-Cite product facts inline as [p.NN]. When the surface is emitted you are done — do not narrate.`;
+BE DECISIVE: a few tool calls to gather is plenty — one or two find_entity/search calls and the get_anchors/crop for the figures you'll show. Do NOT keep re-searching. As soon as you have enough for a useful surface, call emit_ui — you MUST emit_ui before you run out of steps, so build with what you have rather than gathering more. When the surface is emitted you are done — do not narrate.`;
 
   const messages: Message[] = [
     { role: "system", text: sys },
@@ -52,15 +56,25 @@ Cite product facts inline as [p.NN]. When the surface is emitted you are done �
 
   try {
     await emit({ type: "status", text: "Designing a visual…" });
-    for (let step = 0; step < MAX_STEPS; step++) {
+    // Deterministic anti-dithering guard: weaker models over-gather and never
+    // commit to emit_ui. After GATHER_BUDGET steps, restrict the toolset to
+    // emit_ui ONLY (and nudge) so the worker MUST build with what it has.
+    const GATHER_BUDGET = 8;
+    const emitOnly = toolDefs.filter((t) => t.name === "emit_ui");
+    let emitted = false, nudged = false;
+    for (let step = 0; step < MAX_STEPS && !emitted; step++) {
       if (signal.aborted) return;
+      const force = step >= GATHER_BUDGET;
+      if (force && !nudged) {
+        messages.push({ role: "user", text: "You've gathered enough. Call emit_ui NOW and build the surface from the material you already have — do not call any other tool." });
+        nudged = true;
+      }
       const turn = await collectTurn(
-        streamProvider(provider, apiKey ?? undefined, { model, messages, tools: toolDefs, effort, maxTokens: 8192 }, signal),
+        streamProvider(provider, apiKey ?? undefined, { model, messages, tools: force ? emitOnly : toolDefs, effort, maxTokens: 8192 }, signal),
         buildEmit,
       );
       messages.push({ role: "assistant", text: turn.text, reasoning: turn.reasoning || undefined, reasoningSignature: turn.reasoningSignature, toolCalls: turn.toolCalls.length ? turn.toolCalls : undefined });
-      if (!turn.toolCalls.length) break;
-      let emitted = false;
+      if (!turn.toolCalls.length) { if (force) continue; break; } // when forcing, keep looping until it emits
       for (const tc of turn.toolCalls) {
         if (signal.aborted) return;
         const tool = tools.find((t) => t.name === tc.name);
@@ -71,7 +85,6 @@ Cite product facts inline as [p.NN]. When the surface is emitted you are done �
         if (tc.name === "emit_ui" && !res.isError) emitted = true;
         messages.push({ role: "tool", callId: tc.id, name: tc.name, result: res.output, images: res.images, isError: res.isError });
       }
-      if (emitted) break; // surface delivered — stop
     }
   } catch {
     // A failed build is non-fatal — the main agent already answered in prose.

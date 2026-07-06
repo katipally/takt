@@ -26,8 +26,9 @@ export const sseEventSchema = z.discriminatedUnion("type", [
     productSlug: z.string().nullable().optional(),
     productName: z.string().nullable().optional(),
   }),
-  // A complete, validated declarative UI surface rendered inline on the stage.
-  z.object({ type: z.literal("ui_surface"), partId: z.string(), surface: uiSurfaceSchema }),
+  // A declarative UI surface rendered inline on the stage. `partial: true` marks
+  // an in-progress stream frame (more nodes still coming); the final emit omits it.
+  z.object({ type: z.literal("ui_surface"), partId: z.string(), surface: uiSurfaceSchema, partial: z.boolean().optional() }),
   // Resolution of an interactive Button/Form/Select action (ack to the client).
   z.object({ type: z.literal("ui_action_result"), actionId: z.string(), ok: z.boolean().optional() }),
   z.object({ type: z.literal("title"), title: z.string() }),

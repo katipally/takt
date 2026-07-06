@@ -18,6 +18,7 @@ import { SettingsModal } from "@/components/settings/SettingsModal";
 import { Wordmark } from "@/components/brand/Wordmark";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import type { RenderCtx } from "@/components/ui-catalog/ctx";
+import type { UIPart } from "@/lib/chatStore";
 import { useWorkbench } from "@/hooks/useWorkbench";
 import { useUi } from "@/lib/uiStore";
 import { useLiveStore } from "@/lib/live/liveStore";
@@ -66,6 +67,21 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
   const latest = turns[turns.length - 1];
   const view = (viewUserId ? turns.find((t) => t.userId === viewUserId) : null) ?? latest;
   const isLatest = !view || view === latest;
+
+  // The canvas shows ONLY artifacts (UI surfaces). While the agent is composing
+  // one (status is "Designing…") show a skeleton; otherwise show this turn's
+  // artifact, and if it has none, hold the most recent artifact in the thread so
+  // the canvas doesn't blank on a conversational follow-up.
+  const isDesigning = (s?: string | null) => !!s && /desig|visual|building/i.test(s);
+  const viewSurfaces: UIPart[] = view?.assistant?.parts.filter((p): p is UIPart => p.kind === "ui") ?? [];
+  const building = !!view?.assistant?.streaming && viewSurfaces.length === 0 && isDesigning(view?.assistant?.status);
+  const canvasSurfaces: UIPart[] = viewSurfaces.length ? viewSurfaces : (() => {
+    for (let i = turns.length - 1; i >= 0; i--) {
+      const s = turns[i]!.assistant?.parts.filter((p): p is UIPart => p.kind === "ui");
+      if (s?.length) return s;
+    }
+    return [];
+  })();
 
   const ctx: RenderCtx = {
     onCitation: (page, slug) => wb.openCitation(page, undefined, slug),
@@ -129,11 +145,11 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
             voice bar once the call is live (shared layoutId="takt-dock"). */}
         <Stage
           empty={empty && !liveOpen}
-          userText={view?.userText}
-          node={view?.assistant}
+          surfaces={canvasSurfaces}
+          building={building}
+          streaming={!!view?.assistant?.streaming}
           isLatest={isLatest}
           ctx={ctx}
-          onRegenerate={() => { follow(); wb.regenerate(); }}
           heading={heading}
           subheading={isMaster
             ? "Ask across all your products at once — or anything else. Answers cite the product and page they come from."
@@ -161,6 +177,7 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
         <div style={{ width: railOpen ? 340 : 44 }} className="h-full">
           <ProcessRail open={railOpen} onToggle={toggleRail} messages={wb.messages}
             selectedUserId={viewUserId} onSelectTurn={setViewUserId} streaming={wb.isStreaming}
+            onRegenerate={() => { follow(); wb.regenerate(); }} onCitation={(page) => wb.openCitation(page)}
             onOpenSource={(s) => wb.openSource({ url: s.url, page: s.page, manualKind: "other" })} />
         </div>
       </motion.div>
@@ -189,6 +206,7 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
               <div className="h-[calc(100%-1rem)]">
                 <ProcessRail open onToggle={() => setSheetOpen(false)} messages={wb.messages}
                   selectedUserId={viewUserId} onSelectTurn={(id) => { setViewUserId(id); setSheetOpen(false); }} streaming={wb.isStreaming}
+                  onRegenerate={() => { follow(); wb.regenerate(); }} onCitation={(page) => wb.openCitation(page)}
                   onOpenSource={(s) => wb.openSource({ url: s.url, page: s.page, manualKind: "other" })} />
               </div>
             </motion.div>

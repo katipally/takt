@@ -24,18 +24,74 @@ export const uiNodeSchema = z.object({
 });
 export type UINode = z.infer<typeof uiNodeSchema>;
 
+// Field order matters for STREAMING: the small metadata (id/key/title/root) is
+// declared BEFORE the large `nodes` array so it arrives first in the model's
+// streamed JSON — that lets the server compute a stable partId and emit partial
+// surfaces mid-stream (see streamingJsonSurface / surfacePartId).
 export const uiSurfaceSchema = z.object({
   id: z.string().min(1),
+  /** stable lineage key within a chat — same key ⇒ new version of a surface */
+  key: z.string().optional(),
+  title: z.string().optional(),
   /** id of the root node — exactly one node is the root */
   root: z.string().min(1),
   nodes: z.array(uiNodeSchema).min(1),
   /** optional data model for two-way-bound interactive nodes */
   data: z.record(z.unknown()).optional(),
-  /** stable lineage key within a chat — same key ⇒ new version of a surface */
-  key: z.string().optional(),
-  title: z.string().optional(),
 });
 export type UISurface = z.infer<typeof uiSurfaceSchema>;
+
+// One place that decides a surface's partId (the client replaces-by-partId, so
+// partial stream emits and the final emit must agree). key ⇒ title ⇒ id.
+export function slugifyId(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 64) || "surface";
+}
+export function surfacePartId(s: { key?: string; title?: string; id: string }): string {
+  return slugifyId(s.key ?? s.title ?? s.id);
+}
+
+// Progressive streaming: leniently parse a still-streaming emit_ui arg string
+// into a partial surface so the stage fills in as the model writes it (the flat
+// list + UIRenderer's skeletons render order-independently). Balances open
+// quotes/brackets, keeps only fully-parsed nodes, and returns null until at
+// least the root node has arrived — the caller keeps the guaranteed whole-emit
+// as a fallback, so a failed parse this tick just means "wait for more".
+function closeJson(s: string): string {
+  let out = "", inStr = false, esc = false;
+  const stack: string[] = [];
+  for (const ch of s) {
+    if (inStr) {
+      out += ch;
+      if (esc) esc = false; else if (ch === "\\") esc = true; else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === "{" || ch === "[") stack.push(ch);
+    else if (ch === "}" || ch === "]") stack.pop();
+    out += ch;
+  }
+  if (inStr) out += '"';
+  out = out.replace(/\\$/, "").replace(/[:,]\s*$/, "");
+  // drop a dangling quoted key with no value, e.g. {"a":1,"b"  →  {"a":1
+  out = out.replace(/,\s*"[^"]*"\s*$/, "");
+  for (let i = stack.length - 1; i >= 0; i--) out += stack[i] === "{" ? "}" : "]";
+  return out;
+}
+
+export function streamingJsonSurface(arg: string): UISurface | null {
+  const tryParse = (s: string): any => { try { return JSON.parse(s); } catch { return null; } };
+  const obj = tryParse(arg) ?? tryParse(closeJson(arg));
+  if (!obj || typeof obj !== "object" || !obj.id || !obj.root) return null;
+  let nodes = Array.isArray(obj.nodes)
+    ? obj.nodes.filter((n: any) => n && typeof n === "object" && typeof n.id === "string" && typeof n.type === "string")
+    : [];
+  // If the raw stream didn't end on a complete node boundary, closeJson may have
+  // fabricated the trailing node from a half-written one — drop it.
+  const raw = arg.trimEnd().replace(/,$/, "");
+  if (nodes.length && !raw.endsWith("}") && !raw.endsWith("]")) nodes = nodes.slice(0, -1);
+  if (!nodes.some((n: any) => n.id === obj.root)) return null; // need the root node to render anything
+  return { id: String(obj.id), key: obj.key, title: obj.title, root: String(obj.root), nodes, data: obj.data };
+}
 
 // ── catalog component definition ─────────────────────────────────────────────
 interface CatalogEntry {
@@ -64,7 +120,7 @@ export const CATALOG = {
   Heading: { description: "A section heading.", props: z.object({ text: z.string(), level: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional() }) },
   Prose: { description: "A block of GitHub-flavored markdown (paragraphs, lists, bold, inline code, links). The workhorse for narrative text.", props: z.object({ markdown: z.string() }) },
   Callout: { description: "A tinted note box for a tip, warning, or aside.", props: z.object({ tone: tone.optional(), title: z.string().optional(), markdown: z.string() }) },
-  Stat: { description: "A big-number stat/KPI tile.", props: z.object({ value: z.string(), label: z.string(), hint: z.string().optional() }) },
+  Stat: { description: "A big-number stat/KPI tile. Set the node's `bind` (JSON-Pointer into `data`) to display a live bound value instead of a fixed `value` — e.g. a readout for a Slider/Input.", props: z.object({ value: z.string(), label: z.string(), hint: z.string().optional() }) },
   KeyValue: { description: "A two-column key/value spec list.", props: z.object({ rows: z.array(z.object({ key: z.string(), value: z.string() })).min(1) }) },
   Quote: { description: "A pull quote with optional attribution.", props: z.object({ text: z.string(), cite: z.string().optional() }) },
 
@@ -80,6 +136,7 @@ export const CATALOG = {
   Table: { description: "A data table.", props: z.object({ columns: z.array(z.string()).min(1), rows: z.array(z.array(z.string())).min(1), caption: z.string().optional() }) },
   Chart: { description: "A chart. `data` is an array of row objects; `series` names the numeric keys to plot; `xKey` is the category key.", props: z.object({ kind: z.enum(["line", "bar", "area", "pie"]), data: z.array(z.record(z.union([z.string(), z.number()]))).min(1), series: z.array(z.object({ key: z.string(), label: z.string().optional(), color: z.string().optional() })).min(1), xKey: z.string().optional(), caption: z.string().optional() }) },
   Timeline: { description: "A vertical timeline of dated events.", props: z.object({ events: z.array(z.object({ date: z.string().optional(), title: z.string(), body: z.string().optional() })).min(1) }) },
+  Graph: { description: "An interactive product-map node graph — parts, faults, procedures and specs and how they connect. Build it from the product_map tool's output. `nodes` each have an id, label and type (Part/Fault/Procedure/Spec…); `edges` link node ids. Clicking a node highlights its connections and shows its `detail`. Use for a product overview or when the user wants to 'explore' the product.", props: z.object({ nodes: z.array(z.object({ id: z.string(), label: z.string(), type: z.string().optional(), detail: z.string().optional() })).min(1), edges: z.array(z.object({ source: z.string(), target: z.string(), type: z.string().optional() })), caption: z.string().optional() }) },
   Steps: { description: "A numbered procedure with a connecting spine.", props: z.object({ steps: z.array(z.object({ title: z.string(), body: z.string().optional() })).min(1) }) },
 
   // reference
@@ -89,7 +146,10 @@ export const CATALOG = {
   // interactive (call back into the agent)
   Button: { description: "A button that submits `value` under `actionId` back to the agent, resuming the turn.", props: z.object({ label: z.string(), actionId: z.string(), value: z.string().optional(), variant: z.enum(["primary", "secondary"]).optional() }) },
   Form: { description: "A form that collects typed fields and submits them under `actionId`, resuming the turn.", props: z.object({ actionId: z.string(), fields: z.array(z.object({ name: z.string(), label: z.string(), type: z.enum(["text", "number", "select", "checkbox", "textarea"]).optional(), options: z.array(z.string()).optional(), placeholder: z.string().optional(), required: z.boolean().optional() })).min(1), submitLabel: z.string().optional() }) },
-  Select: { description: "A standalone dropdown that submits its choice under `actionId`.", props: z.object({ actionId: z.string(), label: z.string().optional(), options: z.array(z.string()).min(1), placeholder: z.string().optional() }) },
+  Select: { description: "A dropdown. Set `actionId` to submit the choice to the agent, and/or set the node's `bind` (JSON-Pointer into `data`) to store it locally for other nodes to read.", props: z.object({ actionId: z.string().optional(), label: z.string().optional(), options: z.array(z.string()).min(1), placeholder: z.string().optional() }) },
+  Input: { description: "A bound text/number field. Set the node's `bind` (JSON-Pointer into the surface `data`) — what the user types writes there live, and any node bound to the same path reflects it. Use with `data` for calculators/configurators.", props: z.object({ label: z.string().optional(), placeholder: z.string().optional(), kind: z.enum(["text", "number"]).optional() }) },
+  Slider: { description: "A bound range slider that writes a number to the node's `bind` path in `data`.", props: z.object({ label: z.string().optional(), min: z.number().optional(), max: z.number().optional(), step: z.number().optional() }) },
+  Toggle: { description: "A bound on/off switch that writes a boolean to the node's `bind` path in `data`.", props: z.object({ label: z.string().optional() }) },
 
   // escape hatch — server-bundled arbitrary React (three, d3, etc.)
   Sandbox: { description: "Arbitrary self-contained React for anything the catalog can't express (novel interactive/3D/canvas). `code` is an ES module with a default-exported component; imports from react, three, d3, recharts, framer-motion, lucide-react, @google/model-viewer resolve. Prefer catalog components; reach here only when nothing else fits.", props: z.object({ code: z.string().min(1), height: z.number().optional() }) },
@@ -164,4 +224,20 @@ export function catalogPromptSection(): string {
     return `• ${name}${tag} — ${e.description}\n    props ${shape}`;
   });
   return lines.join("\n");
+}
+
+// ── self-check: `tsx src/ui-spec.ts` ─────────────────────────────────────────
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const assert = (c: boolean, m: string) => { if (!c) { console.error("FAIL:", m); process.exit(1); } };
+  // progressive streaming parser: mid-stream JSON with a half-written trailing node
+  const partial = '{"id":"s1","key":"fix","title":"Fix","root":"sec","nodes":[{"id":"sec","type":"Section","children":["h"]},{"id":"h","type":"Heading","props":{"text":"Steps"}},{"id":"bad","type":"Pro';
+  const s = streamingJsonSurface(partial);
+  assert(!!s && s.nodes.length === 2, "streamingJsonSurface drops the half-written trailing node");
+  assert(surfacePartId(s!) === "fix", "surfacePartId derives from key (matches final emit)");
+  assert(streamingJsonSurface('{"id":"s","root":"r","nodes":[{"id":"x","type":"P') === null, "null until the root node has arrived");
+  assert(!!streamingJsonSurface('{"id":"s","root":"r","nodes":[{"id":"r","type":"Prose","props":{"markdown":"hi"}}]}'), "a complete surface parses");
+  // a valid surface still validates through the catalog
+  const ok = validateSurface({ id: "a", root: "r", nodes: [{ id: "r", type: "Prose", props: { markdown: "hi" } }] });
+  assert(ok.ok, "validateSurface accepts a minimal valid surface");
+  console.log("ui-spec self-check ok");
 }

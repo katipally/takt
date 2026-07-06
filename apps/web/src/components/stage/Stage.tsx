@@ -1,31 +1,25 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
-import { Copy, RefreshCw, Volume2, Square, ImageIcon, Check } from "lucide-react";
-import { useSyncExternalStore, useState } from "react";
-import { StreamingMarkdown } from "@/components/markdown/StreamingMarkdown";
-import { CitationChip } from "@/components/chat/CitationChip";
-import { Carousel } from "@/components/chat/Carousel";
+import { useEffect, useRef } from "react";
 import { UIRenderer } from "@/components/ui-catalog/UIRenderer";
 import type { RenderCtx } from "@/components/ui-catalog/ctx";
-import { speech } from "@/lib/speech";
-import type { Node, Part, PageImagePart, UIPart, TextPart, AskPart } from "@/lib/chatStore";
+import type { UIPart } from "@/lib/chatStore";
 import { Wordmark } from "@/components/brand/Wordmark";
 
-const linkify = (t: string) => t.replace(/\[p\.\s*(\d+)\]/g, (_m, n) => `[p.${n}](takt:cite:${n})`);
-
-// The main stage: the rendered ANSWER, full-bleed in a reading column. Renders a
-// single turn (the latest, or a past one selected from the rail): the user's
-// prompt as an eyebrow, then the assistant's presentational parts (prose + UI
-// surfaces + source images) in order. Thinking/tools live in the ProcessRail.
+// The canvas is a pure ARTIFACT surface — a polished, final generative-UI panel
+// (like a document/preview). It shows ONLY the generated UI surfaces; it never
+// shows the conversation, the AI's commentary, the user's prompt, or a title —
+// all of that lives in the chat/activity. While the agent composes an artifact
+// the canvas shows a ghost skeleton; between artifacts it holds the last one, or
+// a calm idle state.
 export function Stage({
-  userText, node, isLatest, ctx, onRegenerate, empty, heading, subheading, starters, onStarter, liveMode,
+  surfaces, building, streaming, isLatest, ctx, empty, heading, subheading, starters, onStarter, liveMode,
 }: {
-  userText?: string;
-  node?: Extract<Node, { role: "assistant" }>;
+  surfaces: UIPart[];
+  building: boolean;
+  streaming: boolean;
   isLatest: boolean;
   ctx: RenderCtx;
-  onRegenerate: () => void;
   empty: boolean;
   heading?: string;
   subheading?: string;
@@ -34,110 +28,72 @@ export function Stage({
   liveMode?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Stick to bottom while the latest answer streams.
+  // Stick to bottom while an artifact streams in.
   useEffect(() => {
-    if (!isLatest || !node?.streaming) return;
+    if (!streaming) return;
     const el = scrollRef.current;
     if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 240) el.scrollTop = el.scrollHeight;
   });
 
-  // During a live call the canvas EXPLAINS the concept — it renders only the
-  // visual surfaces (diagrams the worker builds), never the spoken transcript
-  // (that's the subtitle + the rail's live-session card).
-  if (liveMode) {
-    const surfaces = node?.parts.filter((p): p is UIPart => p.kind === "ui") ?? [];
-    return (
-      <div ref={scrollRef} className="takt-scroll relative min-h-0 flex-1 overflow-y-auto">
-        <div aria-hidden className="pointer-events-none absolute inset-0 bg-[radial-gradient(55%_45%_at_50%_28%,var(--accent-soft,rgba(120,130,255,0.1)),transparent_70%)]" />
-        <div className="relative mx-auto w-full max-w-3xl px-6 pb-44 pt-8">
-          {surfaces.length ? (
-            <div className="space-y-5">{surfaces.map((p) => <UIRenderer key={p.id} surface={p.surface} ctx={{ ...ctx, readOnly: true }} animate />)}</div>
-          ) : (
-            <LiveIdle />
-          )}
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div ref={scrollRef} className="takt-scroll relative min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto w-full max-w-3xl px-6 pb-40 pt-8">
+      {liveMode && <div aria-hidden className="pointer-events-none absolute inset-0 bg-[radial-gradient(55%_45%_at_50%_28%,var(--accent-soft,rgba(120,130,255,0.1)),transparent_70%)]" />}
+      <div className="relative mx-auto w-full max-w-3xl px-6 pb-40 pt-8">
         {empty ? (
           <EmptyState heading={heading} subheading={subheading} starters={starters} onStarter={onStarter} />
+        ) : building ? (
+          <ArtifactSkeleton live={liveMode} />
+        ) : surfaces.length ? (
+          <div className="space-y-6">
+            {surfaces.map((p) => <UIRenderer key={p.id} surface={p.surface} ctx={{ ...ctx, readOnly: ctx.readOnly ?? !isLatest }} animate={isLatest && streaming} />)}
+          </div>
         ) : (
-          <>
-            {userText ? <div className="mb-6 text-[13px] font-medium uppercase tracking-wide text-arc">{userText}</div> : null}
-            {node ? <Answer node={node} isLatest={isLatest} ctx={ctx} onRegenerate={onRegenerate} /> : null}
-          </>
+          <ArtifactIdle streaming={streaming} live={liveMode} />
         )}
       </div>
     </div>
   );
 }
 
-// Calm placeholder shown on the live stage before any visual exists — Takt is
-// talking; visuals appear here only when they help explain something.
-function LiveIdle() {
+// Ghost/skeleton shown while the agent is composing an artifact — mimics the
+// shape of a designed surface (title · figure · text · media grid) so the canvas
+// reads as "a polished thing is being built here," not a spinner.
+function ArtifactSkeleton({ live }: { live?: boolean }) {
   return (
-    <div className="flex min-h-[60vh] flex-col items-center justify-center text-center">
-      <div className="text-[13px] text-muted-foreground">Talking with Takt</div>
-      <div className="mt-1 max-w-xs text-[12px] text-faint">Diagrams and visuals appear here when they help explain something.</div>
+    <div>
+      <div className="mb-4 text-[12px] font-medium"><span className="arc-shimmer">{live ? "Designing a visual…" : "Designing the answer…"}</span></div>
+      <div className="space-y-5 rounded-2xl border border-border bg-card p-5 shadow-[var(--shadow-card)]">
+        <div className="animate-pulse space-y-5">
+          <div className="h-6 w-2/5 rounded-md bg-foreground/10" />
+          <div className="h-44 w-full rounded-xl bg-foreground/[0.06]" />
+          <div className="space-y-2.5">
+            <div className="h-3 w-full rounded bg-foreground/10" />
+            <div className="h-3 w-11/12 rounded bg-foreground/10" />
+            <div className="h-3 w-3/5 rounded bg-foreground/10" />
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="h-20 rounded-lg bg-foreground/[0.06]" />
+            <div className="h-20 rounded-lg bg-foreground/[0.06]" />
+            <div className="h-20 rounded-lg bg-foreground/[0.06]" />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
 
-function Answer({ node, isLatest, ctx, onRegenerate }: { node: Extract<Node, { role: "assistant" }>; isLatest: boolean; ctx: RenderCtx; onRegenerate: () => void }) {
-  const speakingId = useSyncExternalStore(speech.subscribe, speech.speakingId, () => null);
-  const speaking = speakingId === node.id;
-  const images = node.parts.filter((p): p is PageImagePart => p.kind === "page_image");
-  const fullText = node.parts.filter((p) => p.kind === "text").map((p) => (p as TextPart).text).join("\n");
-  const showThinking = node.streaming && node.parts.every((p) => p.kind === "reasoning" || p.kind === "tool");
-
-  const citeProduct = (() => {
-    const slugs = [...new Set(images.map((p) => p.productSlug).filter(Boolean))] as string[];
-    return slugs.length === 1 ? slugs[0]! : null;
-  })();
-  const renderLink = ({ href }: { href: string; children: ReactNode }) => {
-    if (href.startsWith("takt:cite:")) { const page = Number(href.slice(10)); return <CitationChip page={page} onClick={() => ctx.onCitation?.(page, citeProduct ?? undefined)} />; }
-    return undefined;
-  };
-
-  // Presentational parts only (text + ui), in order. Reasoning/tools go to the rail.
-  const stageParts = node.parts.filter((p): p is TextPart | UIPart => p.kind === "text" || p.kind === "ui");
-
+// Calm placeholder when the current reply carries no artifact (a purely
+// conversational answer lives in the chat).
+function ArtifactIdle({ streaming, live }: { streaming: boolean; live?: boolean }) {
   return (
-    <div className="group/answer space-y-5 animate-fade-up">
-      {showThinking && <div className="text-chat"><span className="arc-shimmer font-medium">Thinking…</span></div>}
-      {stageParts.map((p) =>
-        p.kind === "text"
-          ? <StreamingMarkdown key={p.id} content={linkify(p.text)} isStreaming={node.streaming} renderLink={renderLink} />
-          : <UIRenderer key={p.id} surface={p.surface} ctx={{ ...ctx, readOnly: ctx.readOnly ?? !isLatest }} animate={isLatest && node.streaming} />,
-      )}
-
-      {images.length > 0 && (
-        <Carousel label={images.length > 1 ? `${images.length} sources` : "Source"}>
-          {images.map((b) => (
-            <button key={b.id} onClick={() => ctx.onSource?.({ page: b.page, url: b.url, caption: b.caption ?? undefined })}
-              className="group flex w-28 shrink-0 snap-start flex-col overflow-hidden rounded-lg border border-border bg-card text-left transition hover:-translate-y-0.5 hover:border-border-heavy">
-              <div className="aspect-[3/4] w-full overflow-hidden bg-surface">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={b.url} alt={`page ${b.page}`} className="size-full object-cover object-top opacity-90 transition group-hover:opacity-100" />
-              </div>
-              <div className="flex items-center gap-1 px-1.5 py-1 text-[10px] text-muted-foreground"><ImageIcon className="size-2.5 shrink-0" /><span className="truncate">p.{b.page}</span></div>
-            </button>
-          ))}
-        </Carousel>
-      )}
-
-      {!node.streaming && fullText && (
-        <div className="flex items-center gap-1 opacity-0 transition group-hover/answer:opacity-100">
-          <Action title="Copy" onClick={() => navigator.clipboard?.writeText(fullText)} copyDone><Copy className="size-3.5" /></Action>
-          <Action title={speaking ? "Stop" : "Read aloud"} onClick={() => (speaking ? speech.stop() : speech.speak(node.id, fullText))}>
-            {speaking ? <Square className="size-3 fill-current text-arc" /> : <Volume2 className="size-3.5" />}
-          </Action>
-          {isLatest && <Action title="Regenerate" onClick={onRegenerate}><RefreshCw className="size-3.5" /></Action>}
-        </div>
+    <div className="flex min-h-[55vh] flex-col items-center justify-center text-center">
+      {streaming ? (
+        <span className="arc-shimmer text-[13px] font-medium text-muted-foreground">Working…</span>
+      ) : (
+        <>
+          <div className="text-[13px] text-muted-foreground">{live ? "Talking with Takt" : "The reply is in the chat"}</div>
+          <div className="mt-1 max-w-xs text-[12px] text-faint">Diagrams, cropped figures, 3D parts, video and step-by-step guides appear here when they help explain something.</div>
+        </>
       )}
     </div>
   );
@@ -158,15 +114,5 @@ function EmptyState({ heading, subheading, starters, onStarter }: { heading?: st
         </div>
       ) : null}
     </div>
-  );
-}
-
-function Action({ title, onClick, children, copyDone }: { title: string; onClick: () => void; children: ReactNode; copyDone?: boolean }) {
-  const [done, setDone] = useState(false);
-  return (
-    <button title={title} onClick={() => { onClick(); if (copyDone) { setDone(true); setTimeout(() => setDone(false), 1200); } }}
-      className="grid size-7 place-items-center rounded-md text-muted-foreground transition hover:bg-foreground/10 hover:text-foreground">
-      {done ? <Check className="size-3.5 text-success" /> : children}
-    </button>
   );
 }

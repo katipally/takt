@@ -5,12 +5,17 @@ import sharp from "sharp";
 import { z, type ZodRawShape } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import type { Product, Manual, ManualKind, SseEvent, AskAnswer } from "@takt/shared";
-import { askQuestionsSchema, uiSurfaceSchema, validateSurface } from "@takt/shared";
+import { askQuestionsSchema, uiSurfaceSchema, validateSurface, surfacePartId } from "@takt/shared";
 import {
   DATA_DIR, getPageImage,
   listProducts, getProductBySlug,
 } from "@takt/db";
-import { profileExists, listConcepts, readConcept, readIndex, generateIndex, grepProfile } from "@takt/profile";
+import {
+  profileExists, listConcepts, readConcept, readIndex, generateIndex, grepProfile,
+  pkbExists, loadGraph, neighbors, getEntityAnchors, anchorLabel,
+  findEntity, walkGraph, getAnchors, searchProduct, queryProduct,
+  type Anchor,
+} from "@takt/profile";
 import { awaitAnswers } from "./pending.js";
 
 export type Emit = (e: SseEvent) => Promise<void> | void;
@@ -65,6 +70,33 @@ const formatAnswer = (a: AskAnswer) =>
 // through unchanged.
 const resolveMedia = (slug: string, body: string): string =>
   body.replace(/\]\(media\//g, `](/assets/products/${slug}/media/`);
+
+// Turn a PKB anchor into an actionable instruction telling the model exactly how
+// to SHOW it in an artifact (which crop_page_image call, or which URL to embed).
+function renderAnchorHint(a: Anchor, slug: string): string {
+  const r = a.ref as any;
+  const cap = a.caption ? ` — ${a.caption}` : "";
+  const abs = (u: string) => (u?.startsWith("/") ? `${WEB_URL()}${u}` : u);
+  switch (a.kind) {
+    case "manual_page": {
+      const bbox = Array.isArray(r.bbox) ? r.bbox : null;
+      const crop = bbox
+        ? `call crop_page_image(page:${r.page}${r.manualKind ? `, manual:"${r.manualKind}"` : ""}, x:${bbox[0]}, y:${bbox[1]}, w:${bbox[2]}, h:${bbox[3]}) to embed just this figure`
+        : `call get_page_image(page:${r.page}${r.manualKind ? `, manual:"${r.manualKind}"` : ""}) to show the page`;
+      return `- manual page ${r.page}${cap}: ${crop}`;
+    }
+    case "mesh_node":
+      return `- 3D part "${r.nodeName}"${cap}: embed a Model3D node with src "${abs(r.meshUrl)}" (the whole model; call out the "${r.nodeName}" part in your caption)`;
+    case "video_clip":
+      return `- video ${cap || "clip"}: embed a Video node with src "${abs(r.videoUrl)}" and note the ${Math.floor((r.tStart ?? 0) / 60)}:${String(Math.floor((r.tStart ?? 0) % 60)).padStart(2, "0")} timestamp`;
+    case "image":
+      return `- image${cap}: embed an Image node with src "${abs(r.url)}"`;
+    case "audio":
+      return `- audio${cap}: embed an Audio node with src "${abs(r.url)}"`;
+    default:
+      return `- ${a.kind}${cap}`;
+  }
+}
 
 export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]; emit: Emit; chatId?: string; spawnBuild?: (brief: string, key?: string) => void }): TaktTool[] {
   const { product, emit, chatId, spawnBuild } = ctx;
@@ -148,8 +180,8 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
     description: "Fetch a specific manual page as an image and SHOW it to the user. Use for diagrams, schematics, control-panel layouts, duty-cycle tables, the selection chart, and weld-diagnosis pages. The page is displayed in the user's Canvas and also returned so you can read it. To put a figure in an artifact, prefer calling crop_page_image next to embed just the relevant region rather than the whole page.",
     parameters: params({
       page: z.number().int().min(1).describe("Page number"),
-      manual: z.enum(["owner", "quick_start", "selection_chart", "other"]).optional()
-        .describe("Which manual (omit to use any)"),
+      manual: z.string().optional()
+        .describe("Which manual kind to read from, e.g. 'owner' or 'quick_start' (omit to use any). Get valid kinds from list_profile."),
       ...(masterMode ? { product: z.string().describe("Which product's page — pass its slug (required in master mode). Get slugs from list_products / grep_profile.") } : {}),
     }),
     execute: async (args) => {
@@ -183,8 +215,8 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
     description: "Crop a manual page to the exact region that matters and SHOW that crop — use this AFTER get_page_image so you've seen the full page and can pick the region. Give the region as fractions of the page (0=left/top, 1=right/bottom): x,y = top-left corner, w,h = width,height. The cropped image is displayed in the user's Canvas and returned so you can confirm it, and you get a verbatim URL to embed in an artifact. Prefer this over embedding a whole page (whole pages have tab-strips/footers/whitespace and look broken).",
     parameters: params({
       page: z.number().int().min(1).describe("Page number"),
-      manual: z.enum(["owner", "quick_start", "selection_chart", "other"]).optional()
-        .describe("Which manual (omit to use any)"),
+      manual: z.string().optional()
+        .describe("Which manual kind to read from, e.g. 'owner' or 'quick_start' (omit to use any). Get valid kinds from list_profile."),
       x: z.number().min(0).max(1).describe("Left edge of the crop, as a fraction of page width (0-1)"),
       y: z.number().min(0).max(1).describe("Top edge of the crop, as a fraction of page height (0-1)"),
       w: z.number().min(0.02).max(1).describe("Crop width, as a fraction of page width (0-1)"),
@@ -247,12 +279,23 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
       const id = randomUUID();
       const title = typeof args?.title === "string" && args.title ? args.title : "answer";
       await emit({ type: "tool_start", id, tool: "emit_ui", summary: title });
+      // Auto-heal the most common LLM mistake: `root` points at an id that isn't
+      // among the nodes. Pick the real root — the node no other node lists as a
+      // child — else the first node. Saves a slow reject/retry round-trip.
+      if (args && typeof args === "object" && Array.isArray(args.nodes) && args.nodes.length) {
+        const ids = new Set(args.nodes.map((n: any) => n?.id));
+        if (!ids.has(args.root)) {
+          const childIds = new Set(args.nodes.flatMap((n: any) => (Array.isArray(n?.children) ? n.children : [])));
+          const rootNode = args.nodes.find((n: any) => n?.id && !childIds.has(n.id)) ?? args.nodes[0];
+          if (rootNode?.id) args.root = rootNode.id;
+        }
+      }
       const res = validateSurface(args);
       if (!res.ok) {
-        await emit({ type: "tool_done", id, detail: "needs fixing" });
+        await emit({ type: "tool_done", id, detail: `needs fixing: ${res.errors.slice(0, 2).map((e) => `${e.path} ${e.message}`).join("; ")}`.slice(0, 160) });
         return text(`UI surface rejected — fix these and call emit_ui again with the SAME key:\n- ${res.errors.map((e) => `${e.path}: ${e.message}`).join("\n- ")}`);
       }
-      const partId = slugify(res.surface.key ?? res.surface.title ?? res.surface.id);
+      const partId = surfacePartId(res.surface);
       await emit({ type: "ui_surface", partId, surface: { ...res.surface, id: res.surface.id || partId } });
       await emit({ type: "tool_done", id, detail: "rendered" });
       return text(`Rendered "${title}" on the stage. Give a one-line takeaway in chat if useful; don't repeat the surface's contents.`);
@@ -316,6 +359,147 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
       const fm = concept.frontmatter;
       const head = `# ${fm.title ?? concept.id} (${fm.type})${fm.description ? `\n${fm.description}` : ""}`;
       return text(`${head}\n\n${resolveMedia(prod.slug, concept.body)}`);
+    },
+  };
+
+  // ── PKB hybrid retrieval ─────────────────────────────────────────────────
+  // These read the compiled knowledge graph (.pkb/) and only activate once a
+  // product has one; grep_profile/read_profile remain the fallback over raw
+  // markdown. Together they cover the query shapes lexical grep alone misses.
+  const pkbGuard = (args: any): { slug: string } | ToolResult => {
+    const prod = pageProduct(args);
+    if (!prod) return text("Pass a `product` slug (see list_products).");
+    if (!pkbExists(prod.slug)) return text(`No knowledge graph for ${prod.name} yet — use grep_profile / list_profile over its docs instead.`);
+    return { slug: prod.slug };
+  };
+  const productParam: ZodRawShape = masterMode ? { product: z.string().describe("Product slug (required in master mode; see list_products)") } : {};
+
+  // SEARCH — semantic, for fuzzy natural-language symptoms.
+  const searchProductTool: TaktTool = {
+    name: "search_product",
+    description: "Semantic search over a product's knowledge — for FUZZY, natural-language questions and symptoms in the user's own words ('it grinds when the bed moves', 'prints come out stringy'). Finds passages by MEANING, not exact words — the complement to grep_profile (which is literal, best for exact error codes / part numbers). Returns ranked snippets with their source page.",
+    parameters: params({ query: z.string().describe("A natural-language description of the problem or question"), ...productParam }),
+    execute: async (args) => {
+      const g = pkbGuard(args); if ("output" in g) return g;
+      const id = randomUUID();
+      await emit({ type: "tool_start", id, tool: "search_product", summary: String(args.query) });
+      const hits = await searchProduct(g.slug, String(args.query), 8);
+      await emit({ type: "tool_done", id, detail: `${hits.length} hits` });
+      if (!hits.length) return text(`No semantic matches for "${args.query}". Try grep_profile for exact terms or find_entity for a part/fault.`);
+      const body = hits.map((h) => `[${h.chunk.title}${h.chunk.page ? ` p.${h.chunk.page}` : ""}] ${h.chunk.text.replace(/\s+/g, " ").slice(0, 220)}`).join("\n\n");
+      return text(`${body}\n\nFor how these things connect (cause/fix/parts), call find_entity.`);
+    },
+  };
+
+  // FIND ENTITY — dual-level graph lookup: the workhorse for grounded answers.
+  const findEntityTool: TaktTool = {
+    name: "find_entity",
+    description: "Look things up in the product's knowledge GRAPH — parts, faults/error codes, procedures, specs — and see how they connect. Best when the answer is a RELATIONSHIP: a fault's cause and fix, a part's subassembly, a procedure's steps. Returns matching entities with their neighbours and the manual pages / 3D parts / videos anchored to each. Then call get_anchors to pull a figure to show, or walk_graph to go deeper. This is how you build a grounded, multimodal answer.",
+    parameters: params({ query: z.string().describe("What to find — a part, fault, error code, symptom, procedure, or spec"), ...productParam }),
+    execute: async (args) => {
+      const g0 = pkbGuard(args); if ("output" in g0) return g0;
+      const id = randomUUID();
+      await emit({ type: "tool_start", id, tool: "find_entity", summary: String(args.query) });
+      const graph = loadGraph(g0.slug);
+      const ents = await findEntity(g0.slug, [String(args.query)], [String(args.query)]);
+      await emit({ type: "tool_done", id, detail: `${ents.length} entities` });
+      if (!ents.length) return text(`No graph entities for "${args.query}". Try search_product (fuzzy) or grep_profile (literal).`);
+      const blocks = ents.slice(0, 8).map((e) => {
+        const nb = neighbors(graph, e.id, { depth: 1 }).edges
+          .map((ed) => `${ed.type} ${ed.src === e.id ? "→ " + (graph.entities.find((x) => x.id === ed.dst)?.name ?? ed.dst) : "← " + (graph.entities.find((x) => x.id === ed.src)?.name ?? ed.src)}`)
+          .slice(0, 6);
+        const anc = getEntityAnchors(graph, e.id).map(anchorLabel);
+        return [
+          `• ${e.name} [${e.type}] (${e.confidence})  id=${e.id}`,
+          e.description ? `  ${e.description.replace(/\s+/g, " ").slice(0, 200)}` : "",
+          nb.length ? `  links: ${nb.join("; ")}` : "",
+          anc.length ? `  media: ${anc.join("; ")}` : "",
+        ].filter(Boolean).join("\n");
+      }).join("\n\n");
+      return text(`${blocks}\n\nNext: get_anchors(entity:"<id>") to pull a figure/3D/video to embed, or walk_graph(entity:"<id>") for the full neighbourhood.`);
+    },
+  };
+
+  // WALK — expand the full neighbourhood of an entity.
+  const walkGraphTool: TaktTool = {
+    name: "walk_graph",
+    description: "Expand everything the product graph knows around one entity — its parts, causes, fixes, related procedures — to a few hops. Use after find_entity to gather the full neighbourhood of a fault or part before composing the answer. Pass the entity id from find_entity.",
+    parameters: params({
+      entity: z.string().describe("Entity id from find_entity"),
+      depth: z.number().int().min(1).max(3).optional().describe("Hops to expand (default 2)"),
+      edgeTypes: z.array(z.string()).optional().describe("Restrict to these link types, e.g. ['fixes','next_step']"),
+      ...productParam,
+    }),
+    execute: async (args) => {
+      const g = pkbGuard(args); if ("output" in g) return g;
+      const id = randomUUID();
+      await emit({ type: "tool_start", id, tool: "walk_graph", summary: String(args.entity) });
+      const out = walkGraph(g.slug, String(args.entity), { depth: args.depth ?? 2, edgeTypes: args.edgeTypes });
+      await emit({ type: "tool_done", id, detail: out ? "expanded" : "empty" });
+      return text(out || `No entity "${args.entity}" in the graph. Call find_entity first.`);
+    },
+  };
+
+  // ANCHORS — render-ready media for an entity.
+  const getAnchorsTool: TaktTool = {
+    name: "get_anchors",
+    description: "Get the render-ready media anchored to an entity — the exact manual page + region, the 3D model part, the video clip — so you can SHOW it. Use after find_entity when you're about to build an artifact: it tells you exactly which crop_page_image call to make, or the 3D/video URL to embed. Pass the entity id.",
+    parameters: params({ entity: z.string().describe("Entity id from find_entity"), ...productParam }),
+    execute: async (args) => {
+      const g = pkbGuard(args); if ("output" in g) return g;
+      const prod = pageProduct(args)!;
+      const id = randomUUID();
+      await emit({ type: "tool_start", id, tool: "get_anchors", summary: String(args.entity) });
+      const anchors = getAnchors(g.slug, String(args.entity));
+      await emit({ type: "tool_done", id, detail: `${anchors.length} anchors` });
+      if (!anchors.length) return text(`No media anchored to "${args.entity}".`);
+      const lines = anchors.map((a) => renderAnchorHint(a, prod.slug));
+      return text(lines.join("\n"));
+    },
+  };
+
+  // QUERY — one-shot fused context (graph + sources), cited.
+  const queryProductTool: TaktTool = {
+    name: "query_product",
+    description: "Ask the product knowledge base a question and get back ONE fused, cited context block — the relevant graph relationships AND the source passages together. Use this when you just want the facts to answer with and don't need to hand-pick tools. For building a rich multimodal artifact where you choose the figures, prefer find_entity + get_anchors instead.",
+    parameters: params({ question: z.string().describe("The question to ground"), ...productParam }),
+    execute: async (args) => {
+      const g = pkbGuard(args); if ("output" in g) return g;
+      const id = randomUUID();
+      await emit({ type: "tool_start", id, tool: "query_product", summary: String(args.question) });
+      const r = await queryProduct(g.slug, String(args.question));
+      await emit({ type: "tool_done", id, detail: `${r.entities.length} entities, ${r.chunks.length} sources` });
+      return text(r.context);
+    },
+  };
+
+  // MAP — render the whole product graph as an interactive map surface.
+  const productMapTool: TaktTool = {
+    name: "product_map",
+    description: "Render the product's whole knowledge graph as an interactive map on the stage — parts, faults, procedures and specs and how they connect, which the user can click to explore. Use when the user wants an overview of the product or asks to 'explore' it. Builds and shows the surface itself; just tell the user in one line that the map is up.",
+    parameters: params({ ...productParam }),
+    execute: async (args) => {
+      const g0 = pkbGuard(args); if ("output" in g0) return g0;
+      const prod = pageProduct(args)!;
+      const id = randomUUID();
+      await emit({ type: "tool_start", id, tool: "product_map", summary: prod.slug });
+      const graph = loadGraph(g0.slug);
+      const deg = new Map<string, number>();
+      for (const e of graph.edges) { deg.set(e.src, (deg.get(e.src) ?? 0) + 1); deg.set(e.dst, (deg.get(e.dst) ?? 0) + 1); }
+      const top = [...graph.entities].sort((a, b) => (deg.get(b.id) ?? 0) - (deg.get(a.id) ?? 0)).slice(0, 120);
+      const keep = new Set(top.map((e) => e.id));
+      const nodes = top.map((e) => ({
+        id: e.id, label: e.name, type: String(e.type),
+        detail: [e.description?.slice(0, 140), ...getEntityAnchors(graph, e.id).map(anchorLabel)].filter(Boolean).join("\n") || undefined,
+      }));
+      const edges = graph.edges.filter((e) => keep.has(e.src) && keep.has(e.dst)).map((e) => ({ source: e.src, target: e.dst, type: String(e.type) }));
+      if (!nodes.length) { await emit({ type: "tool_done", id, detail: "empty graph" }); return text("The product graph is empty — nothing to map yet."); }
+      const surface = { id: "product-map", key: "product-map", title: `${prod.name} — product map`, root: "map", nodes: [{ id: "map", type: "Graph", props: { nodes, edges, caption: `${nodes.length} components · click to explore` } }] };
+      const res = validateSurface(surface);
+      if (!res.ok) { await emit({ type: "tool_done", id, detail: "invalid" }); return text(`Could not build the map: ${res.errors.map((e) => e.message).join("; ")}`); }
+      await emit({ type: "ui_surface", partId: "product-map", surface: res.surface });
+      await emit({ type: "tool_done", id, detail: `${nodes.length} nodes` });
+      return text(`Product map is on the stage (${nodes.length} components, ${edges.length} links). Tell the user they can click any node to explore its pages, 3D parts, and related faults.`);
     },
   };
 
@@ -384,7 +568,11 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
   // → grep (find) → read (full concept). Works the same in single-product and
   // master mode. get_page_image/crop show pages; list_products + fetch_url both modes.
   return [
-    listProfileTool, grepProfileTool, readProfile, getPageImageTool, cropPageImage,
+    // Graph/semantic retrieval first — the primary way to answer a product
+    // question; legacy grep/list/read follow as exact-term / browse fallbacks.
+    findEntityTool, searchProductTool, walkGraphTool, getAnchorsTool, queryProductTool, productMapTool,
+    grepProfileTool, listProfileTool, readProfile,
+    getPageImageTool, cropPageImage,
     emitUi, ...(delegateBuild ? [delegateBuild] : []), updateTodos, listProductsTool, askUser, fetchUrl,
   ];
 }

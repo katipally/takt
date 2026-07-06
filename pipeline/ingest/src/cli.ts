@@ -1,8 +1,9 @@
 import { readFileSync, readdirSync, existsSync } from "node:fs";
-import { resolve, join, isAbsolute, extname } from "node:path";
+import { resolve, join, isAbsolute, extname, basename } from "node:path";
 import { REPO_ROOT, loadEnv } from "@takt/db";
 import { BUILTIN_PROVIDERS } from "@takt/harness";
 import { ingestProduct } from "./ingest.js";
+import type { ModelFile } from "./mesh.js";
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -23,7 +24,7 @@ async function main() {
   const dir = arg("dir");
   const urls = args("url"); // repeatable: web pages / youtube links
   if (!slug || (!dir && !urls.length)) {
-    console.error('Usage: pnpm ingest --product <slug> --name "Name" (--dir <folder> | --url <link> [--url <link> …]) [--manufacturer "X"] [--summary "..."] [--hero <img>] [--provider <id>] [--model <id>]');
+    console.error('Usage: pnpm ingest --product <slug> --name "Name" (--dir <folder> | --url <link> [--url <link> …]) [--models <dir>] [--video <file>] [--manufacturer "X"] [--summary "..."] [--hero <img>] [--provider <id>] [--model <id>]');
     process.exit(1);
   }
 
@@ -61,10 +62,33 @@ async function main() {
     pdfs = pdfFiles.map((f) => ({ filename: f, data: new Uint8Array(readFileSync(join(pdfDir, f))) }));
   }
 
+  // --models <dir>: recursively collect .stl part models; the top-level folder a
+  // part sits under becomes its subsystem (Frame, Nextruder, Z-axis…).
+  const models: ModelFile[] = [];
+  const modelsDir = arg("models");
+  if (modelsDir) {
+    const root = fromRoot(modelsDir);
+    const walk = (d: string, subsystem?: string) => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const abs = join(d, e.name);
+        if (e.isDirectory()) walk(abs, subsystem ?? e.name);
+        else if (e.name.toLowerCase().endsWith(".stl")) models.push({ filename: e.name, data: new Uint8Array(readFileSync(abs)), subsystem });
+      }
+    };
+    walk(root);
+    console.log(`  · ${models.length} STL part models found`);
+  }
+
+  const videoArg = arg("video");
+  const videoPath = videoArg ? fromRoot(videoArg) : undefined;
+  const video = videoPath && existsSync(videoPath)
+    ? { filename: basename(videoPath), data: new Uint8Array(readFileSync(videoPath)) } : undefined;
+
   await ingestProduct({
     slug, name: name!, manufacturer: arg("manufacturer") ?? null, summary: arg("summary") ?? null,
     pdfs,
     webSources: urls.map((url) => ({ url })),
+    models, video,
     hero: heroSrc && existsSync(heroSrc) ? { ext: extname(heroSrc), data: new Uint8Array(readFileSync(heroSrc)) } : undefined,
     captionProvider: provider, captionModel: model, apiKey,
     onProgress: (m) => { process.stdout.write(`  · ${m}\r`); },

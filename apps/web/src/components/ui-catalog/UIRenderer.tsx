@@ -1,9 +1,10 @@
 "use client";
 
-import { Component, memo, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Component, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { UISurface, UINode } from "@takt/shared";
 import { REGISTRY, CONTAINERS } from "./registry";
-import type { RenderCtx } from "./ctx";
+import type { RenderCtx, SurfaceData } from "./ctx";
+import { ptrGet, ptrSet } from "./bind";
 
 // Walks a flat adjacency-list surface into React. Order-independent (renders from
 // `root`; missing child refs become skeletons), every node isolated by an error
@@ -12,8 +13,26 @@ import type { RenderCtx } from "./ctx";
 
 export const UIRenderer = memo(function UIRenderer({ surface, ctx, animate = true }: { surface: UISurface; ctx: RenderCtx; animate?: boolean }) {
   const byId = useMemo(() => { const m = new Map<string, UINode>(); for (const n of surface.nodes) m.set(n.id, n); return m; }, [surface]);
-  return <RenderNode id={surface.root} byId={byId} ctx={ctx} animate={animate} seen={new Set()} />;
+  // Two-way-bound data model for interactive nodes (read-only surfaces get no store).
+  const data = useSurfaceData(surface, ctx.readOnly);
+  const boundCtx = useMemo<RenderCtx>(() => (data ? { ...ctx, data } : ctx), [ctx, data]);
+  return <RenderNode id={surface.root} byId={byId} ctx={boundCtx} animate={animate} seen={new Set()} />;
 });
+
+// Surface data store: seeded from surface.data, re-seeded only when the surface's
+// identity (key/id) changes — so a re-emit (streaming/versions) doesn't wipe what
+// the user has typed. `set` immutably updates so the subtree re-renders.
+function useSurfaceData(surface: UISurface, readOnly?: boolean): SurfaceData | undefined {
+  const [data, setData] = useState<Record<string, unknown>>(() => structuredClone(surface.data ?? {}));
+  const keyRef = useRef(surface.key ?? surface.id);
+  useEffect(() => {
+    const k = surface.key ?? surface.id;
+    if (k !== keyRef.current) { keyRef.current = k; setData(structuredClone(surface.data ?? {})); }
+  }, [surface]);
+  const get = useCallback((ptr?: string) => ptrGet(data, ptr), [data]);
+  const set = useCallback((ptr: string, v: unknown) => setData((d) => ptrSet(d, ptr, v)), []);
+  return useMemo(() => (readOnly ? undefined : { get, set }), [get, set, readOnly]);
+}
 
 function RenderNode({ id, byId, ctx, animate, seen }: { id: string; byId: Map<string, UINode>; ctx: RenderCtx; animate: boolean; seen: Set<string> }): ReactNode {
   const node = byId.get(id);
@@ -31,7 +50,7 @@ function RenderNode({ id, byId, ctx, animate, seen }: { id: string; byId: Map<st
   return (
     <NodeAnim animate={animate}>
       <NodeBoundary type={node.type}>
-        {Comp({ props: node.props ?? {}, children, ctx })}
+        {Comp({ props: node.props ?? {}, children, ctx, bind: node.bind })}
       </NodeBoundary>
     </NodeAnim>
   );

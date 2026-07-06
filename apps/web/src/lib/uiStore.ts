@@ -32,7 +32,7 @@ export const useUi = create<UiState>()(
       closeSettings: () => set({ settingsOpen: false }),
       sidebarCollapsed: false,
       toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
-      railOpen: false,
+      railOpen: true, // the chat panel — open by default (canvas holds the artifact)
       toggleRail: () => set((s) => ({ railOpen: !s.railOpen })),
       sidebarWidth: 248,
       canvasWidth: 480,

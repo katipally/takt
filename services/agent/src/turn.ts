@@ -1,5 +1,6 @@
 import type { ProviderEvent, ToolCall } from "@takt/harness";
 import type { SseEvent } from "@takt/shared";
+import { streamingJsonSurface, surfacePartId } from "@takt/shared";
 
 export type Emit = (e: SseEvent) => Promise<void> | void;
 
@@ -20,9 +21,13 @@ export async function collectTurn(gen: AsyncGenerator<ProviderEvent>, emit: Emit
   const usage = { input: 0, output: 0 };
   // Tool-use blocks arrive as start + streamed JSON-arg deltas + stop, keyed by index.
   const calls = new Map<number, { id: string; name: string; args: string }>();
-  // emit_ui streams a large surface arg before it runs — surface a "Designing…"
-  // status for that gap, keyed by its block index.
+  // emit_ui streams a large surface arg before it runs. Rather than waiting with a
+  // "Designing…" status, we leniently parse the accumulating arg and emit PARTIAL
+  // surfaces so the stage fills in as the model writes it. The final whole-surface
+  // emit (from the emit_ui tool) reuses the same partId and replaces the partial.
   let buildingIndex: number | null = null;
+  let lastPartialLen = 0;      // arg length at the last partial emit (throttle)
+  let partialPartId: string | null = null;
 
   for await (const ev of gen) {
     switch (ev.type) {
@@ -41,17 +46,29 @@ export async function collectTurn(gen: AsyncGenerator<ProviderEvent>, emit: Emit
         calls.set(ev.index, { id: ev.id, name: ev.name, args: "" });
         if (ev.name.includes("emit_ui")) {
           buildingIndex = ev.index;
+          lastPartialLen = 0; partialPartId = null;
           await emit({ type: "status", text: "Designing your answer…" });
         }
         break;
       case "tool_delta": {
         const c = calls.get(ev.index);
         if (c) c.args += ev.argsDelta;
+        // Throttled progressive emit for the surface being built.
+        if (c && ev.index === buildingIndex && c.args.length - lastPartialLen > 350) {
+          lastPartialLen = c.args.length;
+          const surface = streamingJsonSurface(c.args);
+          if (surface) {
+            partialPartId = surfacePartId(surface);
+            await emit({ type: "ui_surface", partId: partialPartId, surface, partial: true });
+          }
+        }
         break;
       }
       case "tool_stop":
         if (buildingIndex === ev.index) {
           buildingIndex = null;
+          // Clear the status; the emit_ui tool emits the final whole surface next,
+          // replacing the partial under the same partId.
           await emit({ type: "status", text: null });
         }
         break;

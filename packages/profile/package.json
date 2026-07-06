@@ -7,12 +7,15 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "check": "tsx src/frontmatter.ts",
+    "check": "tsx src/frontmatter.ts && tsx src/pkb.ts && tsx src/retrieve.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@takt/db": "workspace:*",
     "@takt/shared": "workspace:*"
+  },
+  "optionalDependencies": {
+    "@huggingface/transformers": "^4.2.0"
   },
   "devDependencies": {
     "tsx": "^4.19.2",

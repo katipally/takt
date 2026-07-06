@@ -1,9 +1,13 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { PanelRightClose, PanelRightOpen, Brain, Search, FileText, ImageIcon, Boxes, Check, Loader2, ChevronRight, AudioLines } from "lucide-react";
-import type { Node, Part, PageImagePart, ToolPart, ReasoningPart, TextPart } from "@/lib/chatStore";
+import { PanelRightClose, PanelRightOpen, Brain, Search, FileText, ImageIcon, Boxes, Check, Loader2, ChevronRight, AudioLines, Copy, RefreshCw } from "lucide-react";
+import type { Node, PageImagePart, ToolPart, ReasoningPart, TextPart } from "@/lib/chatStore";
+import { MarkdownBody } from "@/components/markdown/MarkdownBody";
 import { cn } from "@/lib/cn";
+
+// [p.NN] → clickable citation chip wired to the source modal.
+const linkifyCites = (t: string) => t.replace(/\[p\.\s*(\d+)\]/g, (_m, n) => `[p.${n}](takt:cite:${n})`);
 
 const TOOL_META: Record<string, { label: string; active: string; icon: ReactNode }> = {
   list_profile: { label: "Mapped the product", active: "Listing knowledge…", icon: <FileText className="size-3.5" /> },
@@ -21,7 +25,7 @@ interface Turn { userId: string; userText: string; assistant?: Extract<Node, { r
 // shows each turn's prompt (click to bring that answer to the stage), the agent's
 // thinking + tool calls, and the sources it pulled.
 export function ProcessRail({
-  open, onToggle, messages, selectedUserId, onSelectTurn, streaming, onOpenSource,
+  open, onToggle, messages, selectedUserId, onSelectTurn, streaming, onOpenSource, onRegenerate, onCitation,
 }: {
   open: boolean;
   onToggle: () => void;
@@ -30,6 +34,8 @@ export function ProcessRail({
   onSelectTurn: (userId: string) => void;
   streaming: boolean;
   onOpenSource: (s: { page: number; url: string; caption?: string }) => void;
+  onRegenerate?: () => void;
+  onCitation?: (page: number) => void;
 }) {
   const turns: Turn[] = [];
   for (const n of messages) {
@@ -51,7 +57,7 @@ export function ProcessRail({
       <button onClick={onToggle} title="Show activity" aria-label="Show activity"
         className="flex h-full w-11 shrink-0 flex-col items-center gap-3 rounded-2xl border border-border bg-card py-3 text-muted-foreground shadow-[var(--shadow-card)] transition hover:text-foreground">
         <PanelRightOpen className="size-4" />
-        <span className="[writing-mode:vertical-rl] text-[11px] tracking-wide">Activity{streaming ? " ·" : ""}</span>
+        <span className="[writing-mode:vertical-rl] text-[11px] tracking-wide">Chat{streaming ? " ·" : ""}</span>
         {streaming ? <Loader2 className="size-3.5 animate-spin text-arc" /> : null}
       </button>
     );
@@ -60,15 +66,16 @@ export function ProcessRail({
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[var(--shadow-card)]">
       <div className="flex h-11 shrink-0 items-center justify-between border-b border-border px-3">
-        <span className="text-[12px] font-medium text-muted-foreground">Activity &amp; history</span>
-        <button onClick={onToggle} title="Hide" aria-label="Hide activity" className="grid size-7 place-items-center rounded-md text-muted-foreground transition hover:bg-foreground/10 hover:text-foreground"><PanelRightClose className="size-4" /></button>
+        <span className="text-[12px] font-medium text-muted-foreground">Chat</span>
+        <button onClick={onToggle} title="Hide" aria-label="Hide chat" className="grid size-7 place-items-center rounded-md text-muted-foreground transition hover:bg-foreground/10 hover:text-foreground"><PanelRightClose className="size-4" /></button>
       </div>
       <div className="takt-scroll min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
         {rows.map((r, i) => r.kind === "live"
           ? <LiveSessionCard key={r.turns[0]!.userId} turns={r.turns} live={streaming && i === rows.length - 1}
               selectedUserId={selectedUserId} onSelectTurn={onSelectTurn} />
           : <TurnCard key={r.turn.userId} turn={r.turn} selected={selectedUserId ? r.turn.userId === selectedUserId : i === rows.length - 1}
-              live={streaming && i === rows.length - 1} onSelect={() => onSelectTurn(r.turn.userId)} onOpenSource={onOpenSource} />)}
+              live={streaming && i === rows.length - 1} isLatest={i === rows.length - 1} onSelect={() => onSelectTurn(r.turn.userId)}
+              onOpenSource={onOpenSource} onRegenerate={onRegenerate} onCitation={onCitation} />)}
         {rows.length === 0 && <p className="px-1 text-[12px] text-faint">No turns yet.</p>}
       </div>
     </div>
@@ -116,20 +123,45 @@ function LiveSessionCard({ turns, live, selectedUserId, onSelectTurn }: {
   );
 }
 
-function TurnCard({ turn, selected, live, onSelect, onOpenSource }: { turn: Turn; selected: boolean; live: boolean; onSelect: () => void; onOpenSource: (s: { page: number; url: string; caption?: string }) => void }) {
-  const [open, setOpen] = useState(live);
+function TurnCard({ turn, selected, live, isLatest, onSelect, onOpenSource, onRegenerate, onCitation }: { turn: Turn; selected: boolean; live: boolean; isLatest: boolean; onSelect: () => void; onOpenSource: (s: { page: number; url: string; caption?: string }) => void; onRegenerate?: () => void; onCitation?: (page: number) => void }) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const parts = turn.assistant?.parts ?? [];
   const work = parts.filter((p): p is ReasoningPart | ToolPart => p.kind === "reasoning" || p.kind === "tool");
   const tools = work.filter((p): p is ToolPart => p.kind === "tool");
   const sources = parts.filter((p): p is PageImagePart => p.kind === "page_image");
   const running = tools.find((t) => t.status === "running");
   const expanded = open || live;
+  const replyText = parts.filter((p): p is TextPart => p.kind === "text").map((p) => p.text).join("");
+  const hasArtifact = parts.some((p) => p.kind === "ui");
+  const streaming = live && !!turn.assistant?.streaming;
+  const renderLink = ({ href, children }: { href: string; children: ReactNode }) => {
+    if (href.startsWith("takt:cite:")) { const page = Number(href.slice(10)); return (
+      <button onClick={() => onCitation?.(page)} className="mx-0.5 inline-flex items-center gap-0.5 rounded border border-border bg-card px-1 py-px align-baseline font-mono text-[10px] text-arc transition hover:border-border-heavy"><ImageIcon className="size-2.5" />{children}</button>
+    ); }
+    return undefined;
+  };
 
   return (
     <div className={cn("rounded-xl border transition", selected ? "border-arc/40 bg-arc-soft/40" : "border-border bg-card/40")}>
-      <button onClick={onSelect} className="block w-full px-3 py-2 text-left">
-        <span className="line-clamp-2 text-[12.5px] font-medium text-foreground">{turn.userText}</span>
+      {/* the user's prompt */}
+      <button onClick={onSelect} className="block w-full px-3 pt-2.5 pb-1 text-left">
+        <span className="line-clamp-3 text-[12.5px] font-medium text-foreground">{turn.userText}</span>
       </button>
+      {/* the assistant's chat reply (prose commentary lives here, NOT on the canvas) */}
+      {replyText ? (
+        <div className="px-3 pb-1.5">
+          <MarkdownBody content={linkifyCites(replyText)} renderLink={renderLink} className="text-[12.5px] leading-[1.55] [&_p]:mb-2 [&_*:last-child]:mb-0" />
+        </div>
+      ) : streaming && work.length === 0 ? (
+        <div className="px-3 pb-2 text-[12px]"><span className="arc-shimmer font-medium">Takt is replying…</span></div>
+      ) : null}
+      {/* artifact-on-canvas pointer */}
+      {hasArtifact && (
+        <button onClick={onSelect} className="mx-3 mb-2 inline-flex items-center gap-1 rounded-md bg-accent-soft px-1.5 py-0.5 text-[10.5px] text-accent transition hover:brightness-110">
+          <Boxes className="size-2.5" /> Artifact on canvas
+        </button>
+      )}
       {work.length > 0 && (
         <div className="px-2 pb-2">
           <button onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-[11.5px] text-muted-foreground transition hover:text-foreground">
@@ -154,6 +186,16 @@ function TurnCard({ turn, selected, live, onSelect, onOpenSource }: { turn: Turn
               <ImageIcon className="size-2.5" />p.{s.page}
             </button>
           ))}
+        </div>
+      )}
+      {replyText && !streaming && (
+        <div className="flex items-center gap-0.5 px-2 pb-1.5">
+          <button title="Copy reply" onClick={() => { navigator.clipboard?.writeText(replyText); setCopied(true); setTimeout(() => setCopied(false), 1200); }}
+            className="grid size-6 place-items-center rounded text-muted-foreground transition hover:bg-foreground/10 hover:text-foreground">{copied ? <Check className="size-3 text-success" /> : <Copy className="size-3" />}</button>
+          {isLatest && onRegenerate && (
+            <button title="Regenerate" onClick={onRegenerate}
+              className="grid size-6 place-items-center rounded text-muted-foreground transition hover:bg-foreground/10 hover:text-foreground"><RefreshCw className="size-3" /></button>
+          )}
         </div>
       )}
     </div>

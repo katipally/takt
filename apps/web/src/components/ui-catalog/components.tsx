@@ -93,10 +93,13 @@ export function Callout({ props, ctx }: NodeProps<{ tone?: string; title?: strin
   );
 }
 
-export function Stat({ props }: NodeProps<{ value: string; label: string; hint?: string }>) {
+export function Stat({ props, ctx, bind }: NodeProps<{ value: string; label: string; hint?: string }>) {
+  // If bound, reflect the live data value (a Stat that mirrors an Input/Slider).
+  const bound = bind && ctx.data ? ctx.data.get(bind) : undefined;
+  const value = bound !== undefined && bound !== null ? String(bound) : props.value;
   return (
     <div className="rounded-lg border border-border bg-card p-4">
-      <div className="text-[26px] font-bold leading-none tracking-tight">{props.value}</div>
+      <div className="text-[26px] font-bold leading-none tracking-tight">{value}</div>
       <div className="mt-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">{props.label}</div>
       {props.hint ? <div className="mt-1 text-[12px] text-muted-foreground">{props.hint}</div> : null}
     </div>
@@ -239,17 +242,63 @@ export function Button({ props, ctx }: NodeProps<{ label: string; actionId: stri
   );
 }
 
-export function Select({ props, ctx }: NodeProps<{ actionId: string; label?: string; options: string[]; placeholder?: string }>) {
-  const [v, setV] = useState("");
+export function Select({ props, ctx, bind }: NodeProps<{ actionId?: string; label?: string; options: string[]; placeholder?: string }>) {
+  const [local, setLocal] = useState("");
+  const bound = bind && ctx.data;
+  const v = bound ? String(ctx.data!.get(bind) ?? "") : local;
+  const onChange = (val: string) => {
+    if (bound) ctx.data!.set(bind, val); else setLocal(val);
+    if (props.actionId) ctx.onAction?.(props.actionId, val); // also feed the agent if wired
+  };
   return (
     <label className="block">
       {props.label ? <span className="mb-1 block text-[12px] font-medium text-muted-foreground">{props.label}</span> : null}
       <select value={v} disabled={ctx.readOnly}
-        onChange={(e) => { setV(e.target.value); ctx.onAction?.(props.actionId, e.target.value); }}
+        onChange={(e) => onChange(e.target.value)}
         className="w-full rounded-lg border border-border bg-card px-3 py-2 text-[13px] outline-none focus:border-accent disabled:opacity-50">
         <option value="" disabled>{props.placeholder ?? "Select…"}</option>
         {(props.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
       </select>
+    </label>
+  );
+}
+
+// ── bound inputs (two-way binding to the surface `data` via the node's `bind`) ─
+const boundInput = "w-full rounded-lg border border-border bg-card px-3 py-2 text-[13px] outline-none focus:border-accent disabled:opacity-50";
+
+export function Input({ props, ctx, bind }: NodeProps<{ label?: string; placeholder?: string; kind?: string }>) {
+  const val = bind && ctx.data ? ctx.data.get(bind) : undefined;
+  return (
+    <label className="block">
+      {props.label ? <span className="mb-1 block text-[12px] font-medium text-muted-foreground">{props.label}</span> : null}
+      <input type={props.kind === "number" ? "number" : "text"} disabled={ctx.readOnly || !ctx.data} placeholder={props.placeholder}
+        value={val == null ? "" : String(val)} className={boundInput}
+        onChange={(e) => bind && ctx.data?.set(bind, props.kind === "number" ? Number(e.target.value) : e.target.value)} />
+    </label>
+  );
+}
+
+export function Slider({ props, ctx, bind }: NodeProps<{ label?: string; min?: number; max?: number; step?: number }>) {
+  const min = props.min ?? 0, max = props.max ?? 100, step = props.step ?? 1;
+  const val = Number((bind && ctx.data ? ctx.data.get(bind) : undefined) ?? min);
+  return (
+    <label className="block">
+      <span className="mb-1 flex items-center justify-between text-[12px] font-medium text-muted-foreground">
+        <span>{props.label}</span><span className="tabular-nums text-foreground">{val}</span>
+      </span>
+      <input type="range" min={min} max={max} step={step} value={val} disabled={ctx.readOnly || !ctx.data}
+        onChange={(e) => bind && ctx.data?.set(bind, Number(e.target.value))} className="w-full accent-[var(--accent)]" />
+    </label>
+  );
+}
+
+export function Toggle({ props, ctx, bind }: NodeProps<{ label?: string }>) {
+  const on = Boolean(bind && ctx.data ? ctx.data.get(bind) : false);
+  return (
+    <label className="flex items-center gap-2 text-[13px]">
+      <input type="checkbox" checked={on} disabled={ctx.readOnly || !ctx.data}
+        onChange={(e) => bind && ctx.data?.set(bind, e.target.checked)} className="size-4 accent-[var(--accent)]" />
+      {props.label}
     </label>
   );
 }

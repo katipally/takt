@@ -13,8 +13,8 @@ const MIN_STEP = 20;
 const MAX_STEP = 120;
 
 export function StreamingMarkdown({
-  content, isStreaming = false, renderLink,
-}: { content: string; isStreaming?: boolean; renderLink?: RenderLink }) {
+  content, isStreaming = false, renderLink, variant = "chat",
+}: { content: string; isStreaming?: boolean; renderLink?: RenderLink; variant?: "chat" | "editorial" }) {
   const [visible, setVisible] = useState(content);
   const visibleRef = useRef(content);
   const targetRef = useRef(content);
@@ -67,15 +67,15 @@ export function StreamingMarkdown({
   }, [split.stable, split.live, split.animateLive, isStreaming, revealing]);
 
   return (
-    <div className="text-chat text-foreground">
+    <div className={variant === "editorial" ? "text-foreground" : "text-chat text-foreground"}>
       {split.stable && (
-        <MarkdownBody content={split.stable}
+        <MarkdownBody content={split.stable} variant={variant}
           className={split.live ? "[&>*:first-child]:mt-0" : "[&>*:first-child]:mt-0 [&>*:last-child]:mb-0"}
           renderLink={renderLink} />
       )}
       {split.live && (
         <div ref={liveRef}>
-          <MarkdownBody content={split.live}
+          <MarkdownBody content={split.live} variant={variant}
             className={split.stable ? "[&>*:last-child]:mb-0" : "[&>*:first-child]:mt-0 [&>*:last-child]:mb-0"}
             renderLink={renderLink} />
         </div>

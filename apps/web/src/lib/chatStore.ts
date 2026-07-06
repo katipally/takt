@@ -17,10 +17,12 @@ export interface AskPart { id: string; kind: "ask"; askId: string; questions: As
 export interface UIPart { id: string; kind: "ui"; partId: string; surface: UISurface; }
 export type Part = ReasoningPart | ToolPart | TextPart | PageImagePart | AskPart | UIPart;
 
-// Parts that render on the STAGE (the rendered answer) vs. the PROCESS RAIL
-// (the "how" — thinking + tool calls). page_image + citations ride the stage.
-export const STAGE_PART_KINDS = new Set(["text", "ui", "page_image", "ask"]);
-export const RAIL_PART_KINDS = new Set(["reasoning", "tool"]);
+// The CANVAS renders ONLY artifacts (ui surfaces) — it's a polished final
+// product, never the conversation. Everything else — the assistant's prose
+// reply, reasoning, tool calls, and source page-images — renders in the CHAT
+// panel (ProcessRail). `ask` (clarifying questions) is a modal.
+export const CANVAS_PART_KINDS = new Set(["ui"]);
+export const CHAT_PART_KINDS = new Set(["text", "reasoning", "tool", "page_image"]);
 
 export interface Attachment { id: string; mediaType: string; dataUrl: string; }
 

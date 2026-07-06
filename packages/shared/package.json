@@ -10,6 +10,7 @@
     "./artifact-spec": "./src/artifact-spec.ts"
   },
   "scripts": {
+    "check": "tsx src/ui-spec.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
