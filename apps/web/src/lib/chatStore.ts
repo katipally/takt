@@ -25,7 +25,7 @@ export const RAIL_PART_KINDS = new Set(["reasoning", "tool"]);
 export interface Attachment { id: string; mediaType: string; dataUrl: string; }
 
 export type Node =
-  | { id: string; parentId: string | null; role: "user"; text: string; attachments?: Attachment[] }
+  | { id: string; parentId: string | null; role: "user"; text: string; attachments?: Attachment[]; live?: boolean }
   | { id: string; parentId: string | null; role: "assistant"; parts: Part[]; streaming: boolean; status?: string | null };
 
 export interface CanvasSource { url: string; page: number; manualKind: string; manualTitle?: string; caption?: string | null; productSlug?: string | null; productName?: string | null; }
@@ -209,7 +209,7 @@ export const chatStore = {
     const path = activePath(s);
     const parentId = path.length ? path[path.length - 1]!.id : null;
     const userId = uid();
-    update(chatId, (x) => ({ ...addNode(x, { id: userId, parentId, role: "user", text }), productSlug }));
+    update(chatId, (x) => ({ ...addNode(x, { id: userId, parentId, role: "user", text, live: true }), productSlug }));
     const assistantId = uid();
     update(chatId, (x) => ({ ...addNode(x, { id: assistantId, parentId: userId, role: "assistant", parts: [], streaming: true }), streaming: true }));
     return assistantId;

@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { PanelRightClose, PanelRightOpen, Brain, Search, FileText, ImageIcon, Boxes, Check, Loader2, ChevronRight } from "lucide-react";
-import type { Node, Part, PageImagePart, ToolPart, ReasoningPart } from "@/lib/chatStore";
+import { PanelRightClose, PanelRightOpen, Brain, Search, FileText, ImageIcon, Boxes, Check, Loader2, ChevronRight, AudioLines } from "lucide-react";
+import type { Node, Part, PageImagePart, ToolPart, ReasoningPart, TextPart } from "@/lib/chatStore";
 import { cn } from "@/lib/cn";
 
 const TOOL_META: Record<string, { label: string; active: string; icon: ReactNode }> = {
@@ -15,7 +15,7 @@ const TOOL_META: Record<string, { label: string; active: string; icon: ReactNode
   list_products: { label: "Checked the catalog", active: "Checking…", icon: <FileText className="size-3.5" /> },
 };
 
-interface Turn { userId: string; userText: string; assistant?: Extract<Node, { role: "assistant" }>; }
+interface Turn { userId: string; userText: string; assistant?: Extract<Node, { role: "assistant" }>; live?: boolean; }
 
 // The process/history rail: collapsed by default to a slim strip. Expanded, it
 // shows each turn's prompt (click to bring that answer to the stage), the agent's
@@ -33,8 +33,17 @@ export function ProcessRail({
 }) {
   const turns: Turn[] = [];
   for (const n of messages) {
-    if (n.role === "user") turns.push({ userId: n.id, userText: n.text });
+    if (n.role === "user") turns.push({ userId: n.id, userText: n.text, live: n.live });
     else if (turns.length) turns[turns.length - 1]!.assistant = n;
+  }
+  // Group consecutive live turns into one "Live session" card — a call is its own
+  // entity in the rail, not a run of chat turns.
+  type Row = { kind: "turn"; turn: Turn } | { kind: "live"; turns: Turn[] };
+  const rows: Row[] = [];
+  for (const t of turns) {
+    const last = rows[rows.length - 1];
+    if (t.live) { if (last?.kind === "live") last.turns.push(t); else rows.push({ kind: "live", turns: [t] }); }
+    else rows.push({ kind: "turn", turn: t });
   }
 
   if (!open) {
@@ -55,12 +64,54 @@ export function ProcessRail({
         <button onClick={onToggle} title="Hide" aria-label="Hide activity" className="grid size-7 place-items-center rounded-md text-muted-foreground transition hover:bg-foreground/10 hover:text-foreground"><PanelRightClose className="size-4" /></button>
       </div>
       <div className="takt-scroll min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
-        {turns.map((t, i) => (
-          <TurnCard key={t.userId} turn={t} selected={selectedUserId ? t.userId === selectedUserId : i === turns.length - 1}
-            live={streaming && i === turns.length - 1} onSelect={() => onSelectTurn(t.userId)} onOpenSource={onOpenSource} />
-        ))}
-        {turns.length === 0 && <p className="px-1 text-[12px] text-faint">No turns yet.</p>}
+        {rows.map((r, i) => r.kind === "live"
+          ? <LiveSessionCard key={r.turns[0]!.userId} turns={r.turns} live={streaming && i === rows.length - 1}
+              selectedUserId={selectedUserId} onSelectTurn={onSelectTurn} />
+          : <TurnCard key={r.turn.userId} turn={r.turn} selected={selectedUserId ? r.turn.userId === selectedUserId : i === rows.length - 1}
+              live={streaming && i === rows.length - 1} onSelect={() => onSelectTurn(r.turn.userId)} onOpenSource={onOpenSource} />)}
+        {rows.length === 0 && <p className="px-1 text-[12px] text-faint">No turns yet.</p>}
       </div>
+    </div>
+  );
+}
+
+// A live call rendered as one entity (not chat turns): collapsed shows a "Live"
+// pill + turn count; expanded shows the transcript (you ↔ Takt) with any surfaces
+// reachable by clicking a turn to bring it to the stage.
+function LiveSessionCard({ turns, live, selectedUserId, onSelectTurn }: {
+  turns: Turn[]; live: boolean; selectedUserId: string | null;
+  onSelectTurn: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(live);
+  const expanded = open || live;
+  const artifactCount = turns.reduce((n, t) => n + (t.assistant?.parts.filter((p) => p.kind === "ui").length ?? 0), 0);
+  const anySelected = turns.some((t) => t.userId === selectedUserId);
+  const agentText = (t: Turn) => (t.assistant?.parts.filter((p): p is TextPart => p.kind === "text").map((p) => p.text).join(" ") ?? "").trim();
+
+  return (
+    <div className={cn("overflow-hidden rounded-xl border transition", anySelected ? "border-accent/40 bg-accent-soft/40" : "border-accent/25 bg-accent-soft/20")}>
+      <button onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-2 px-3 py-2.5 text-left">
+        <span className={cn("grid size-6 shrink-0 place-items-center rounded-full", live ? "bg-accent/15 text-accent" : "bg-foreground/[0.06] text-muted-foreground")}>
+          {live ? <Loader2 className="size-3.5 animate-spin" /> : <AudioLines className="size-3.5" />}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-[12.5px] font-medium text-foreground">{live ? "Live session · active" : "Live session"}</span>
+          <span className="block text-[11px] text-muted-foreground">{turns.length} turn{turns.length === 1 ? "" : "s"}{artifactCount ? ` · ${artifactCount} artifact${artifactCount === 1 ? "" : "s"}` : ""}</span>
+        </span>
+        <ChevronRight className={cn("size-3.5 shrink-0 text-muted-foreground transition", expanded && "rotate-90")} />
+      </button>
+      {expanded && (
+        <div className="space-y-2 border-t border-border/60 px-3 py-2.5">
+          {turns.map((t) => (
+            <button key={t.userId} onClick={() => onSelectTurn(t.userId)}
+              className={cn("block w-full rounded-lg px-2 py-1.5 text-left transition hover:bg-foreground/[0.04]", t.userId === selectedUserId && "bg-foreground/[0.05]")}>
+              <span className="block text-[12px] font-medium text-foreground">{t.userText}</span>
+              {agentText(t) && <span className="mt-0.5 line-clamp-2 block text-[11.5px] text-muted-foreground">{agentText(t)}</span>}
+              {t.assistant?.parts.some((p) => p.kind === "ui") && <span className="mt-1 inline-flex items-center gap-1 rounded bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent"><Boxes className="size-2.5" /> artifact</span>}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
