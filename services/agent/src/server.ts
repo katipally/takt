@@ -73,8 +73,12 @@ app.post("/chat", async (c) => {
         if (t && t.type === "tool") t.detail = e.detail;
       } else if (e.type === "page_image")
         blocks.push({ type: "page_image", citationId: e.citationId, url: e.url, page: e.page, manualKind: e.manualKind as any, manualTitle: e.manualTitle ?? null, caption: e.caption ?? null, productSlug: e.productSlug ?? null, productName: e.productName ?? null });
-      else if (e.type === "artifact")
-        blocks.push({ type: "artifact", artifactId: e.artifactId, title: e.title, kind: e.kind, groupKey: e.groupKey, version: e.version });
+      else if (e.type === "ui_surface") {
+        // Replace a surface with the same partId (re-emit / new version), else append.
+        const prev = blocks.find((b) => b.type === "ui" && b.partId === e.partId);
+        if (prev && prev.type === "ui") prev.surface = e.surface;
+        else blocks.push({ type: "ui", partId: e.partId, surface: e.surface });
+      }
       else if (e.type === "ask_user")
         blocks.push({ type: "ask_user", askId: e.askId, questions: e.questions });
       else if (e.type === "ask_answer") {

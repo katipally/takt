@@ -20,8 +20,8 @@ export async function collectTurn(gen: AsyncGenerator<ProviderEvent>, emit: Emit
   const usage = { input: 0, output: 0 };
   // Tool-use blocks arrive as start + streamed JSON-arg deltas + stop, keyed by index.
   const calls = new Map<number, { id: string; name: string; args: string }>();
-  // emit_artifact streams a large code arg before it runs — surface a "Building…"
-  // status for that gap (preserves the SDK-era behavior), keyed by its block index.
+  // emit_ui streams a large surface arg before it runs — surface a "Designing…"
+  // status for that gap, keyed by its block index.
   let buildingIndex: number | null = null;
 
   for await (const ev of gen) {
@@ -39,9 +39,9 @@ export async function collectTurn(gen: AsyncGenerator<ProviderEvent>, emit: Emit
         break;
       case "tool_start":
         calls.set(ev.index, { id: ev.id, name: ev.name, args: "" });
-        if (ev.name.includes("emit_artifact")) {
+        if (ev.name.includes("emit_ui")) {
           buildingIndex = ev.index;
-          await emit({ type: "status", text: "Building the artifact…" });
+          await emit({ type: "status", text: "Designing your answer…" });
         }
         break;
       case "tool_delta": {

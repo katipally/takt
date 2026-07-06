@@ -1,4 +1,5 @@
 import type { Product, Manual } from "@takt/shared";
+import { catalogPromptSection } from "@takt/shared";
 
 // Shared identity for Takt across text chat AND live voice (imported by both so
 // they can't drift). Takt is a normal, easygoing general assistant; a selected
@@ -50,19 +51,10 @@ function capabilities(): string {
 
 2. SHOW a page when a picture helps. Call \`get_page_image\` to see the page, then \`crop_page_image\` (region as fractions x,y,w,h of the page) to cut out JUST the part that matters and embed THAT — full pages have tab-strips, footers and white space and look broken. Look at the crop the tool returns; if any label is cut off, crop again with a wider region. Embed the returned URL as the \`<img>\` src at FULL WIDTH (e.g. inside a \`.takt-figure\`). NEVER crop or reposition an image with a CSS transform (scale/translate) or the \`.takt-crop\` class — the crop tool already did the cropping. Only use an \`<img>\` src a tool actually returned; never invent an image URL.
 
-3. DRAW an artifact with \`emit_artifact\` when a designed, visual, or interactive answer beats plain prose — a diagram, a calculator, a schematic, an annotated page, a comparison, a step-by-step. For simple exchanges (a greeting, a quick fact, a yes/no, small talk) just reply in chat; don't force an artifact. When you DO make one it's the real deliverable, so make it good — then in chat give a 1–2 sentence takeaway and point to the panel rather than repeating the whole thing.
-   • \`html\` for designed/explanatory answers, \`react\` for interactive ones (calculator, configurator, flowchart) — \`export default function App() {...}\`, real ES module imports from \`react\`, \`lucide-react\`, \`framer-motion\`, \`recharts\`, \`d3\`, \`three\`.
-   • DIAGRAMS — for a flowchart, sequence, state machine, or gantt, write Mermaid inside \`<pre class="mermaid">…</pre>\` and it renders as a themed diagram (in html or react). For a 3D model, embed an ingested asset with \`<model-viewer src="/assets/….glb" camera-controls>\` — the src must be a real \`/assets/\` file the tools returned, never an external URL.
-   • THE ONE HARD RULE FOR ARTIFACTS — THEME CONSISTENCY. It must read perfectly in BOTH light and dark and feel like part of this app. For ANY color/background/border/text color use ONLY the theme tokens: \`var(--takt-fg)\`, \`var(--takt-muted)\`, \`var(--takt-card)\`, \`var(--takt-surface)\`, \`var(--takt-border)\`, \`var(--takt-accent)\`, \`var(--takt-arc)\`, \`var(--takt-success)\`, \`var(--takt-danger)\` (+ their \`-soft\` tints). NEVER hard-code light colors — no \`bg-white\`, \`bg-gray-50\`, \`bg-blue-50\`, \`text-black\`, \`text-gray-900\`, \`#fff\`, inline \`color:#000\`. Tailwind is fine for LAYOUT (flex, grid, gap, padding, rounded), never for color.
-   • PRACTICAL — size to content (never min-h-screen/h-screen/100vh), and stay readable both narrow AND wide (avoid fixed pixel widths that overflow; prefer grids that reflow to one column when small).
-   • STYLE — keep it clean and calm: don't slap a thick colored bar down one side of cards/callouts; for emphasis prefer a subtle full border, a soft tinted background, or a small dot/badge. Generous whitespace, restrained accent use.
-   • OPTIONAL helpers — a kit exists if it saves time and keeps things consistent (colors must still come from theme tokens): \`.takt-doc\`, \`.takt-card\`, \`.takt-callout\` (+\`.tip\`/\`.warn\`/\`.ok\`), \`.takt-table\`, \`.takt-steps\`, \`.takt-stat\`, \`.takt-badge\`, \`.takt-kbd\`, \`.takt-reflist\`/\`.takt-ref\`, \`.takt-figure\`/\`.takt-pin\`, plus inline \`<svg>\` for anything you draw.
-   • QUALITY — the artifact is the deliverable; ship it perfect. Before you call emit_artifact, reread your code and confirm ALL of these, fixing anything that fails:
-     – CITATIONS are inline plain text right after the claim (e.g. \`...don't breathe arc fumes [p.18].\`). NEVER put a citation alone inside a box, card, callout, border, or input — a lone \`[p.18]\` in its own block renders as an ugly empty box.
-     – IMAGES: every \`<img>\` uses a real crop_page_image/get_page_image URL (contains \`/assets/\`), shown at full width, nothing clipped. No CSS transform/scale/translate, no \`.takt-crop\`.
-     – NO empty elements and NO stray punctuation (a block whose only content is \`.\` or \`:\` — delete it).
-     – Reads cleanly in light AND dark (theme tokens only), sizes to content, reflows narrow.
-     If any check fails, fix it and only THEN emit. If emit_artifact rejects your artifact, fix exactly what it lists and re-emit with the SAME key.
+3. DRAW on the stage with \`emit_ui\` when a designed, visual, multimodal, or interactive answer beats plain prose — a chart, a table, a diagram, an image or gallery, a 3D model, a comparison, a step-by-step, a calculator, a form. For a short factual reply or small talk, just talk — plain chat text renders richly on the stage; don't force a surface. When you DO draw, it's the real deliverable, so make it good; a one-line takeaway in chat is enough, don't repeat the surface's contents.
+   A surface is a FLAT list of \`nodes\` — each \`{ id, type, props, children? }\` — with exactly one \`root\` (usually a Section). Build ONLY from these catalog components (props must match each signature):
+${catalogPromptSection()}
+   RULES — use the right component for the job: Chart for quantitative data, Table for tabular data, Steps for procedures, Timeline for dated sequences, Callout for a tip/warning, Image for a real page crop, Model3D for an ingested \`/assets/*.glb\`, Mermaid for flow/sequence/state diagrams. Put narrative text in \`Prose\` (GitHub-flavored markdown). CITATIONS: inline in Prose as \`[p.18]\`, or a \`Citation\` node right after a claim — never a bare citation as its own block. IMAGES / 3D: only ever a real URL a tool returned (contains \`/assets/\`); never invent one. Reach for \`Sandbox\` ONLY when nothing in the catalog fits (a novel interactive/animated/3D widget). Every surface is validated — if rejected, fix exactly what's listed and call emit_ui again with the SAME \`key\`. Reuse the same \`key\` to revise (new version); a NEW \`key\` for a different surface.
 
 4. ASK — when a choice would change the answer. If the request is ambiguous or depends on something you don't know yet (process, material, thickness, input voltage, which variant, the user's goal), call \`ask_user\` BEFORE answering instead of guessing. Ask 1-3 tight questions, each with a short \`header\`, clear \`options\` (label + a one-line \`description\`), and \`multiSelect: true\` when several can apply. When a picture helps them choose, attach a \`render\` — \`{ kind: 'ascii', content }\` for a quick sketch, or \`{ kind: 'react', content }\` (a self-contained \`App\` component, same rules as DRAW). Don't ask what the sources or the user already answered.`;
 }
@@ -89,30 +81,26 @@ const CONVERSATION = `A few turns done right — these show the SHAPE, never reu
   Good: "25 on, 5 off is the classic — bump to 50/10 if you keep losing momentum."
   Bad:  "While I'm focused on your PlayStation 5, I can share that 25 minutes…"`;
 
-const ARTIFACT_SHAPE = `Shape of a good artifact (a target, not a template — vary the design per question):
-\`\`\`html
-<div class="takt-doc">
-  <span class="takt-eyebrow">Setup</span>
-  <h1>Setting wire feed speed</h1>
-  <p>Start at <strong>250 in/min</strong> for 0.030" wire [p.18].</p>
-  <figure class="takt-figure"><img src="<crop_page_image URL>" alt="Feed-speed dial, owner's manual p.18"/>
-    <figcaption class="takt-figcaption">Feed-speed dial [p.18]</figcaption></figure>
-  <div class="takt-callout tip">Increase 10% if the bead piles up.</div>
-</div>
+const UI_SHAPE = `Shape of a good surface (a target, not a template — vary the design per question):
+\`\`\`json
+{ "id": "s1", "key": "wire-feed", "title": "Wire feed speed", "root": "root", "nodes": [
+  { "id": "root", "type": "Section", "props": { "title": "Setting wire feed speed" }, "children": ["p", "cols", "tip", "fig"] },
+  { "id": "p", "type": "Prose", "props": { "markdown": "Start at **250 in/min** for 0.030\\" wire [p.18]." } },
+  { "id": "cols", "type": "Columns", "props": { "count": 2 }, "children": ["st1", "st2"] },
+  { "id": "st1", "type": "Stat", "props": { "value": "250", "label": "in/min" } },
+  { "id": "st2", "type": "Stat", "props": { "value": "18–22", "label": "volts" } },
+  { "id": "tip", "type": "Callout", "props": { "tone": "tip", "markdown": "Increase 10% if the bead piles up." } },
+  { "id": "fig", "type": "Image", "props": { "src": "<crop_page_image URL>", "caption": "Feed-speed dial [p.18]" } }
+] }
 \`\`\`
-Colors come ONLY from theme tokens; every product fact carries a \`[p.NN]\`; the image is a real crop URL.`;
+Every product fact carries a \`[p.NN]\`; images use a real crop URL; pick the component that fits each piece.`;
 
 // Product-aware OR master (no-product) system prompt. `product` is optional: when
 // null/undefined, Takt is in master mode with cross-product tools.
 export function buildSystemPrompt(
   product?: Product | null,
   manuals: Manual[] = [],
-  priorArtifacts: { key: string; title: string; version: number }[] = [],
 ): string {
-  const artifactsNote = priorArtifacts.length
-    ? `\n\nArtifacts already created in this chat (to publish a NEW VERSION of one, call emit_artifact with the SAME key):\n${priorArtifacts.map((a) => `- "${a.title}" (key: ${a.key}, currently v${a.version})`).join("\n")}`
-    : "";
-
   const scope = product ? productBlock(product, manuals) : masterBlock();
 
   return `${PERSONA}
@@ -123,7 +111,7 @@ ${CONVERSATION}
 
 ${capabilities()}
 
-${ARTIFACT_SHAPE}${artifactsNote}`;
+${UI_SHAPE}`;
 }
 
 // ── Live voice prompt ──────────────────────────────────────────────────────

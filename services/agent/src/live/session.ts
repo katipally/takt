@@ -151,7 +151,11 @@ export class LiveSession {
       else if (e.type === "tool_start") blocks.push({ type: "tool", id: e.id, tool: e.tool, summary: e.summary, status: "done" });
       else if (e.type === "tool_done") { const t = blocks.find((b) => b.type === "tool" && b.id === e.id); if (t && t.type === "tool") t.detail = e.detail; }
       else if (e.type === "page_image") blocks.push({ type: "page_image", citationId: e.citationId, url: e.url, page: e.page, manualKind: e.manualKind as any, manualTitle: e.manualTitle ?? null, caption: e.caption ?? null, productSlug: e.productSlug ?? null, productName: e.productName ?? null });
-      else if (e.type === "artifact") blocks.push({ type: "artifact", artifactId: e.artifactId, title: e.title, kind: e.kind, groupKey: e.groupKey, version: e.version });
+      else if (e.type === "ui_surface") {
+        const prev = blocks.find((b) => b.type === "ui" && b.partId === e.partId);
+        if (prev && prev.type === "ui") prev.surface = e.surface;
+        else blocks.push({ type: "ui", partId: e.partId, surface: e.surface });
+      }
       this.send({ t: "sse", event: e });
     };
   }

@@ -2,13 +2,12 @@ import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
-import { transform as esbuildTransform } from "esbuild";
 import { z, type ZodRawShape } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import type { Product, Manual, ManualKind, SseEvent, AskAnswer } from "@takt/shared";
-import { artifactInputSchema, askQuestionsSchema } from "@takt/shared";
+import { askQuestionsSchema, uiSurfaceSchema, validateSurface } from "@takt/shared";
 import {
-  DATA_DIR, getPageImage, createArtifact, nextArtifactVersion,
+  DATA_DIR, getPageImage,
   listProducts, getProductBySlug,
 } from "@takt/db";
 import { profileExists, listConcepts, readConcept, readIndex, generateIndex, grepProfile } from "@takt/profile";
@@ -56,36 +55,6 @@ function params(shape: ZodRawShape): Record<string, unknown> {
   const js = zodToJsonSchema(z.object(shape), { $refStrategy: "none" }) as Record<string, unknown>;
   delete js.$schema;
   return js;
-}
-
-// Verify an artifact against the mistakes we've actually seen in production
-// (clipped CSS-transform crops, invented image URLs, citations boxed on their
-// own line, stray-punctuation blocks). Returning issues makes emit_artifact
-// REJECT so the model fixes them BEFORE the user ever sees the artifact.
-export function lintArtifact(code: string): string[] {
-  const issues: string[] = [];
-  // 1. CSS-transform / .takt-crop cropping clips labels — the crop tool already crops.
-  if (/\btakt-crop\b/.test(code) || /<img[^>]*style=["'][^"']*transform\s*:[^"']*(scale|translate)\s*\(/i.test(code)) {
-    issues.push("An image is cropped/positioned with a CSS transform or .takt-crop, which clips its labels. Remove that and instead call crop_page_image for the exact region, then embed the returned URL at full width in a .takt-figure.");
-  }
-  // 2. Invented / external image URLs — only manual images (/assets/…) are real.
-  const badImg = [...code.matchAll(/<img[^>]*\bsrc=["'](https?:\/\/[^"']+)["']/gi)]
-    .map((m) => m[1]!).find((u) => !u.includes("/assets/"));
-  if (badImg) issues.push(`Image src "${badImg}" is not a real manual image. Use crop_page_image / get_page_image and embed the exact URL it returns (it contains /assets/).`);
-  // 3. A citation as the sole content of a block element renders as an empty box.
-  if (/<(div|p|li)\b[^>]*>\s*\[p\.?\s*\d+[^<]*\]\s*<\/\1>/i.test(code)) {
-    issues.push("A page citation is boxed on its own line. Put citations inline as plain text right after the sentence, e.g. `Shade 10 helmet minimum [p.18].` — never in their own box/card/callout.");
-  }
-  // 4. Stray punctuation-only block.
-  if (/<(div|p|li)\b[^>]*>\s*[.:;,]+\s*<\/\1>/i.test(code)) {
-    issues.push("Remove stray punctuation elements (a block whose only content is '.' or ':').");
-  }
-  // 5. A <model-viewer> 3D model must load an ingested asset (/assets/…), never
-  //    an external URL — the sandbox CSP only allows our own origin.
-  const badModel = [...code.matchAll(/<model-viewer[^>]*\bsrc=["']([^"']+)["']/gi)]
-    .map((m) => m[1]!).find((u) => !u.includes("/assets/") && !u.startsWith("data:") && !u.startsWith("blob:"));
-  if (badModel) issues.push(`3D model src "${badModel}" is not an ingested asset. A <model-viewer> src must point to an ingested /assets/ .glb — never an external URL.`);
-  return issues;
 }
 
 const formatAnswer = (a: AskAnswer) =>
@@ -266,46 +235,27 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
     },
   };
 
-  const emitArtifact: TaktTool = {
-    name: "emit_artifact",
-    description: "Publish the answer as a designed artifact in the user's Artifacts panel — reach for this when a designed, visual, or interactive answer beats plain text (a diagram, calculator, schematic, annotated page, comparison, procedure); skip it for simple replies. You have full design freedom over layout, components and interactions; design what best fits THIS question. Kinds: 'html' for designed/explanatory answers, 'react' for interactive ones (`export default function App(){...}`, real ES module imports from react, lucide-react, framer-motion, recharts, d3, three).\n" +
-      "DIAGRAMS: for flowcharts/sequences/state/gantt, put Mermaid syntax inside a `<pre class=\"mermaid\">…</pre>` — it renders as a themed diagram (works in html and react). 3D: embed an ingested model with `<model-viewer src=\"/assets/…​.glb\" camera-controls>` (the src MUST be a real /assets/ asset, never an external URL).\n" +
-      "ONE HARD RULE — theme consistency: the artifact must read perfectly in BOTH light and dark. For ANY color/background/border/text-color use ONLY the theme tokens var(--takt-fg/-muted/-card/-surface/-border/-accent/-arc/-success/-danger) and their -soft tints — NEVER bg-white, bg-gray-50, bg-blue-50, text-black, #fff, color:#000 (they break dark mode). Tailwind for LAYOUT only.\n" +
-      "Practical: size to content (no min-h-screen/h-screen/100vh); stay readable narrow AND wide. Images: embed ONLY a real crop_page_image/get_page_image URL (contains /assets/) at FULL WIDTH inside a .takt-figure — NEVER crop or shift an image with a CSS transform (scale/translate) or .takt-crop (it clips labels); if a label is cut off, call crop_page_image again with a wider region. Never invent an image URL. Citations: inline plain text right after the claim (e.g. `... [p.18].`) — NEVER put a citation alone in a box/card/callout/border (it renders as an empty box). No empty elements or stray punctuation. The artifact is checked before it's shown; if it's rejected, fix exactly what's listed and re-emit with the SAME `key`. To revise, call emit_artifact again with the SAME `key` (new VERSION); use a NEW `key` for a different artifact.",
-    parameters: params(artifactInputSchema.shape),
+  // DRAW — render a designed answer on the stage as a declarative UI surface
+  // (a flat list of typed catalog nodes). The catalog vocabulary + rules live in
+  // the system prompt (generated from the same schemas). Invalid surfaces are
+  // rejected with precise errors so the model self-corrects before anything shows.
+  const emitUi: TaktTool = {
+    name: "emit_ui",
+    description: "Render a designed, multimodal answer on the main stage as a UI surface — reach for this when structure, media, data, or interaction beats plain prose (a diagram, chart, comparison table, image/gallery, 3D model, procedure, calculator, form). Skip it for a short factual reply — plain chat text already renders richly on the stage. A surface is a flat list of `nodes` (each `{ id, type, props, children? }`) with one `root`; build the answer from the catalog components listed in your system prompt. Prose still streams as normal chat text around it — use Prose nodes only inside a surface. Reuse the SAME `key` to revise a surface (new version); use a NEW `key` for a different one. If rejected, fix exactly what's listed and call emit_ui again with the same key.",
+    parameters: params(uiSurfaceSchema.shape),
     execute: async (args) => {
       const id = randomUUID();
-      await emit({ type: "tool_start", id, tool: "emit_artifact", summary: args.title });
-      const parsed = artifactInputSchema.safeParse(args);
-      if (!parsed.success) { await emit({ type: "tool_done", id, detail: "invalid" }); return text(`Artifact rejected: ${parsed.error.message}`); }
-      // Compile gate: catch syntax/parse errors BEFORE the user sees a broken
-      // frame, and hand the error back so the model self-corrects.
-      // ponytail: esbuild catches the 80% (parse/syntax); runtime errors still
-      // surface in the iframe .takt-err box.
-      if (parsed.data.kind === "react") {
-        try {
-          await esbuildTransform(parsed.data.code, { loader: "tsx", jsx: "automatic" });
-        } catch (e) {
-          await emit({ type: "tool_done", id, detail: "won't compile" });
-          return text(`Artifact rejected — the React code does not compile: ${(e as Error).message}\nFix the syntax and call emit_artifact again.`);
-        }
-      }
-      // Quality gate: reject known-bad patterns so the model fixes them before
-      // the artifact is ever shown (crops, image URLs, boxed citations, cruft).
-      const issues = lintArtifact(parsed.data.code);
-      if (issues.length) {
+      const title = typeof args?.title === "string" && args.title ? args.title : "answer";
+      await emit({ type: "tool_start", id, tool: "emit_ui", summary: title });
+      const res = validateSurface(args);
+      if (!res.ok) {
         await emit({ type: "tool_done", id, detail: "needs fixing" });
-        return text(`Artifact rejected — fix these and call emit_artifact again with the SAME key:\n- ${issues.join("\n- ")}`);
+        return text(`UI surface rejected — fix these and call emit_ui again with the SAME key:\n- ${res.errors.map((e) => `${e.path}: ${e.message}`).join("\n- ")}`);
       }
-      const groupKey = parsed.data.key ? slugify(parsed.data.key) : slugify(parsed.data.title);
-      const version = nextArtifactVersion(chatId, groupKey);
-      const artifact = createArtifact({
-        productId: product?.id ?? null, chatId: chatId ?? null, title: parsed.data.title, kind: parsed.data.kind, code: parsed.data.code,
-        groupKey, version,
-      });
-      await emit({ type: "artifact", artifactId: artifact.id, title: artifact.title, kind: artifact.kind, groupKey, version });
-      await emit({ type: "tool_done", id, detail: version > 1 ? `v${version}` : "rendered" });
-      return text(`Artifact "${artifact.title}" (v${version}) created and shown to the user.`);
+      const partId = slugify(res.surface.key ?? res.surface.title ?? res.surface.id);
+      await emit({ type: "ui_surface", partId, surface: { ...res.surface, id: res.surface.id || partId } });
+      await emit({ type: "tool_done", id, detail: "rendered" });
+      return text(`Rendered "${title}" on the stage. Give a one-line takeaway in chat if useful; don't repeat the surface's contents.`);
     },
   };
 
@@ -401,5 +351,5 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
   // Retrieval is Direct Corpus Interaction over the Profile markdown — list (map)
   // → grep (find) → read (full concept). Works the same in single-product and
   // master mode. get_page_image/crop show pages; list_products + fetch_url both modes.
-  return [listProfileTool, grepProfileTool, readProfile, getPageImageTool, cropPageImage, emitArtifact, listProductsTool, askUser, fetchUrl];
+  return [listProfileTool, grepProfileTool, readProfile, getPageImageTool, cropPageImage, emitUi, listProductsTool, askUser, fetchUrl];
 }

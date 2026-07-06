@@ -1,6 +1,6 @@
 import { streamProvider, catalogModels, type Message } from "@takt/harness";
 import type { ChatRequest } from "@takt/shared";
-import { getProductBySlug, getManualsByProduct, listArtifactsByChat } from "@takt/db";
+import { getProductBySlug, getManualsByProduct } from "@takt/db";
 import { buildTaktTools, type Emit } from "./tools.js";
 import { collectTurn } from "./turn.js";
 import { buildSystemPrompt } from "./prompt.js";
@@ -47,18 +47,11 @@ export async function runAgent(req: ChatRequest, emit: Emit, signal?: AbortSigna
   const tools = buildTaktTools({ product, manuals, emit, chatId: req.chatId });
   const toolDefs = tools.map(({ name, description, parameters }) => ({ name, description, parameters }));
 
-  // Latest version of each artifact already made in this chat, so the model can
-  // reuse a key to publish a new version instead of spawning a near-duplicate.
-  const priorArtifacts = req.chatId
-    ? [...new Map(listArtifactsByChat(req.chatId).map((a) => [a.groupKey ?? a.id, a])).values()]
-        .map((a) => ({ key: a.groupKey ?? a.id, title: a.title, version: a.version }))
-    : [];
-
   // Proper role-alternating history (like live mode) — NOT one flattened user
   // blob. The model must see its own prior replies as real assistant turns, or
   // it has no sense of "I already said/offered this" and repeats itself.
   const messages: Message[] = [
-    { role: "system", text: buildSystemPrompt(product, manuals, priorArtifacts) },
+    { role: "system", text: buildSystemPrompt(product, manuals) },
     ...req.messages.map((m) => ({ role: m.role, text: m.text })),
   ];
   // Attach any user images to the last user turn (where the photo belongs).
