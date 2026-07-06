@@ -21,7 +21,9 @@ export function Sidebar({
 }) {
   // null slug = master mode → the no-product chat list (server maps "master").
   const chatKey = currentSlug ?? "master";
-  const { data: chats = [] } = useQuery({ queryKey: ["chats", chatKey], queryFn: () => api.chats(chatKey), refetchInterval: 4000 });
+  // Poll the chat list to pick up a freshly-generated title; 12s is plenty and
+  // a quarter the load of a tight 4s poll. (Stops when the tab is backgrounded.)
+  const { data: chats = [] } = useQuery({ queryKey: ["chats", chatKey], queryFn: () => api.chats(chatKey), refetchInterval: 12000 });
   const openSettings = useUi((s) => s.openSettings);
   const toggleSidebar = useUi((s) => s.toggleSidebar);
 

@@ -130,7 +130,7 @@ export const CATALOG = {
   Video: { description: "An inline video player.", props: z.object({ ...media, poster: z.string().optional() }) },
   Audio: { description: "An inline audio player.", props: z.object({ ...media }) },
   Model3D: { description: "An interactive 3D model viewer for an ingested /assets/*.glb model.", props: z.object({ ...media, alt: z.string().optional() }) },
-  Mermaid: { description: "A themed Mermaid diagram (flowchart/sequence/state/gantt) from Mermaid source.", props: z.object({ code: z.string(), caption: z.string().optional() }) },
+  Mermaid: { description: "A themed Mermaid diagram (flowchart/sequence/state). Keep it SIMPLE or it won't parse: short plain-text node labels (a few words, letters/numbers/spaces only). NO page citations, parentheses, square brackets, &, arrows (→), colons or semicolons INSIDE labels; NO nested or compound shapes ([[ ]], ([ ])). Just `A[Load filament] --> B[Preheat]` and `B --> C{Sheet clean?}`. Put citations and detail in Prose, not the diagram.", props: z.object({ code: z.string(), caption: z.string().optional() }) },
 
   // data
   Table: { description: "A data table.", props: z.object({ columns: z.array(z.string()).min(1), rows: z.array(z.array(z.string())).min(1), caption: z.string().optional() }) },

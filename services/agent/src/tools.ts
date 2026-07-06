@@ -80,15 +80,18 @@ function renderAnchorHint(a: Anchor, slug: string): string {
   switch (a.kind) {
     case "manual_page": {
       const bbox = Array.isArray(r.bbox) ? r.bbox : null;
+      const m = r.manualKind ? `, manual:"${r.manualKind}"` : "";
       const crop = bbox
-        ? `call crop_page_image(page:${r.page}${r.manualKind ? `, manual:"${r.manualKind}"` : ""}, x:${bbox[0]}, y:${bbox[1]}, w:${bbox[2]}, h:${bbox[3]}) to embed just this figure`
-        : `call get_page_image(page:${r.page}${r.manualKind ? `, manual:"${r.manualKind}"` : ""}) to show the page`;
+        ? `call crop_page_image(page:${r.page}${m}, x:${bbox[0]}, y:${bbox[1]}, w:${bbox[2]}, h:${bbox[3]}) to embed just this figure`
+        : `call get_page_image(page:${r.page}${m}) to SEE the page, then crop_page_image to the exact region that matters — do NOT embed the whole page`;
       return `- manual page ${r.page}${cap}: ${crop}`;
     }
     case "mesh_node":
-      return `- 3D part "${r.nodeName}"${cap}: embed a Model3D node with src "${abs(r.meshUrl)}" (the whole model; call out the "${r.nodeName}" part in your caption)`;
-    case "video_clip":
-      return `- video ${cap || "clip"}: embed a Video node with src "${abs(r.videoUrl)}" and note the ${Math.floor((r.tStart ?? 0) / 60)}:${String(Math.floor((r.tStart ?? 0) % 60)).padStart(2, "0")} timestamp`;
+      return `- 3D part "${r.nodeName}"${cap}: embed an interactive Model3D node with src "${abs(r.meshUrl)}" — a rotatable 3D part beats a photo when the user wants to SEE the part`;
+    case "video_clip": {
+      const frag = (r.tStart || r.tEnd) ? `#t=${Math.floor(r.tStart ?? 0)}${r.tEnd ? "," + Math.floor(r.tEnd) : ""}` : "";
+      return `- video ${cap || "clip"}: embed a Video node with src "${abs(r.videoUrl)}${frag}"${frag ? " (plays just that snippet)" : ""}`;
+    }
     case "image":
       return `- image${cap}: embed an Image node with src "${abs(r.url)}"`;
     case "audio":

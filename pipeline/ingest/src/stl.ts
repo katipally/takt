@@ -65,8 +65,17 @@ export function toGlb(mesh: Mesh, name = "part"): Uint8Array {
 
   const gltf = {
     asset: { version: "2.0", generator: "takt-stl2glb" },
-    scene: 0, scenes: [{ nodes: [0] }], nodes: [{ mesh: 0, name }],
-    meshes: [{ name, primitives: [{ attributes: { POSITION: 0, NORMAL: 1 }, mode: 4 }] }],
+    scene: 0, scenes: [{ nodes: [0] }],
+    // STL is conventionally Z-up (print orientation); glTF/model-viewer is Y-up.
+    // Rotate the node -90° about X so the part stands upright. (quaternion x,y,z,w)
+    nodes: [{ mesh: 0, name, rotation: [-0.7071067811865476, 0, 0, 0.7071067811865476] }],
+    // A matte "graphite plastic" PBR material so the mesh reads like a real
+    // printed part (STL carries no material/texture — there are no UVs to map a
+    // skin onto, so a good material is what sells it). Medium tone stays visible
+    // on the dark canvas; high roughness = matte, low metalness = plastic.
+    // doubleSided guards against any inward-facing normals.
+    materials: [{ name: "part", doubleSided: true, pbrMetallicRoughness: { baseColorFactor: [0.33, 0.35, 0.4, 1], metallicFactor: 0.0, roughnessFactor: 0.72 } }],
+    meshes: [{ name, primitives: [{ attributes: { POSITION: 0, NORMAL: 1 }, material: 0, mode: 4 }] }],
     buffers: [{ byteLength: bin.length }],
     bufferViews: [
       { buffer: 0, byteOffset: 0, byteLength: posBuf.length, target: 34962 },
@@ -117,6 +126,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const gltf = JSON.parse(glb.slice(20, 20 + jsonLen).toString("utf8"));
   assert(gltf.accessors[0].count === 3 && gltf.accessors[0].type === "VEC3", "POSITION accessor VEC3 count 3");
   assert(gltf.buffers[0].byteLength === glb.readUInt32LE(20 + jsonLen), "buffer length matches BIN chunk");
+  assert(gltf.materials?.length === 1 && gltf.meshes[0].primitives[0].material === 0, "default PBR material attached");
+  assert(Array.isArray(gltf.nodes[0].rotation) && gltf.nodes[0].rotation.length === 4, "node has Y-up rotation");
 
   // ASCII STL parses too
   const ascii = parseStl(Buffer.from("solid s\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid s"));

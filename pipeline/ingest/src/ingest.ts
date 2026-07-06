@@ -10,7 +10,8 @@ import { captionPage, generateStarters } from "./caption.js";
 import { fetchWebSource } from "./sources.js";
 import { authorFromUnits, type ProfileConceptInput } from "./author.js";
 import { buildPkb, type ExtractUnit } from "./extract.js";
-import { addMeshParts, addVideo, type ModelFile, type VideoFile } from "./mesh.js";
+import { addMeshParts, type ModelFile } from "./mesh.js";
+import { addVideo, type VideoFile } from "./video.js";
 import type { ManualKind, Product } from "@takt/shared";
 import type { ProviderInfo } from "@takt/harness";
 
@@ -200,7 +201,8 @@ export async function ingestProduct(input: IngestInput): Promise<IngestResult> {
       await report(`3D models: ${mesh.parts} parts in ${mesh.subsystems} subsystems`);
     }
     if (input.video) {
-      await addVideo(input.slug, input.video, { onProgress: report });
+      await report("Adding repair video…");
+      await addVideo(input.slug, input.video, { provider: input.captionProvider, model: input.captionModel, apiKey: input.apiKey, onProgress: report });
     }
   } catch (e: any) {
     await report(`Knowledge graph skipped: ${String(e?.message ?? e)}`);

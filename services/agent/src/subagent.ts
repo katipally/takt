@@ -3,7 +3,7 @@ import type { Product, Manual, SseEvent } from "@takt/shared";
 import { buildTaktTools, type Emit } from "./tools.js";
 import { collectTurn } from "./turn.js";
 import { resolveBuild } from "./providers.js";
-import { catalogPromptSection } from "@takt/shared";
+import { catalogPromptSection, validateSurface, surfacePartId } from "@takt/shared";
 
 const MAX_STEPS = 20;
 
@@ -44,7 +44,7 @@ Gather REAL material first when the brief involves a product — reach for the t
 - A part / fault / procedure / spec and how it connects → \`find_entity\`, then \`get_anchors\` on it to get the EXACT media to show: the \`crop_page_image\` call for a manual figure, the \`/assets/*.glb\` for a 3D part (Model3D), or a video clip. Use \`walk_graph\` to pull related faults/steps.
 - A described symptom in plain words → \`search_product\` (semantic). An exact code / part number → \`grep_profile\`. Full concept text → \`read_profile\`.
 - A product overview / map → \`product_map\`.
-Always embed only a real \`/assets/\` URL a tool returned (crop_page_image, get_anchors) — never invent one. Then call emit_ui with a flat list of catalog nodes${key ? ` and key "${key}"` : ""}. SHOW, DON'T TELL: every surface MUST include at least one real visual — a manual figure cropped to the RELEVANT region (Image), a 3D part (Model3D), a video clip (Video), or a Gallery — chosen for THIS brief. Keep Prose to a sentence or two; carry the answer in visuals + structure (Steps, KeyValue, Table), cite facts inline as [p.NN]. Match the layout to the brief (a how-to → Steps + the cropped figure; a part → Model3D + KeyValue specs + related faults; a comparison → Table/Columns). Use resources efficiently — crop tight to what matters, pull only the relevant part's 3D, don't dump the whole manual. Catalog:
+Always embed only a real \`/assets/\` URL a tool returned (crop_page_image, get_anchors) — never invent one. NEVER embed a whole manual page (a \`/assets/pages/…\` URL) as an Image — always \`crop_page_image\` to the exact region (the table, the diagram, the labeled part); whole pages have headers/margins/whitespace and read like a screenshot. Then call emit_ui with a flat list of catalog nodes${key ? ` and key "${key}"` : ""}. SHOW, DON'T TELL: every surface MUST include at least one real visual — a manual figure cropped to the RELEVANT region (Image), a 3D part (Model3D), a video clip (Video), or a Gallery — chosen for THIS brief. When the brief is about a specific PART or says "show me the part", ALWAYS include its interactive Model3D if get_anchors returns a mesh_node for it (a rotatable 3D part beats a photo). When a repair/how-to video clip is relevant, include the Video snippet. Keep Prose to a sentence or two; carry the answer in visuals + structure (Steps, KeyValue, Table), cite facts inline as [p.NN]. Match the layout to the brief (a how-to → Steps + the cropped figure; a part → Model3D + KeyValue specs + related faults; a comparison → Table/Columns). Use resources efficiently — crop tight to what matters, pull only the relevant part's 3D, don't dump the whole manual. Catalog:
 ${catalogPromptSection()}
 BE DECISIVE: a few tool calls to gather is plenty — one or two find_entity/search calls and the get_anchors/crop for the figures you'll show. Do NOT keep re-searching. As soon as you have enough for a useful surface, call emit_ui — you MUST emit_ui before you run out of steps, so build with what you have rather than gathering more. When the surface is emitted you are done — do not narrate.`;
 
@@ -61,7 +61,7 @@ BE DECISIVE: a few tool calls to gather is plenty — one or two find_entity/sea
     // emit_ui ONLY (and nudge) so the worker MUST build with what it has.
     const GATHER_BUDGET = 8;
     const emitOnly = toolDefs.filter((t) => t.name === "emit_ui");
-    let emitted = false, nudged = false;
+    let emitted = false, nudged = false, lastGood = "";
     for (let step = 0; step < MAX_STEPS && !emitted; step++) {
       if (signal.aborted) return;
       const force = step >= GATHER_BUDGET;
@@ -83,8 +83,21 @@ BE DECISIVE: a few tool calls to gather is plenty — one or two find_entity/sea
         try { res = await tool.execute(safeParse(tc.arguments)); }
         catch (e: any) { res = { output: `Error: ${String(e?.message ?? e)}`, isError: true as const }; }
         if (tc.name === "emit_ui" && !res.isError) emitted = true;
+        else if (!res.isError && (res.output?.length ?? 0) > lastGood.length) lastGood = res.output;
         messages.push({ role: "tool", callId: tc.id, name: tc.name, result: res.output, images: res.images, isError: res.isError });
       }
+    }
+    // Guaranteed fallback: if the worker never produced a valid surface (a rare
+    // model flake), emit a minimal grounded Prose surface from the best material
+    // it gathered — so the canvas never ends up empty.
+    if (!emitted && !signal.aborted) {
+      const md = (lastGood || `Here's what I found for: ${brief}`).replace(/```[\s\S]*?```/g, "").slice(0, 1400).trim();
+      const fb = { id: "fallback", ...(key ? { key } : {}), title: brief.slice(0, 64), root: "root", nodes: [
+        { id: "root", type: "Section", props: { title: "Summary" }, children: ["body"] },
+        { id: "body", type: "Prose", props: { markdown: md || "No details available." } },
+      ] };
+      const v = validateSurface(fb);
+      if (v.ok) await buildEmit({ type: "ui_surface", partId: surfacePartId(v.surface), surface: v.surface });
     }
   } catch {
     // A failed build is non-fatal — the main agent already answered in prose.

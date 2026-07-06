@@ -89,7 +89,9 @@
       "source_ids": [
         "33faa5f4-c211-4dab-881d-3202af20d989#p18"
       ],
-      "anchors": []
+      "anchors": [
+        "a-vid-55"
+      ]
     },
     {
       "id": "fault:assembly-issues",
@@ -132,7 +134,8 @@
         "33faa5f4-c211-4dab-881d-3202af20d989#p24"
       ],
       "anchors": [
-        "a1"
+        "a1",
+        "a-vid-56"
       ]
     },
     {
@@ -541,7 +544,8 @@
         "model:fan-case-cover_r1.stl"
       ],
       "anchors": [
-        "a-mesh-10"
+        "a-mesh-10",
+        "a-vid-54"
       ]
     },
     {
@@ -551,7 +555,9 @@
       "description": "A subsystem/assembly of the printer.",
       "confidence": "EXTRACTED",
       "source_ids": [],
-      "anchors": []
+      "anchors": [
+        "a-vid-53"
+      ]
     },
     {
       "id": "part:fan-case",
@@ -589,7 +595,8 @@
         "model:fan-shroud-mk4s_r1.stl"
       ],
       "anchors": [
-        "a-mesh-13"
+        "a-mesh-13",
+        "a-vid-57"
       ]
     },
     {
@@ -755,7 +762,9 @@
       "description": "A subsystem/assembly of the printer.",
       "confidence": "EXTRACTED",
       "source_ids": [],
-      "anchors": []
+      "anchors": [
+        "a-vid-52"
+      ]
     },
     {
       "id": "part:x-carriage",
@@ -1132,7 +1141,7 @@
         "video:repaiir.mp4"
       ],
       "anchors": [
-        "a-vid-52"
+        "a-vid-58"
       ]
     }
   ],
@@ -2514,9 +2523,87 @@
       "ref": {
         "videoUrl": "/assets/products/prusa-mk4s/media/repaiir.mp4",
         "tStart": 0,
-        "tEnd": 0
+        "tEnd": 24
       },
-      "caption": "Repair walkthrough video",
+      "caption": "Overview of the X-axis and carriage components.",
+      "entityIds": [
+        "subsystem:x-axis-x-carriage"
+      ]
+    },
+    {
+      "id": "a-vid-53",
+      "kind": "video_clip",
+      "ref": {
+        "videoUrl": "/assets/products/prusa-mk4s/media/repaiir.mp4",
+        "tStart": 24,
+        "tEnd": 36
+      },
+      "caption": "Close-up on the Nextruder assembly.",
+      "entityIds": [
+        "subsystem:nextruder"
+      ]
+    },
+    {
+      "id": "a-vid-54",
+      "kind": "video_clip",
+      "ref": {
+        "videoUrl": "/assets/products/prusa-mk4s/media/repaiir.mp4",
+        "tStart": 36,
+        "tEnd": 60
+      },
+      "caption": "Removing the fan case cover.",
+      "entityIds": [
+        "part:fan-case-cover"
+      ]
+    },
+    {
+      "id": "a-vid-55",
+      "kind": "video_clip",
+      "ref": {
+        "videoUrl": "/assets/products/prusa-mk4s/media/repaiir.mp4",
+        "tStart": 60,
+        "tEnd": 72
+      },
+      "caption": "Navigating the LCD menu for settings.",
+      "entityIds": [
+        "part:lcd-menu-control"
+      ]
+    },
+    {
+      "id": "a-vid-56",
+      "kind": "video_clip",
+      "ref": {
+        "videoUrl": "/assets/products/prusa-mk4s/media/repaiir.mp4",
+        "tStart": 72,
+        "tEnd": 108
+      },
+      "caption": "Detailed look at the toolhead components.",
+      "entityIds": [
+        "part:toolhead"
+      ]
+    },
+    {
+      "id": "a-vid-57",
+      "kind": "video_clip",
+      "ref": {
+        "videoUrl": "/assets/products/prusa-mk4s/media/repaiir.mp4",
+        "tStart": 108,
+        "tEnd": 132
+      },
+      "caption": "Inspecting and adjusting the fan shroud.",
+      "entityIds": [
+        "part:fan-shroud-mk4s"
+      ]
+    },
+    {
+      "id": "a-vid-58",
+      "kind": "video_clip",
+      "ref": {
+        "videoUrl": "/assets/products/prusa-mk4s/media/repaiir.mp4",
+        "tStart": 132,
+        "tEnd": 148
+      },
+      "caption": "Reassembling the components back together.",
       "entityIds": [
         "procedure:repair-walkthrough-video"
       ]
