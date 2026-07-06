@@ -11,7 +11,7 @@ import { Stage } from "@/components/stage/Stage";
 import { FloatingComposer } from "@/components/stage/FloatingComposer";
 import { StatusBar } from "@/components/stage/StatusBar";
 import { ProcessRail } from "@/components/rail/ProcessRail";
-import { LiveStage } from "@/components/live/LiveStage";
+import { LiveDock } from "@/components/live/LiveDock";
 import { SourceModal } from "@/components/canvas/SourceModal";
 import { AskModal } from "@/components/chat/AskModal";
 import { SettingsModal } from "@/components/settings/SettingsModal";
@@ -121,28 +121,29 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
           </div>
         </div>
 
+        {/* The Stage is ALWAYS mounted — even during a live call, so artifacts
+            render live as Takt talks. Live swaps the composer for the voice bar
+            (LiveDock) instead of taking over the whole stage. */}
+        <Stage
+          empty={empty && !liveOpen}
+          userText={view?.userText}
+          node={view?.assistant}
+          isLatest={isLatest}
+          ctx={ctx}
+          onRegenerate={() => { follow(); wb.regenerate(); }}
+          heading={heading}
+          subheading={isMaster
+            ? "Ask across all your products at once — or anything else. Answers cite the product and page they come from."
+            : "Ask anything — answers are grounded in the manual, cited to the page, and designed when words aren't enough."}
+          starters={prompts}
+          onStarter={send}
+        />
         {liveOpen ? (
-          <LiveStage chatId={wb.chatId} productSlug={slug} onExit={() => setLiveOpen(false)} />
+          <LiveDock chatId={wb.chatId} productSlug={slug} onExit={() => setLiveOpen(false)} />
         ) : (
-          <>
-            <Stage
-              empty={empty}
-              userText={view?.userText}
-              node={view?.assistant}
-              isLatest={isLatest}
-              ctx={ctx}
-              onRegenerate={() => { follow(); wb.regenerate(); }}
-              heading={heading}
-              subheading={isMaster
-                ? "Ask across all your products at once — or anything else. Answers cite the product and page they come from."
-                : "Ask anything — answers are grounded in the manual, cited to the page, and designed when words aren't enough."}
-              starters={prompts}
-              onStarter={send}
-            />
-            <FloatingComposer onSend={send} onStop={wb.stop} isStreaming={wb.isStreaming}
-              voiceEnabled={wb.voiceEnabled} setVoiceEnabled={wb.setVoiceEnabled} onOpenLive={() => setLiveOpen(true)}
-              above={!wb.ask ? <StatusBar node={latest?.assistant} streaming={wb.isStreaming} todos={wb.todos} /> : undefined} />
-          </>
+          <FloatingComposer onSend={send} onStop={wb.stop} isStreaming={wb.isStreaming}
+            voiceEnabled={wb.voiceEnabled} setVoiceEnabled={wb.setVoiceEnabled} onOpenLive={() => setLiveOpen(true)}
+            above={!wb.ask ? <StatusBar node={latest?.assistant} streaming={wb.isStreaming} todos={wb.todos} /> : undefined} />
         )}
 
         <AnimatePresence>

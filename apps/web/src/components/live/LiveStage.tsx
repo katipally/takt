@@ -179,7 +179,7 @@ function DownloadBar({ pct, loaded, total, models, phase }: { pct: number; loade
 }
 
 // The agent's spoken reply, revealed word-by-word in sync with the actual audio.
-function AgentCaption({ text, getProgress }: { text: string; getProgress: () => number }) {
+export function AgentCaption({ text, getProgress }: { text: string; getProgress: () => number }) {
   const [shown, setShown] = useState(0);
   const shownRef = useRef(0); shownRef.current = shown;
   const prevLen = useRef(0);
@@ -198,7 +198,7 @@ function AgentCaption({ text, getProgress }: { text: string; getProgress: () => 
   );
 }
 
-function CameraStage({ stream }: { stream: MediaStream | null }) {
+export function CameraStage({ stream }: { stream: MediaStream | null }) {
   const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => { if (ref.current) ref.current.srcObject = stream; }, [stream]);
   return <video ref={ref} autoPlay muted playsInline className="h-full w-full object-cover" />;
@@ -217,7 +217,7 @@ function DeviceSelect({ icon: Icon, opts, value, onChange }: { icon: typeof Mic;
   );
 }
 
-function PreCall({ mics, cams, micId, camId, onMic, onCam, error, modelsDownloaded, downloading, downloadPct, downloadLoaded, downloadTotal, downloadModels, refreshDevices, onDownload, onStart }: {
+export function PreCall({ mics, cams, micId, camId, onMic, onCam, error, modelsDownloaded, downloading, downloadPct, downloadLoaded, downloadTotal, downloadModels, refreshDevices, onDownload, onStart }: {
   mics: DeviceOpt[]; cams: DeviceOpt[]; micId?: string; camId?: string;
   onMic: (id: string) => void; onCam: (id: string) => void; error?: string;
   modelsDownloaded: boolean; downloading: boolean; downloadPct: number;
