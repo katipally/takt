@@ -93,6 +93,24 @@ export function resolveLive(): ResolvedChat {
   };
 }
 
+// Which provider + model powers the BUILD subagent (delegate_build). Its own
+// settings so builds can run a STRONGER model than the fast talker. Falls back to
+// the chat provider+model when unset ("same as chat").
+export function resolveBuild(): ResolvedChat {
+  const buildProviderId = getSetting("buildProviderId");
+  const buildModel = getSetting("buildModel");
+  if (!buildProviderId && !buildModel) return resolveChat(); // not configured → inherit chat
+  const providerId = (buildProviderId && providerInfo(buildProviderId)) ? buildProviderId : resolveChatProviderId();
+  const provider = providerInfo(providerId) ?? BUILTIN_PROVIDERS[0]!;
+  const effortSetting = getSetting("effort") ?? DEFAULT_EFFORT;
+  return {
+    provider,
+    model: buildModel ?? getSetting("chatModel") ?? "",
+    apiKey: getProviderKey(provider.id),
+    effort: effortSetting === "none" ? undefined : (effortSetting as Effort),
+  };
+}
+
 // Which provider + model captions manual pages at ingest. Its own settings so
 // it can differ from chat; falls back to the chat provider when unset.
 export function resolveCaption(): { provider: ProviderInfo; model: string; apiKey: string | null } {

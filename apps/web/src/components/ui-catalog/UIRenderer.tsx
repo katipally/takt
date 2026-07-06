@@ -37,10 +37,12 @@ function RenderNode({ id, byId, ctx, animate, seen }: { id: string; byId: Map<st
   );
 }
 
-// Cheap mount animation — CSS transition, no per-node motion component.
+// Cheap mount animation — CSS transition, no per-node motion component. Always
+// resolves to opacity 1 (keyed on `on`, not `animate`), so a node never gets
+// stuck invisible if `animate` flips off before the first frame paints.
 function NodeAnim({ animate, children }: { animate: boolean; children: ReactNode }) {
   const [on, setOn] = useState(!animate);
-  useEffect(() => { if (!animate) return; const r = requestAnimationFrame(() => setOn(true)); return () => cancelAnimationFrame(r); }, [animate]);
+  useEffect(() => { if (on) return; const r = requestAnimationFrame(() => setOn(true)); return () => cancelAnimationFrame(r); }, [on]);
   return <div style={{ opacity: on ? 1 : 0, transform: on ? "none" : "translateY(6px)", transition: "opacity .28s var(--ease-out-quart), transform .28s var(--ease-out-quart)" }}>{children}</div>;
 }
 

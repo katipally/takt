@@ -10,7 +10,8 @@ import { api } from "./api";
 
 export interface PageImagePart { id: string; kind: "page_image"; citationId: string; url: string; page: number; manualKind: string; manualTitle?: string; caption?: string | null; productSlug?: string | null; productName?: string | null; }
 export interface ReasoningPart { id: string; kind: "reasoning"; text: string; }
-export interface ToolPart { id: string; kind: "tool"; tool: string; summary?: string; detail?: string; status: "running" | "done"; }
+export interface ToolPart { id: string; kind: "tool"; tool: string; summary?: string; detail?: string; status: "running" | "done"; lane?: "main" | "build"; }
+export interface TodoItem { text: string; done: boolean; }
 export interface TextPart { id: string; kind: "text"; text: string; }
 export interface AskPart { id: string; kind: "ask"; askId: string; questions: AskQuestion[]; answers?: AskAnswer[]; cancelled?: boolean; }
 export interface UIPart { id: string; kind: "ui"; partId: string; surface: UISurface; }
@@ -39,6 +40,7 @@ export interface Session {
   streaming: boolean;
   source?: CanvasSource; // manual page open in the source modal (null/undefined = closed)
   ask?: AskState;        // ask_user questions awaiting answers (undefined = none open)
+  todos?: TodoItem[];    // the current turn's working checklist (status bar)
   usage: Usage;
   abort?: AbortController;
 }
@@ -135,7 +137,8 @@ function applyStreamEvent(chatId: string, assistantId: string, e: import("@takt/
   if (e.type === "text_delta") update(chatId, (s) => patchAssistant(s, assistantId, (p) => appendText(p, "text", e.text)));
   else if (e.type === "reasoning_delta") update(chatId, (s) => patchAssistant(s, assistantId, (p) => appendText(p, "reasoning", e.text)));
   else if (e.type === "status") update(chatId, (s) => setStatus(s, assistantId, e.text));
-  else if (e.type === "tool_start") update(chatId, (s) => setStatus(patchAssistant(s, assistantId, (p) => [...p, { id: e.id, kind: "tool", tool: e.tool, summary: e.summary, status: "running" }]), assistantId, null));
+  else if (e.type === "tool_start") update(chatId, (s) => setStatus(patchAssistant(s, assistantId, (p) => [...p, { id: e.id, kind: "tool", tool: e.tool, summary: e.summary, status: "running", lane: e.lane ?? "main" }]), assistantId, null));
+  else if (e.type === "todos") update(chatId, (s) => ({ ...s, todos: e.items }));
   else if (e.type === "tool_done") update(chatId, (s) => patchAssistant(s, assistantId, (p) => p.map((q) => (q.kind === "tool" && q.id === e.id ? { ...q, status: "done", detail: e.detail } : q))));
   else if (e.type === "page_image") update(chatId, (s) =>
     patchAssistant(s, assistantId, (p) => [...p, { id: uid(), kind: "page_image", citationId: e.citationId, url: e.url, page: e.page, manualKind: e.manualKind, manualTitle: e.manualTitle, caption: e.caption, productSlug: e.productSlug ?? null, productName: e.productName ?? null }]),
@@ -168,7 +171,7 @@ async function runStream(chatId: string, productSlug: string | null, userNodeId:
   const abort = new AbortController();
   update(chatId, (s) => {
     const withNode = addNode(s, { id: assistantId, parentId: userNodeId, role: "assistant", parts: [], streaming: true });
-    return { ...withNode, productSlug, streaming: true, abort };
+    return { ...withNode, productSlug, streaming: true, abort, todos: undefined };
   });
 
   const messages = ancestryText(getSession(chatId), userNodeId);

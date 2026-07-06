@@ -9,8 +9,10 @@ import { uiSurfaceSchema } from "./ui-spec";
 export const sseEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text_delta"), text: z.string() }),
   z.object({ type: z.literal("reasoning_delta"), text: z.string() }),
-  z.object({ type: z.literal("tool_start"), id: z.string(), tool: z.string(), summary: z.string().optional() }),
+  z.object({ type: z.literal("tool_start"), id: z.string(), tool: z.string(), summary: z.string().optional(), lane: z.enum(["main", "build"]).optional() }),
   z.object({ type: z.literal("tool_done"), id: z.string(), detail: z.string().optional() }),
+  // The agent's working checklist, shown (and updated) in the status bar.
+  z.object({ type: z.literal("todos"), items: z.array(z.object({ text: z.string(), done: z.boolean() })) }),
   z.object({
     type: z.literal("page_image"),
     citationId: z.string(),

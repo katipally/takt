@@ -9,6 +9,7 @@ import { ContextMeter } from "./ContextMeter";
 import { ProductSwitcher } from "./ProductSwitcher";
 import { Stage } from "@/components/stage/Stage";
 import { FloatingComposer } from "@/components/stage/FloatingComposer";
+import { StatusBar } from "@/components/stage/StatusBar";
 import { ProcessRail } from "@/components/rail/ProcessRail";
 import { LiveStage } from "@/components/live/LiveStage";
 import { SourceModal } from "@/components/canvas/SourceModal";
@@ -139,7 +140,8 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
               onStarter={send}
             />
             <FloatingComposer onSend={send} onStop={wb.stop} isStreaming={wb.isStreaming}
-              voiceEnabled={wb.voiceEnabled} setVoiceEnabled={wb.setVoiceEnabled} onOpenLive={() => setLiveOpen(true)} />
+              voiceEnabled={wb.voiceEnabled} setVoiceEnabled={wb.setVoiceEnabled} onOpenLive={() => setLiveOpen(true)}
+              above={!wb.ask ? <StatusBar node={latest?.assistant} streaming={wb.isStreaming} todos={wb.todos} /> : undefined} />
           </>
         )}
 

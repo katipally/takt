@@ -52,7 +52,7 @@ export function useWorkbench(productSlug: string | null) {
   }, [productSlug, chatId]);
 
   return {
-    chatId, messages: chatStore.activePath(session), isStreaming: session.streaming, source: session.source, ask: session.ask, usage: session.usage,
+    chatId, messages: chatStore.activePath(session), isStreaming: session.streaming, source: session.source, ask: session.ask, todos: session.todos, usage: session.usage,
     voiceEnabled, setVoiceEnabled,
     send, stop, regenerate, editUser, switchBranch, branchInfo, newChat, loadChat,
     openSource, closeSource, openCitation, submitAsk, cancelAsk,

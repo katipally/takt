@@ -65,10 +65,12 @@ export function ModelsSettings() {
   const chatProviderId = settings?.chatProviderId ?? providers.find((p) => p.isDefault)?.kind ?? providers[0]?.kind ?? PROVIDERS[0]!.id;
   const captionProviderId = settings?.captionProviderId ?? chatProviderId;
   const liveProviderId = settings?.liveProviderId ?? chatProviderId;
+  const buildProviderId = settings?.buildProviderId ?? chatProviderId;
 
   const { data: chatModels = [] } = useQuery({ queryKey: ["models", chatProviderId], queryFn: () => api.models(chatProviderId), enabled: !!chatProviderId });
   const { data: captionModels = [] } = useQuery({ queryKey: ["models", captionProviderId], queryFn: () => api.models(captionProviderId), enabled: !!captionProviderId });
   const { data: liveModels = [] } = useQuery({ queryKey: ["models", liveProviderId], queryFn: () => api.models(liveProviderId), enabled: !!liveProviderId });
+  const { data: buildModels = [] } = useQuery({ queryKey: ["models", buildProviderId], queryFn: () => api.models(buildProviderId), enabled: !!buildProviderId });
 
   const saveSetting = useMutation({
     mutationFn: (b: Record<string, string>) => api.updateSettings(b),
@@ -171,6 +173,27 @@ export function ModelsSettings() {
           </div>
         )}
         {liveProviderId !== chatProviderId && <div className="mt-3"><ProviderKey kind={liveProviderId} /></div>}
+      </section>
+
+      <section>
+        <h2 className="text-[15px] font-semibold">Build provider &amp; model</h2>
+        <p className="mt-1 text-[12.5px] text-muted-foreground">
+          The model the background worker uses to build designed visuals (diagrams, charts, annotated pages) when the agent delegates. Pick a stronger model for better-designed artifacts. Leave the model empty to reuse your chat model.
+        </p>
+        <div className="mt-3 flex flex-wrap items-end gap-3">
+          <div>
+            <label htmlFor="build-provider" className="mb-1 block text-[11.5px] text-faint">Provider</label>
+            {providerSelect(buildProviderId, (id) => saveSetting.mutate({ buildProviderId: id, buildModel: "" }), "build-provider")}
+          </div>
+          <div className="flex-1">
+            <label htmlFor="build-model" className="mb-1 block text-[11.5px] text-faint">Model</label>
+            <select id="build-model" className={cn(inputCls, "max-w-md")} value={settings?.buildModel ?? ""} onChange={(e) => saveSetting.mutate({ buildModel: e.target.value })}>
+              <option value="">{buildModels.length ? "Reuse chat model" : "Add a key to load models…"}</option>
+              {buildModels.map((m) => <option key={m.id} value={m.id}>{m.display_name}</option>)}
+            </select>
+          </div>
+        </div>
+        {buildProviderId !== chatProviderId && <div className="mt-3"><ProviderKey kind={buildProviderId} /></div>}
       </section>
 
       <section>

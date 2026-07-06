@@ -66,8 +66,8 @@ const formatAnswer = (a: AskAnswer) =>
 const resolveMedia = (slug: string, body: string): string =>
   body.replace(/\]\(media\//g, `](/assets/products/${slug}/media/`);
 
-export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]; emit: Emit; chatId?: string }): TaktTool[] {
-  const { product, emit, chatId } = ctx;
+export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]; emit: Emit; chatId?: string; spawnBuild?: (brief: string, key?: string) => void }): TaktTool[] {
+  const { product, emit, chatId, spawnBuild } = ctx;
   // Master mode = no single product selected → cross-product tools; the page
   // tools then require a `product` slug to say which product to read from.
   const masterMode = !product;
@@ -259,6 +259,38 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
     },
   };
 
+  // DELEGATE — hand a visual off to a background BUILD worker so you can keep
+  // talking. The worker gathers sources and composes the surface on its own; it
+  // appears on the stage when ready. Only present when a build lane is available.
+  const delegateBuild: TaktTool | null = spawnBuild ? {
+    name: "delegate_build",
+    description: "Delegate building a designed visual (diagram, chart, annotated page, comparison, procedure, calculator) to a background worker, so you can keep answering the user WITHOUT waiting. Reach for this whenever a visual would help — especially when the answer draws on the product's sources (a figure to crop, specs to chart/table). The worker searches sources and composes the surface itself; it lands on the stage when done. Call this, tell the user in one line you're putting the visual together, and continue. Use the SAME `key` to revise a prior visual. Prefer delegate_build over emit_ui when the visual needs source-gathering; use emit_ui yourself only for a trivial surface you already have all the data for.",
+    parameters: params({
+      brief: z.string().min(1).describe("What to build, with enough detail for the worker to gather sources and design it (e.g. 'annotated diagram of the fuse box from p.42 with each fuse labeled')"),
+      key: z.string().optional().describe("Reuse a prior visual's key to publish a new version; omit for a new one"),
+    }),
+    execute: async (args) => {
+      const brief = String(args?.brief ?? "").trim();
+      if (!brief) return text("delegate_build needs a brief.");
+      spawnBuild(brief, typeof args?.key === "string" ? args.key : undefined);
+      return text("Build started in the background — it'll appear on the stage when ready. Keep talking to the user; don't wait for it or restate its contents.");
+    },
+  } : null;
+
+  // TODOS — publish/update a short working checklist shown in the status bar.
+  const updateTodos: TaktTool = {
+    name: "update_todos",
+    description: "Publish or update a short checklist of what you're doing this turn, shown to the user in the status bar. Use it for a multi-step task (3+ steps) so they can see progress; mark items done as you go. Skip it for simple answers.",
+    parameters: params({
+      items: z.array(z.object({ text: z.string(), done: z.boolean() })).min(1).max(8).describe("The checklist, in order; set done:true for completed steps"),
+    }),
+    execute: async (args) => {
+      const items = Array.isArray(args?.items) ? args.items.map((i: any) => ({ text: String(i.text ?? ""), done: !!i.done })).filter((i: any) => i.text) : [];
+      await emit({ type: "todos", items });
+      return text("Checklist updated.");
+    },
+  };
+
   // READ — the full text of one Profile concept, verbatim. The third leg of the
   // list → grep → read loop; call it on a concept grep_profile / list_profile
   // surfaced. Media links come back as /assets URLs the model can show.
@@ -351,5 +383,8 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
   // Retrieval is Direct Corpus Interaction over the Profile markdown — list (map)
   // → grep (find) → read (full concept). Works the same in single-product and
   // master mode. get_page_image/crop show pages; list_products + fetch_url both modes.
-  return [listProfileTool, grepProfileTool, readProfile, getPageImageTool, cropPageImage, emitUi, listProductsTool, askUser, fetchUrl];
+  return [
+    listProfileTool, grepProfileTool, readProfile, getPageImageTool, cropPageImage,
+    emitUi, ...(delegateBuild ? [delegateBuild] : []), updateTodos, listProductsTool, askUser, fetchUrl,
+  ];
 }

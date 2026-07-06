@@ -2,6 +2,7 @@ import { streamProvider, catalogModels, type Message } from "@takt/harness";
 import type { ChatRequest } from "@takt/shared";
 import { getProductBySlug, getManualsByProduct } from "@takt/db";
 import { buildTaktTools, type Emit } from "./tools.js";
+import { runBuildSubagent } from "./subagent.js";
 import { collectTurn } from "./turn.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { resolveChat } from "./providers.js";
@@ -44,7 +45,16 @@ export async function runAgent(req: ChatRequest, emit: Emit, signal?: AbortSigna
     return;
   }
 
-  const tools = buildTaktTools({ product, manuals, emit, chatId: req.chatId });
+  // Background BUILD subagents the main agent delegates to (delegate_build). They
+  // run concurrently — the main agent keeps answering while they compose surfaces
+  // — and the turn stays open until they finish (awaited before `done`).
+  const pendingBuilds: Promise<void>[] = [];
+  const spawnBuild = (brief: string, key?: string) => {
+    const ctxMsgs = req.messages.slice(-6).map((m) => ({ role: m.role, text: m.text }));
+    pendingBuilds.push(runBuildSubagent({ brief, key, product, manuals, context: ctxMsgs, emit, signal: ac.signal }));
+  };
+
+  const tools = buildTaktTools({ product, manuals, emit, chatId: req.chatId, spawnBuild });
   const toolDefs = tools.map(({ name, description, parameters }) => ({ name, description, parameters }));
 
   // Proper role-alternating history (like live mode) — NOT one flattened user
@@ -100,6 +110,8 @@ export async function runAgent(req: ChatRequest, emit: Emit, signal?: AbortSigna
         });
       }
     }
+    // Keep the stream open until any delegated builds finish landing on the stage.
+    if (pendingBuilds.length) await Promise.allSettled(pendingBuilds);
     await emit({ type: "done" });
   } catch (err: any) {
     // User pressed Stop — not an error. The partial turn is persisted upstream.

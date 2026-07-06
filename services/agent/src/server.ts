@@ -63,6 +63,7 @@ app.post("/chat", async (c) => {
       if (last && last.type === kind) last.text += t;
       else blocks.push({ type: kind, text: t });
     };
+    let writeChain: Promise<void> = Promise.resolve();
     const emit = async (e: SseEvent) => {
       if (e.type === "text_delta") appendText("text", e.text);
       else if (e.type === "reasoning_delta") appendText("reasoning", e.text);
@@ -85,7 +86,11 @@ app.post("/chat", async (c) => {
         const a = blocks.find((b) => b.type === "ask_user" && b.askId === e.askId);
         if (a && a.type === "ask_user") { a.answers = e.answers; a.cancelled = e.cancelled; }
       }
-      await stream.writeSSE({ data: JSON.stringify(e) });
+      // Serialize writes: the main agent and a background build subagent both call
+      // emit() concurrently — unserialized writeSSE would interleave mid-frame and
+      // corrupt the JSON, so the client drops the event. Chain them.
+      writeChain = writeChain.then(() => stream.writeSSE({ data: JSON.stringify(e) }));
+      await writeChain;
     };
 
     try {
