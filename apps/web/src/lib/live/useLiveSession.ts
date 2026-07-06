@@ -4,6 +4,7 @@ import { useCallback, useRef } from "react";
 import { chatStore } from "@/lib/chatStore";
 import { LiveClient } from "./liveClient";
 import { CameraCapture } from "./cameraCapture";
+import { AudioPlayer } from "./audioPlayback";
 import { VoiceEngine, type EnginePhase } from "./voiceEngine";
 import { loadModels, disposeModels, modelsReady } from "./models";
 import { useLiveStore } from "./liveStore";
@@ -16,6 +17,7 @@ export function useLiveSession(chatId: string, productSlug: string | null) {
   const set = useLiveStore((s) => s.set);
   const client = useRef<LiveClient | null>(null);
   const engine = useRef<VoiceEngine | null>(null);
+  const player = useRef<AudioPlayer | null>(null);
   const cam = useRef<CameraCapture | null>(null);
   const micStream = useRef<MediaStream | null>(null);
   const assistantId = useRef<string | null>(null);
@@ -29,6 +31,8 @@ export function useLiveSession(chatId: string, productSlug: string | null) {
     window.removeEventListener("pagehide", onPageHide.current);
     try { client.current?.close(); } catch { /* */ }
     try { engine.current?.stop(); } catch { /* */ }              // destroys VAD + closes audio
+    try { player.current?.close(); } catch { /* */ }             // free the audio ctx (also if start() failed before the engine)
+    player.current = null;
     try { cam.current?.stop(); } catch { /* */ }                 // camera light off
     if (micStream.current) { micStream.current.getTracks().forEach((t) => t.stop()); micStream.current = null; }
     if (assistantId.current) { chatStore.liveFinish(chatId, assistantId.current); assistantId.current = null; }
@@ -41,6 +45,11 @@ export function useLiveSession(chatId: string, productSlug: string | null) {
   const start = useCallback(async () => {
     tornDown.current = false;
     set({ error: undefined, phase: "connecting", active: true, downloadPct: 0, turns: [], userCaption: "", userPartial: false, agentCaption: "" });
+    // Unlock audio NOW, synchronously inside the click gesture. iOS Safari blocks
+    // AudioContext playback that starts after an await, so priming here (before the
+    // model download) is what lets the agent's voice actually play on iPhone.
+    if (!player.current) player.current = new AudioPlayer();
+    player.current.resume();
     try {
       // 1. Models (download-on-demand, cached). Shows a progress bar the first time.
       if (!modelsReady()) { set({ phase: "loading" }); await loadModels((p) => set({ downloadPct: p.pct, downloadLoaded: p.loaded, downloadTotal: p.total, downloadModels: p.models })); }
@@ -66,7 +75,7 @@ export function useLiveSession(chatId: string, productSlug: string | null) {
         // Barge-in: cancel the server turn AND drop the stale caption immediately,
         // so interrupting gives instant "I'm listening" feedback.
         onBargeIn: () => { client.current?.cancel(); set({ agentCaption: "", userCaption: "", userPartial: false }); },
-      });
+      }, player.current ?? undefined);
       engine.current = eng;
       await eng.start(stream);
       if (tornDown.current) return;

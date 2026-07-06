@@ -28,7 +28,7 @@ function rmsOf(a: Float32Array): number { let s = 0; for (let i = 0; i < a.lengt
 
 export class VoiceEngine {
   private vad: MicVAD | null = null;
-  private player = new AudioPlayer();
+  private player: AudioPlayer;
   private chunker = new SentenceChunker();
   private phase: EnginePhase = "idle";
 
@@ -45,7 +45,9 @@ export class VoiceEngine {
   private ttsChain: Promise<void> = Promise.resolve();
   private speakingStartAt = 0;
 
-  constructor(private h: VoiceEngineHandlers) {}
+  // Accept a pre-primed player so audio can be unlocked DURING the Start click
+  // (iOS blocks audio started after an await — see useLiveSession.start).
+  constructor(private h: VoiceEngineHandlers, player?: AudioPlayer) { this.player = player ?? new AudioPlayer(); }
 
   async start(stream: MediaStream) {
     this.player.resume();

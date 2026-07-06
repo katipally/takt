@@ -225,7 +225,10 @@ function PreCall({ mics, cams, micId, camId, onMic, onCam, error, modelsDownload
   refreshDevices: () => Promise<void>; onDownload: () => void; onStart: () => void;
 }) {
   return (
-    <div className="relative z-10 flex flex-1 flex-col items-center justify-center gap-4 px-6 pb-10 text-center">
+    // Scroll-safe centering: m-auto centers the block when it fits and collapses to
+    // 0 when it's taller than the viewport, so nothing clips on small phones.
+    <div className="relative z-10 flex flex-1 flex-col overflow-y-auto">
+      <div className="m-auto flex w-full max-w-sm flex-col items-center gap-4 px-6 py-6 text-center">
       <div className="space-y-1">
         <h2 className="text-[18px] font-semibold tracking-tight">Talk with Takt</h2>
         <p className="max-w-sm text-[13px] text-muted-foreground">It listens as you speak, answers out loud, and can see through your camera. Runs privately on your device.</p>
@@ -258,6 +261,7 @@ function PreCall({ mics, cams, micId, camId, onMic, onCam, error, modelsDownload
         </button>
       )}
       {error && <p className="max-w-sm text-[12px] text-danger">{error}</p>}
+      </div>
     </div>
   );
 }
@@ -283,7 +287,7 @@ function CameraPreview({ camId, onGranted }: { camId?: string; onGranted: () => 
     return () => { stopped = true; stream?.getTracks().forEach((t) => t.stop()); };
   }, [camId, onGranted]);
   return (
-    <div className="relative aspect-[4/3] w-full max-w-[18rem] overflow-hidden rounded-2xl border border-border/60 bg-black shadow-lg">
+    <div className="relative aspect-[4/3] max-h-[36vh] w-full max-w-[16rem] overflow-hidden rounded-2xl border border-border/60 bg-black shadow-lg">
       <video ref={ref} autoPlay muted playsInline className={cn("h-full w-full object-cover transition-opacity", state === "on" ? "opacity-100" : "opacity-0")} />
       {state !== "on" && (
         <div className="absolute inset-0 grid place-items-center gap-1 text-center">
@@ -309,6 +313,13 @@ function MicMeter({ micId, onGranted }: { micId?: string; onGranted: () => void 
         if (stopped) { stream.getTracks().forEach((t) => t.stop()); return; }
         onGranted();
         ctx = new AudioContext();
+        // iOS creates the context "suspended" (no gesture yet) → meter would read
+        // zero. Try to resume, and resume on the next tap as a fallback.
+        void ctx.resume().catch(() => {});
+        if (ctx.state === "suspended") {
+          const c = ctx;
+          window.addEventListener("pointerdown", () => void c.resume().catch(() => {}), { once: true });
+        }
         const analyser = ctx.createAnalyser(); analyser.fftSize = 512;
         ctx.createMediaStreamSource(stream).connect(analyser);
         const buf = new Float32Array(analyser.fftSize);
