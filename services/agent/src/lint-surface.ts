@@ -36,6 +36,28 @@ const EMOJI = /[\u{2600}-\u{26FF}\u{1F300}-\u{1FAFF}]/gu;
 const STRUCTURE = /<(table|ol|ul|svg|h2|h3|takt-figure|takt-model|takt-video)\b|class="[^"]*\btakt-(grid|card|panel|stat|callout|split|cols-)/i;
 const VISUAL = /<(svg|table|takt-figure|takt-model|takt-video|img)\b/i;
 
+// A solid black/near-black <rect> painted as an SVG background — invisible in
+// dark mode, reads as a broken black box. Tokens are never pure black here.
+const SVG_DARK_FILL = /<rect\b[^>]*\bfill=(["'])(#000(000)?|black)\1/i;
+
+// A connector <path> (it carries an arrow marker) with no fill:none renders as a
+// black blob — SVG fills paths black by default. Scanned per-tag (linear, no
+// backtracking on model-controlled input — see TRUST_GRADIENT note above).
+function svgConnectorBlob(html: string): boolean {
+  for (const m of html.matchAll(/<path\b[^>]*>/gi)) {
+    const tag = m[0];
+    if (/marker-(end|start)=/i.test(tag) && !/fill=(["'])none\1/i.test(tag) && !/fill:\s*none/i.test(tag)) return true;
+  }
+  return false;
+}
+
+// An <svg> with no viewBox won't scale with its column (breaks the responsive
+// contract — every diagram must be `<svg width="100%" viewBox="0 0 680 H">`).
+function svgNoViewBox(html: string): boolean {
+  for (const m of html.matchAll(/<svg\b[^>]*>/gi)) if (!/viewBox=/i.test(m[0])) return true;
+  return false;
+}
+
 export function lintSurface(surface: UISurface): LintFinding[] {
   const src = pageSource(surface);
   if (!src) return [];
@@ -56,7 +78,17 @@ export function lintSurface(surface: UISurface): LintFinding[] {
   if (html.length > 1400 && !STRUCTURE.test(html))
     add("P0", "wall-of-text", "This is a wall of text with no structure. Break it into a grid, cards, steps (<ol>), a spec <table>, and a figure — use the whole canvas.");
 
+  // P0 — a drawn <svg> that will render visibly broken
+  if (/<svg\b/i.test(html)) {
+    if (svgConnectorBlob(html))
+      add("P0", "svg-blob", "An SVG connector <path> carries an arrow marker but has no fill=\"none\", so it renders as a black blob. Add fill=\"none\" to every connector <path>/<line>.");
+    if (SVG_DARK_FILL.test(html))
+      add("P0", "svg-dark-bg", "A solid black <rect> fills the SVG background — it vanishes in dark mode and reads as a broken black box. Remove it; leave the background transparent.");
+  }
+
   // P1 — should fix
+  if (svgNoViewBox(html))
+    add("P1", "svg-viewbox", "An <svg> has no viewBox, so it won't scale with its column. Use <svg width=\"100%\" viewBox=\"0 0 680 H\"> and compute H from the lowest element.");
   if (/<img\b(?![^>]*data:)/i.test(html) && /\/assets\//i.test(html))
     add("P1", "raw-asset-img", "Uses a plain <img> for grounded media. Use <takt-figure src=… caption=…> so it's captioned and consistent.");
   if (html.length > 500 && !VISUAL.test(html))
@@ -90,6 +122,14 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   assert(lintSurface(page(wall + '<div class="takt-grid takt-cols-2"><div class="takt-card">x</div></div>')).every((f) => f.rule !== "wall-of-text"), "structure clears the wall-of-text finding");
   // a catalog (non-Page) surface is never linted
   assert(lintSurface({ id: "s", root: "r", nodes: [{ id: "r", type: "Prose", props: { markdown: "#6366f1 lorem ipsum" } }] }).length === 0, "non-Page surfaces are not linted");
+
+  // SVG diagram checks
+  const svg = (inner: string) => `<h1>D</h1><svg width="100%" viewBox="0 0 680 100">${inner}</svg>`;
+  assert(p0(lintSurface(page(svg('<path d="M0 0L10 10" marker-end="url(#arrow)" stroke="#333"/>')))).some((f) => f.rule === "svg-blob"), "flags a connector path missing fill=none");
+  assert(lintSurface(page(svg('<path d="M0 0L10 10" fill="none" marker-end="url(#arrow)" stroke="#333"/>'))).every((f) => f.rule !== "svg-blob"), "fill=none clears the blob finding");
+  assert(p0(lintSurface(page(svg('<rect fill="#000" width="680" height="100"/>')))).some((f) => f.rule === "svg-dark-bg"), "flags a black svg background rect");
+  assert(lintSurface(page('<h1>D</h1><svg width="200" height="100"><rect/></svg>')).some((f) => f.rule === "svg-viewbox"), "flags an svg with no viewBox");
+  assert(p0(lintSurface(page(svg('<line x1="0" y1="0" x2="10" y2="0" stroke="var(--takt-accent)"/>')))).length === 0, "a clean token svg raises no P0");
 
   console.log("lint-surface self-check ok");
 }

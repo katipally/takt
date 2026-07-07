@@ -128,7 +128,9 @@ export async function* streamOpenAIResponses(opts: {
       }
       case "response.failed":
       case "error":
-        throw new Error(ev.response?.error?.message ?? ev.message ?? "Responses API error")
+        // The failure message can arrive as response.error, a top-level `error`
+        // object (the `{type:"error", error:{…}}` shape), or a bare `message`.
+        throw new Error(ev.response?.error?.message ?? ev.error?.message ?? ev.message ?? "Responses API error")
     }
   }
   yield { type: "done", stopReason: "stop" }

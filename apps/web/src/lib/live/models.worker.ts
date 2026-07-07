@@ -25,8 +25,12 @@ async function cachedArrayBuffer(url: string): Promise<ArrayBuffer> {
   return await (await fetch(url)).arrayBuffer();
 }
 
-const STT_MODEL = "onnx-community/whisper-base";
-const STT_MODEL_WASM = "onnx-community/whisper-tiny"; // lighter on the WASM tier
+// English-ONLY variants: same size/speed as the multilingual base/tiny but more
+// accurate on English (incl. product terms) — the assistant is English-only, and
+// the turn model already uses whisper-tiny.en. (.en models reject a `language`
+// arg, so the stt call passes none.)
+const STT_MODEL = "onnx-community/whisper-base.en";
+const STT_MODEL_WASM = "onnx-community/whisper-tiny.en"; // lighter on the WASM tier
 const TTS_MODEL = "onnx-community/Kokoro-82M-v1.0-ONNX";
 const VOICE = "af_heart";
 // Smart-Turn v3 (pipecat): Whisper-tiny encoder + head; input is a Whisper
@@ -85,7 +89,7 @@ self.onmessage = async (e: MessageEvent) => {
       if (turnSession && turnProc) { try { await turnComplete(new Float32Array(16000)); } catch { /* */ } }
       post({ type: "ready", turn: !!(turnSession && turnProc) });
     } else if (msg.type === "stt") {
-      const text = await serial(async () => String((await asr(msg.audio, { language: "en" }))?.text ?? "").trim());
+      const text = await serial(async () => String((await asr(msg.audio))?.text ?? "").trim());
       post({ type: "result", id: msg.id, text });
     } else if (msg.type === "tts") {
       const { audio, sampleRate } = await serial(async () => {

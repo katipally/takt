@@ -4,7 +4,7 @@ import { resolve, dirname } from "node:path";
 import type { WebSocket } from "ws";
 import type { Product, Manual, SseEvent, MessageBlock, LiveServerMsg } from "@takt/shared";
 import { LIVE_TAG, liveClientMsgSchema } from "@takt/shared";
-import { createChat, addMessage, listMessages, DATA_DIR } from "@takt/db";
+import { createChat, addMessage, listMessages, updateMessage, DATA_DIR } from "@takt/db";
 import type { Message } from "@takt/harness";
 import type { Emit, TaktTool } from "../tools.js";
 import { runBuildSubagent } from "../subagent.js";
@@ -12,6 +12,19 @@ import { LiveTurnRunner } from "./turn-runner.js";
 
 type Frame = { data: string; mime: string };
 const HISTORY_TURNS = 20; // recent messages to rehydrate on reconnect
+
+// Replace the assistant's spoken text in `blocks` with exactly what the client
+// says was voiced on a barge-in. Live replies are already plain text (LIVE_RULES),
+// so this is a clean swap; page images / surfaces are left untouched.
+function truncateSpokenText(blocks: MessageBlock[], spoken: string): void {
+  const s = spoken.trim();
+  let placed = false;
+  for (const b of blocks) {
+    if (b.type !== "text") continue;
+    if (!placed) { b.text = s; placed = true; } else b.text = "";
+  }
+  if (!placed && s) blocks.unshift({ type: "text", text: s });
+}
 
 // One live call — THIN. The browser runs the whole voice stack (VAD, STT, turn
 // detection, TTS) on-device; this server only receives the final user text +
@@ -22,6 +35,7 @@ export class LiveSession {
   private ac: AbortController | null = null;
   private turnActive = false;
   private queuedText: string | null = null; // an utterance that arrived mid-turn (barge-in)
+  private bargeSpoken: string | null = null; // on barge-in, the text the client actually SPOKE (persist only that)
   private cameraOn = false;
   private lastFrame: Frame | null = null; // freshest camera frame, attached per turn
   private closed = false;
@@ -96,7 +110,7 @@ export class LiveSession {
     try { msg = liveClientMsgSchema.parse(JSON.parse(str)); } catch { return; }
     switch (msg.t) {
       case "user_text": return void this.runTurn(msg.text);
-      case "cancel": return this.interrupt();
+      case "cancel": if (this.turnActive) this.bargeSpoken = msg.spoken ?? null; return this.interrupt();
       case "control":
         if (msg.action === "camera_on") this.cameraOn = true;
         else if (msg.action === "camera_off") { this.cameraOn = false; this.lastFrame = null; }
@@ -112,9 +126,10 @@ export class LiveSession {
   private async runTurn(text: string) {
     if (!text.trim() || this.closed) return;
     // A new utterance during an in-flight turn (classic barge-in: cancel then
-    // immediately speak) must NOT be dropped. Queue it — latest wins — and the
-    // finally below drains it once this turn finishes tearing down.
-    if (this.turnActive) { this.queuedText = text; return; }
+    // immediately speak) must NOT be dropped. Queue it — APPEND, so two quick
+    // utterances both survive (the user adding new info mid-answer) — and the
+    // finally below drains them as one turn once this turn finishes tearing down.
+    if (this.turnActive) { this.queuedText = this.queuedText ? `${this.queuedText} ${text}` : text; return; }
     this.turnActive = true;
     const ac = new AbortController();
     this.ac = ac;
@@ -133,11 +148,17 @@ export class LiveSession {
     // When the camera is on, hand the worker the freshest frame (persisted as an
     // artifact resource) so it builds the answer AROUND what the user is showing
     // — the frame embedded and annotated with arrows/labels.
+    // The assistant row id, set once persisted (below). A background build that
+    // finishes AFTER that re-saves the row so its late-landing surface isn't lost
+    // on reload (blocks was already serialized before the surface arrived).
+    let messageId: string | null = null;
     const spawnBuild = (brief: string, key?: string) => {
       const frame = this.cameraOn && this.lastFrame ? this.persistFrame(this.lastFrame) : undefined;
       void runBuildSubagent({
         brief, key, product: this.product, manuals: this.manuals, context: [], frame,
         emit: this.blockEmit(blocks, new AbortController().signal), signal: new AbortController().signal,
+      }).then(() => {
+        if (messageId && this.chatId) { try { updateMessage(messageId, blocks); } catch { /* */ } }
       });
     };
     try {
@@ -145,8 +166,13 @@ export class LiveSession {
     } catch (e) {
       if (!ac.signal.aborted) console.error("[live] turn:", e);
     } finally {
+      // On barge-in, persist only what was actually SPOKEN — the generated text ran
+      // ahead of the on-device TTS, so the unspoken tail must NOT be saved as if it
+      // was said (the client sends its spoken cutoff with the cancel).
+      if (ac.signal.aborted && this.bargeSpoken != null) truncateSpokenText(blocks, this.bargeSpoken);
+      this.bargeSpoken = null;
       // Persist the assistant reply even on barge-in/abort, so reload shows it.
-      if (this.chatId && blocks.length) { try { addMessage(this.chatId, "assistant", blocks); } catch { /* */ } }
+      if (this.chatId && blocks.length) { try { messageId = addMessage(this.chatId, "assistant", blocks).id; } catch { /* */ } }
       this.send({ t: "sse", event: { type: "done" } });
       if (this.ac === ac) { this.ac = null; this.turnActive = false; }
       const q = this.queuedText; this.queuedText = null;

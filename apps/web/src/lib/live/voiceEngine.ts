@@ -15,7 +15,7 @@ export interface VoiceEngineHandlers {
   onPartial: (text: string) => void;      // interim user caption (greyed)
   onUserText: (text: string) => void;      // final user turn → send to server
   onAgentText: (sentence: string) => void; // agent caption line
-  onBargeIn: () => void;                    // ask the server to cancel the LLM stream
+  onBargeIn: (spoken: string) => void;      // cancel the LLM stream; `spoken` = what was actually voiced so far
 }
 
 const PARTIAL_MS = 500;      // min gap between interim transcriptions
@@ -41,9 +41,12 @@ export class VoiceEngine {
   private finalizing = false;
 
   private micRms = 0;
+  private noiseFloor = 0.002;                     // learned room ambient (see onFrame/gate)
   private epoch = 0;                              // bumped on barge-in; stales TTS + audio
   private ttsChain: Promise<void> = Promise.resolve();
   private speakingStartAt = 0;
+  private turnSentAt = 0;                         // perf: when the final user text went out
+  private spokenText = "";                         // what the agent has actually VOICED this reply (for barge-in cutoff)
 
   // Accept a pre-primed player so audio can be unlocked DURING the Start click
   // (iOS blocks audio started after an await — see useLiveSession.start).
@@ -98,10 +101,20 @@ export class VoiceEngine {
     let sum = 0; for (let i = 0; i < frame.length; i++) sum += frame[i]! * frame[i]!;
     const rms = Math.sqrt(sum / frame.length);
     this.micRms += (rms - this.micRms) * 0.3;
+    // Learn the room's ambient noise floor WHILE IDLE (never during the user's own
+    // speech), so the reject-gate rises in a loud room / around a TV and stops
+    // background chatter tripping a turn — but stays at the fixed floor in a quiet
+    // room so a soft talker is still heard. ponytail: a real room needs this
+    // calibration; clamp keeps it from ever rising high enough to swallow speech.
+    if (this.phase === "idle") this.noiseFloor = Math.min(0.03, this.noiseFloor + (rms - this.noiseFloor) * 0.05);
     if (this.phase !== "listening") return;
     this.curBuf.push(frame); this.curLen += frame.length;
     void this.maybePartial();
   }
+
+  // Reject threshold: the fixed floor, or a margin above the learned room noise
+  // (whichever is higher), capped so it can't rise enough to reject real speech.
+  private gate(): number { return Math.min(0.03, Math.max(RMS_GATE, this.noiseFloor * 1.6)); }
 
   // Interim caption while speaking (WebGPU only — too slow to be useful on WASM).
   private async maybePartial() {
@@ -112,7 +125,7 @@ export class VoiceEngine {
     this.partialBusy = true;
     try {
       const win = this.concat(this.curBuf, this.curLen);
-      if (rmsOf(win) < RMS_GATE) return;
+      if (rmsOf(win) < this.gate()) return;
       const text = await stt(win);
       if (text && !isJunk(text) && this.phase === "listening") this.h.onPartial(text);
     } catch { /* best-effort */ }
@@ -123,8 +136,9 @@ export class VoiceEngine {
     if (this.finalizing) return;
     const combined = this.pending ? this.concat([this.pending, audio], this.pending.length + audio.length) : audio;
     // Reject blips and near-silence up front (ambient noise that tripped the VAD).
-    if (combined.length < MIN_UTTER_SAMPLES || rmsOf(audio) < RMS_GATE) { this.pending = null; if (this.phase === "listening") this.setPhase("idle"); return; }
+    if (combined.length < MIN_UTTER_SAMPLES || rmsOf(audio) < this.gate()) { this.pending = null; if (this.phase === "listening") this.setPhase("idle"); return; }
     this.finalizing = true;
+    const perf0 = performance.now();
     try {
       // Transcribe AND ask Smart-Turn (semantic end-of-turn) in parallel. If the
       // turn model isn't loaded, fall back to the VAD's silence endpointing.
@@ -132,6 +146,7 @@ export class VoiceEngine {
         stt(combined).then((t) => t.trim()),
         turnModelReady() ? turnComplete(combined) : Promise.resolve(true),
       ]);
+      console.debug(`[live:perf] transcribe+turn ${Math.round(performance.now() - perf0)}ms`);
       // Drop empties and Whisper's silence-hallucinations so background noise and
       // dead air never fire a turn.
       if (isJunk(text)) { this.pending = null; this.setPhase("idle"); return; }
@@ -148,6 +163,8 @@ export class VoiceEngine {
       this.pending = null;
       this.clearHold();
       this.setPhase("thinking");
+      this.spokenText = ""; // new turn → clear the previous reply's spoken text
+      this.turnSentAt = performance.now();
       this.h.onUserText(text);
     } catch {
       this.pending = null; this.setPhase("idle");
@@ -158,7 +175,7 @@ export class VoiceEngine {
     this.clearHold();
     this.holdTimer = setTimeout(() => {
       const p = this.pending; this.pending = null; this.holdTimer = null;
-      if (p && this.phase === "idle") { void stt(p).then((t) => { const text = t.trim(); if (text) { this.setPhase("thinking"); this.h.onUserText(text); } }); }
+      if (p && this.phase === "idle") { void stt(p).then((t) => { const text = t.trim(); if (text) { this.setPhase("thinking"); this.spokenText = ""; this.turnSentAt = performance.now(); this.h.onUserText(text); } }); }
     }, HOLD_MS);
   }
   private clearHold() { if (this.holdTimer) { clearTimeout(this.holdTimer); this.holdTimer = null; } }
@@ -190,11 +207,21 @@ export class VoiceEngine {
       if (!spoken) return;
       const { audio, sampleRate } = await tts(spoken);
       if (this.epoch !== epoch) return;
-      if (this.phase !== "speaking") { this.speakingStartAt = Date.now(); this.setPhase("speaking"); }
+      if (this.phase !== "speaking") {
+        this.speakingStartAt = Date.now(); this.setPhase("speaking");
+        if (this.turnSentAt) { console.debug(`[live:perf] first audio ${Math.round(performance.now() - this.turnSentAt)}ms after user done`); this.turnSentAt = 0; }
+      }
       // Show the caption for THIS chunk when it actually starts playing (not now,
       // when it finished synthesizing — synth runs ahead of the voice), so the
       // subtitle reads out only the words being spoken right now.
-      this.player.play(audio, epoch, sampleRate, () => { if (this.epoch === epoch) this.h.onAgentText(spoken); });
+      this.player.play(audio, epoch, sampleRate, () => {
+        if (this.epoch !== epoch) return;
+        // Accumulate ONLY as each chunk actually begins playing — so on barge-in
+        // `spokenText` is exactly what was voiced, and the unspoken (still-queued)
+        // tail is excluded from the saved history.
+        this.spokenText += (this.spokenText ? " " : "") + spoken;
+        this.h.onAgentText(spoken);
+      });
     }).catch((e) => { console.warn("[live] TTS failed:", e?.message ?? e); });
   }
 
@@ -202,7 +229,7 @@ export class VoiceEngine {
     this.epoch++;
     this.player.flush(this.epoch);
     this.chunker.flush();
-    this.h.onBargeIn();
+    this.h.onBargeIn(this.spokenText.trim());
   }
 
   // ── helpers / lifecycle ────────────────────────────────────────────────

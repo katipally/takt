@@ -34,7 +34,9 @@ export const liveClientMsgSchema = z.discriminatedUnion("t", [
   z.object({ t: z.literal("user_text"), text: z.string() }),
   // Barge-in: the user started talking over the agent — abort the in-flight LLM
   // stream. Audio is stopped locally; this only stops the server generating.
-  z.object({ t: z.literal("cancel") }),
+  // `spoken` is what the on-device TTS actually voiced before the cut, so the
+  // server persists only that (not the text it generated ahead of the voice).
+  z.object({ t: z.literal("cancel"), spoken: z.string().optional() }),
   z.object({ t: z.literal("control"), action: z.enum(["camera_on", "camera_off", "end"]) }),
   // Answer to need_frame; the hi-res JPEG follows as the next FRAME_IN binary.
   z.object({ t: z.literal("frame_response"), reqId: z.string() }),

@@ -80,7 +80,7 @@ export class LiveClient {
 
   private sendJson(m: unknown) { if (this.ready) this.ws!.send(JSON.stringify(m)); }
   userText(text: string) { this.sendJson({ t: "user_text", text }); }
-  cancel() { this.sendJson({ t: "cancel" }); }
+  cancel(spoken?: string) { this.sendJson({ t: "cancel", ...(spoken ? { spoken } : {}) }); }
   control(action: "camera_on" | "camera_off" | "end") { this.sendJson({ t: "control", action }); }
   frameResponse(reqId: string) { this.sendJson({ t: "frame_response", reqId }); }
 

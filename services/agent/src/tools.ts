@@ -314,10 +314,13 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
       const id = randomUUID();
       const title = typeof args?.title === "string" && args.title ? args.title : "answer";
       await emit({ type: "tool_start", id, tool: "emit_ui", summary: title });
-      // Auto-heal the most common LLM mistake: `root` points at an id that isn't
-      // among the nodes. Pick the real root — the node no other node lists as a
-      // child — else the first node. Saves a slow reject/retry round-trip.
+      // Auto-heal the common LLM mistakes so a valid-nodes surface isn't rejected
+      // over trivial top-level fields (weaker models — e.g. MiniMax — often omit
+      // `id`/`root` entirely). Saves a slow reject/retry round-trip.
       if (args && typeof args === "object" && Array.isArray(args.nodes) && args.nodes.length) {
+        // `id` is just a surface identifier — fill it if missing.
+        if (typeof (args as any).id !== "string" || !(args as any).id) (args as any).id = id;
+        // `root` must name a node: heal it if missing or pointing at an unknown id.
         const ids = new Set(args.nodes.map((n: any) => n?.id));
         if (!ids.has(args.root)) {
           const childIds = new Set(args.nodes.flatMap((n: any) => (Array.isArray(n?.children) ? n.children : [])));

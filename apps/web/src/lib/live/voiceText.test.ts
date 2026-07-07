@@ -13,9 +13,18 @@ assert.equal(isJunk("yeah"), false);
 assert.equal(isJunk("so"), false);
 assert.equal(isJunk("no"), false);
 
-// endsMidThought: trailing filler = keep listening.
+// endsMidThought: trailing filler = keep listening; a complete clause = go.
 assert.equal(endsMidThought("i want to"), true);
 assert.equal(endsMidThought("set it to 250"), false);
+assert.equal(endsMidThought("what's the duty cycle at"), true);   // trails on "at"
+assert.equal(endsMidThought("it's 240 volts"), false);            // complete, ends on a real word
+assert.equal(endsMidThought("connect the ground clamp to the"), true); // trails on "the"
+
+// isJunk: more Whisper silence-hallucinations dropped; real short turns kept.
+assert.equal(isJunk("thanks for watching!"), true);
+assert.equal(isJunk("please subscribe"), true);
+assert.equal(isJunk("bye"), false);
+assert.equal(isJunk("DCEN"), false);        // a real short answer / term
 
 // stripMarkdown: symbols gone, citations gone, photo-narration scrubbed.
 assert.equal(stripMarkdown("Set it to **250** [p.18]."), "Set it to 250 .");

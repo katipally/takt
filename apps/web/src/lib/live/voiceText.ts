@@ -5,11 +5,16 @@
 
 export const MIN_TTS_CHARS = 40; // don't hand Kokoro a tiny fragment — short
                                  // snippets render with an unstable timbre.
-export const FIRST_TTS_CHARS = 16; // but the FIRST chunk of a reply speaks at a
+export const FIRST_TTS_CHARS = 24; // but the FIRST chunk of a reply speaks at a
                                    // lower bar (a clause boundary, or the opening
                                    // few words of a long sentence) so the agent
                                    // starts talking WHILE the rest still streams,
-                                   // not after the whole reply is generated.
+                                   // not after the whole reply is generated. Kept
+                                   // ≥24 (not tiny): Kokoro renders a very short
+                                   // opening fragment with a NOTICEABLY different
+                                   // timbre — the "voice suddenly changes" bug —
+                                   // so the opening chunk needs enough text to be
+                                   // stable while still starting sub-sentence.
 
 // Whisper hallucinates these on silence/ambient noise — never treat as a turn.
 // Kept tight: only true silence artifacts. Real short answers ("okay", "yeah",

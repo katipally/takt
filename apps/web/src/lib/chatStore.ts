@@ -228,6 +228,21 @@ export const chatStore = {
       return { ...s, streaming: false, nodes: n && n.role === "assistant" ? { ...s.nodes, [assistantId]: { ...n, streaming: false, status: null } } : s.nodes };
     });
   },
+  // On barge-in, set the assistant's text to exactly what was SPOKEN (the generated
+  // stream ran ahead of the on-device voice) so the panel matches the audio and the
+  // saved history is correct. Non-text parts (surfaces, page images) are untouched.
+  liveSetText(chatId: string, assistantId: string, text: string) {
+    update(chatId, (s) => patchAssistant(s, assistantId, (parts) => {
+      let placed = false;
+      const next = parts.map((p) => {
+        if (p.kind !== "text") return p;
+        if (!placed) { placed = true; return { ...p, text }; }
+        return { ...p, text: "" };
+      });
+      if (!placed && text) next.unshift({ id: uid(), kind: "text", text });
+      return next;
+    }));
+  },
 
   // Answering ask_user is out-of-band — it resolves the awaiting tool so the
   // SAME open stream resumes; it is NOT a new chat turn.

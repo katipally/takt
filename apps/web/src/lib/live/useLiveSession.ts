@@ -76,7 +76,13 @@ export function useLiveSession(chatId: string, productSlug: string | null) {
         onAgentText: (sentence) => set({ agentCaption: sentence }),
         // Barge-in: cancel the server turn AND drop the stale caption immediately,
         // so interrupting gives instant "I'm listening" feedback.
-        onBargeIn: () => { client.current?.cancel(); set({ agentCaption: "", userCaption: "", userPartial: false }); },
+        onBargeIn: (spoken) => {
+          client.current?.cancel(spoken);
+          // Truncate the assistant node to what was actually spoken — the server
+          // persists the same cutoff, so the panel and the saved history agree.
+          if (assistantId.current && spoken) chatStore.liveSetText(chatId, assistantId.current, spoken);
+          set({ agentCaption: "", userCaption: "", userPartial: false });
+        },
       }, player.current ?? undefined);
       engine.current = eng;
       await eng.start(stream);

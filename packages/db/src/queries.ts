@@ -335,9 +335,19 @@ export function addMessage(chatId: string, role: MessageRole, content: MessageBl
 
 export function listMessages(chatId: string): ChatMessage[] {
   const rows = db().prepare(
+    // `created_at` is second-granularity (`datetime('now')`), so live-mode turns
+    // written in the same second tie. `rowid` (monotonic insertion order) breaks
+    // the tie — otherwise reloaded live chats reorder (assistant before its user)
+    // and the transcript "breaks up".
     `SELECT id, chat_id AS chatId, role, content_json AS content, created_at AS createdAt
-     FROM messages WHERE chat_id=? ORDER BY created_at`,
+     FROM messages WHERE chat_id=? ORDER BY created_at, rowid`,
   ).all(chatId) as any[];
   return rows.map((r) => ({ ...r, content: JSON.parse(r.content) as MessageBlock[] }));
+}
+
+/** Overwrite a message's blocks — used to re-persist an assistant turn after a
+ *  background build lands its surface AFTER the turn was first saved (live mode). */
+export function updateMessage(id: string, content: MessageBlock[]): void {
+  db().prepare(`UPDATE messages SET content_json=? WHERE id=?`).run(JSON.stringify(content), id);
 }
 

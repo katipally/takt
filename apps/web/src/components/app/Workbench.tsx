@@ -74,7 +74,15 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
   // the canvas doesn't blank on a conversational follow-up.
   const isDesigning = (s?: string | null) => !!s && /desig|visual|building/i.test(s);
   const viewSurfaces: UIPart[] = view?.assistant?.parts.filter((p): p is UIPart => p.kind === "ui") ?? [];
-  const building = !!view?.assistant?.streaming && viewSurfaces.length === 0 && isDesigning(view?.assistant?.status);
+  // Show the build skeleton while a canvas is being composed AND no surface has
+  // landed yet. TWO signals: in a live call the shared node's `status` is cleared
+  // by the build worker's first tool_start and its `streaming` by the spoken turn's
+  // `done` — both long before the surface arrives, which is why the skeleton used
+  // to flash then vanish to "Talking with Takt". A delegate_build / build-lane tool
+  // part is the durable "still building" cue that survives both, so the skeleton
+  // now holds until the surface hands over.
+  const buildPending = (view?.assistant?.parts ?? []).some((p) => p.kind === "tool" && (p.tool === "delegate_build" || p.lane === "build"));
+  const building = viewSurfaces.length === 0 && (buildPending || (!!view?.assistant?.streaming && isDesigning(view?.assistant?.status)));
   const canvasSurfaces: UIPart[] = viewSurfaces.length ? viewSurfaces : (() => {
     for (let i = turns.length - 1; i >= 0; i--) {
       const s = turns[i]!.assistant?.parts.filter((p): p is UIPart => p.kind === "ui");
@@ -166,7 +174,7 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
         )}
         {/* Closing the call returns to a clean slate — a live conversation is its
             own thing (still saved in history), not left lingering on the stage. */}
-        {liveOpen && <LiveDock chatId={wb.chatId} productSlug={slug} onExit={() => { setLiveOpen(false); follow(); wb.newChat(); }} />}
+        {liveOpen && <LiveDock key={wb.chatId} chatId={wb.chatId} productSlug={slug} onExit={() => { setLiveOpen(false); follow(); wb.newChat(); }} />}
 
         <AnimatePresence>
           {wb.ask && <AskModal key="ask" ask={wb.ask} onSubmit={wb.submitAsk} onCancel={wb.cancelAsk} />}
