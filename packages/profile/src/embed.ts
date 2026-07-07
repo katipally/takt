@@ -15,6 +15,7 @@ export const EMBED_DIM_HINT = 384;
 export interface VectorStore {
   model: string;
   ids: string[];        // parallel to `vectors`; a chunk id or entity id
+  kinds?: string[];     // parallel to `ids`; "chunk" | "entity" | … (absent in legacy stores)
   vectors: number[][];  // unit-normalized
 }
 
@@ -64,31 +65,39 @@ export function saveVectors(slug: string, store: VectorStore): void {
   writeFileSync(p, JSON.stringify(store));
 }
 
-// Build (or rebuild) the vector store from {id → text} entries. No-op returning
-// null if embeddings are unavailable, so ingest never fails on this.
-export async function buildVectors(slug: string, entries: { id: string; text: string }[]): Promise<VectorStore | null> {
+// Build (or rebuild) the vector store from {id, text, kind} entries. No-op
+// returning null if embeddings are unavailable, so ingest never fails on this.
+export async function buildVectors(slug: string, entries: { id: string; text: string; kind?: string }[]): Promise<VectorStore | null> {
   const embed = await getEmbedder();
   if (!embed) return null;
   const ids: string[] = [];
+  const kinds: string[] = [];
   const vectors: number[][] = [];
   for (const e of entries) {
     if (!e.text.trim()) continue;
     ids.push(e.id);
+    kinds.push(e.kind ?? "");
     vectors.push(await embed(e.text.slice(0, 2000)));
   }
-  const store: VectorStore = { model: MODEL, ids, vectors };
+  const store: VectorStore = { model: MODEL, ids, kinds, vectors };
   saveVectors(slug, store);
   return store;
 }
 
-// Semantic search: returns top-k {id, score}. Null if no store/embedder.
-export async function semanticSearch(slug: string, query: string, k = 8): Promise<{ id: string; score: number }[] | null> {
+// Semantic search: top-k {id, score}. Optional `kind` filters to one facet
+// (e.g. "chunk" vs "entity") so an entity-heavy result set can't crowd out
+// chunks and vice-versa. Legacy stores (no `kinds`) skip the filter — they still
+// work, they just don't get the separation until re-embedded. Null if no store.
+export async function semanticSearch(slug: string, query: string, k = 8, kind?: string): Promise<{ id: string; score: number }[] | null> {
   const store = loadVectors(slug);
   const embed = await getEmbedder();
   if (!store || !embed) return null;
   const q = await embed(query);
+  const hasKinds = Array.isArray(store.kinds) && store.kinds.length === store.ids.length;
   return store.ids
-    .map((id, i) => ({ id, score: cosine(q, store.vectors[i]!) }))
+    .map((id, i) => ({ id, score: cosine(q, store.vectors[i]!), kind: hasKinds ? store.kinds![i]! : "" }))
+    .filter((h) => !(kind && hasKinds) || h.kind === kind)
     .sort((a, b) => b.score - a.score)
-    .slice(0, k);
+    .slice(0, k)
+    .map(({ id, score }) => ({ id, score }));
 }

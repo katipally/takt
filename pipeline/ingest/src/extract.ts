@@ -6,7 +6,8 @@ import {
 } from "@takt/profile";
 
 // Compile a product's captioned sources into its PKB: an entity/edge/anchor
-// graph + text chunks + vectors. One LLM pass per page/section extracts the
+// graph + text chunks + vectors. One-to-two LLM passes per page/section (an
+// extract pass, then an optional gleaning pass to recover misses) pull the
 // real-world things the doc is about (Parts, Faults, Procedures, Specs) and how
 // they relate, with a confidence tier on every claim (graphify). Entities are
 // then merged across pages (LightRAG name-dedup + size guard), page anchors let
@@ -42,7 +43,9 @@ const conf = (v: unknown): Confidence => (CONF.has(String(v)) ? String(v) as Con
 const TYPES = ["Part", "Subsystem", "Fault", "Symptom", "Procedure", "Task", "Spec", "Setting"] as const;
 export function normType(raw: unknown): string {
   const s = String(raw ?? "").toLowerCase();
-  return TYPES.find((t) => s.includes(t.toLowerCase())) ?? "Part";
+  // whole-word match so a group label ("Part or Subsystem") maps but a substring
+  // ("compartment" → "part") does not.
+  return TYPES.find((t) => new RegExp(`\\b${t.toLowerCase()}\\b`).test(s)) ?? "Part";
 }
 
 const EXTRACT_PROMPT = `You are building a structured knowledge graph of a physical product from ONE page/section of its documentation. Extract the real-world things the text is about and how they relate.
@@ -162,6 +165,9 @@ export async function buildPkb(
 ): Promise<BuildPkbResult> {
   const report = async (m: string) => { await opts.onProgress?.(m); };
 
+  // No units → don't touch disk (never clobber an existing graph with an empty one).
+  if (!units.length) { await report("No source units — skipping graph build."); return { entities: 0, edges: 0, anchors: 0, chunks: 0, inputTokens: 0, outputTokens: 0 }; }
+
   // Preserve locked (hand-edited) entities from any prior graph so re-extract
   // doesn't clobber human work.
   const prior = loadGraph(slug);
@@ -265,8 +271,8 @@ export async function buildPkb(
   await report("Embedding for semantic search…");
   try {
     const entries = [
-      ...chunks.map((c) => ({ id: c.id, text: `${c.title}\n${c.text}` })),
-      ...entities.map((e) => ({ id: e.id, text: `${e.name}${e.aliases?.length ? ` (${e.aliases.join(", ")})` : ""} — ${e.description}` })),
+      ...chunks.map((c) => ({ id: c.id, kind: "chunk", text: `${c.title}\n${c.text}` })),
+      ...entities.map((e) => ({ id: e.id, kind: "entity", text: `${e.name}${e.aliases?.length ? ` (${e.aliases.join(", ")})` : ""} — ${e.description}` })),
     ];
     await buildVectors(slug, entries);
   } catch (e: any) { await report(`Embeddings skipped: ${String(e?.message ?? e)}`); }

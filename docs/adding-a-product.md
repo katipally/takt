@@ -2,32 +2,40 @@
 
 The system is product-agnostic. A product is just a slug, some metadata, and a set of indexed manuals.
 
+Two ways: the **in-app uploader** (Settings → Products — drop PDFs, source URLs, 3D `.stl` models, a walkthrough video, and a hero image; it streams progress and shows the cost) or the **CLI**.
+
 ## Command
 
 ```bash
 pnpm ingest \
   --product <slug> \
   --name "<Display Name>" \
+  --model <vision-model> \        # REQUIRED, e.g. gpt-5-mini / claude-sonnet-5
+  --dir <folder-with-pdfs> \      # PDFs: rendered + read page-by-page
+  --url <link> [--url <link>] \   # web pages / YouTube, ingested as text
+  --models <folder-with-stls> \   # 3D part models (.stl → converted to .glb)
+  --video <file> \                # a repair/walkthrough video
   --manufacturer "<Maker>" \
   --summary "<one line>" \
-  --dir <folder-with-pdfs> \
-  --hero <image-file>      # optional product photo
+  --hero <image-file> \           # optional product photo
+  --provider <id>                 # optional; defaults to the first env key present
 ```
 
-Only `--product` and `--dir` are required.
+Required: `--product`, `--model`, and at least one source (`--dir` or `--url`).
 
 ## What it does
 
 1. Detects the manual kind from the filename (`owner` / `quick_start` / `selection_chart` / `other`).
 2. Renders each page to a PNG (mupdf, 2× scale).
-3. Reads each page with Claude vision and stores the result as the page caption — full text, tables as markdown, and a description of every diagram/photo and the question it answers.
-4. **Authors the Profile** — writes `data/products/<slug>/`, a folder of OKF-style markdown (one concept per source, captions inlined next to their page images). This *is* the store: canonical, human-readable, editable. No chunking, no embeddings, no vector index.
+3. Reads each page with the chosen **vision model** and stores the result as the page caption — full text, tables as markdown, and a description of every diagram/photo and the question it answers.
+4. **Authors the Profile** — writes `data/products/<slug>/`, a folder of OKF-style markdown (one concept per source). This is the **canonical, human-editable store**.
+5. **Compiles the PKB** (`data/products/<slug>/.pkb/`) — a per-page extraction pass builds the product **knowledge graph** (entities + edges + hyperedges, with confidence tiers), plus text chunks and local embeddings. 3D models are folded in as interactive part anchors, and the video as timestamped clips.
 
-At query time the agent retrieves by **Direct Corpus Interaction** — `list_profile` → `grep_profile` → `read_profile` over the markdown (the loop Claude Code uses on code). To edit a product's knowledge, just edit the `.md` directly — changes are live on the next message (grep reads the files). To check OKF conformance: `pnpm profile:build <slug> --check`. View a product's Profile at `/profile/<slug>`.
+At query time the agent retrieves **hybrid**: the knowledge graph first (`find_entity` → `walk_graph` → `get_anchors`), semantic search for described symptoms (`search_product`), and grep for exact codes/part numbers — fused by `query_product`. A markdown-only product (no `.pkb`) still works via grep. To edit knowledge, edit the `.md` and rebuild the index with `pnpm pkb:build <slug>`; check OKF conformance with `pnpm profile:build <slug> --check`. View a product's Profile at `/profile/<slug>`, and its resources + knowledge graph on the landing page.
 
-## Idempotency
+## Re-running
 
-Chunks are keyed by a content hash and page captions are reused on re-runs, so running ingest again only does new work. Use `pnpm db:reset` to wipe the local DB and rebuild from scratch.
+Page captions are cached in the DB and reused on re-runs, so re-ingesting an unchanged manual skips the expensive vision pass. Extraction (the graph build) currently re-runs each time. To rebuild just the graph from existing markdown: `pnpm pkb:build <slug>` (add `--reindex` to only refresh embeddings). Use `pnpm db:reset` to wipe the local DB and rebuild from scratch.
 
 ## After ingest
 

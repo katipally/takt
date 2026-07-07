@@ -162,6 +162,9 @@ app.post("/ingest", async (c) => {
   // Web/YouTube source URLs (newline- or comma-separated), text-only.
   const urls = String(form.get("urls") ?? "").split(/[\n,]+/).map((u) => u.trim()).filter((u) => /^https?:\/\//i.test(u));
   const heroFile = form.get("hero");
+  // 3D part models (.stl → converted to .glb) and an optional walkthrough video.
+  const modelFiles = form.getAll("models").filter((f) => typeof f !== "string") as unknown as File[];
+  const videoFile = form.get("video");
 
   return streamSSE(c, async (stream) => {
     const emit = (e: SseEvent) => stream.writeSSE({ data: JSON.stringify(e) });
@@ -176,8 +179,12 @@ app.post("/ingest", async (c) => {
       const hero = heroFile && typeof heroFile !== "string"
         ? { ext: extname((heroFile as File).name) || ".png", data: new Uint8Array(await (heroFile as File).arrayBuffer()) }
         : undefined;
+      const models = await Promise.all(modelFiles.map(async (f) => ({ filename: f.name, data: new Uint8Array(await f.arrayBuffer()) })));
+      const video = videoFile && typeof videoFile !== "string"
+        ? { filename: (videoFile as File).name, data: new Uint8Array(await (videoFile as File).arrayBuffer()) }
+        : undefined;
       const result = await ingestProduct({
-        slug, name, manufacturer, pdfs, webSources: urls.map((url) => ({ url })), hero,
+        slug, name, manufacturer, pdfs, webSources: urls.map((url) => ({ url })), hero, models, video,
         captionProvider: cap.provider, captionModel: cap.model, apiKey: cap.apiKey ?? undefined,
         onProgress: (m) => emit({ type: "tool_start", id: "ingest", tool: "ingest", summary: m }),
       });

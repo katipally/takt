@@ -15,6 +15,7 @@ import { Wordmark } from "@/components/brand/Wordmark";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { SettingsModal } from "@/components/settings/SettingsModal";
 import { useUi } from "@/lib/uiStore";
+import { ResourcesSection } from "@/components/product/ResourcesSection";
 import { cn } from "@/lib/cn";
 
 export default function Home() {
@@ -179,6 +180,10 @@ function Showcase({ products, active, setActive, product }: {
           <AskBar onAsk={ask} />
         </div>
       </div>
+
+      {/* Scroll past the questions → the product's resources + the explorable
+          knowledge graph we built from them. */}
+      <ResourcesSection key={product.slug} slug={product.slug} />
     </div>
   );
 }

@@ -149,9 +149,11 @@ function applyStreamEvent(chatId: string, assistantId: string, e: import("@takt/
     // Replace a surface with the same partId (re-emit / new version), else append.
     const withPart = patchAssistant(s, assistantId, (p) => {
       const i = p.findIndex((q) => q.kind === "ui" && q.partId === e.partId);
-      const part: UIPart = { id: uid(), kind: "ui", partId: e.partId, surface: e.surface };
-      if (i >= 0) { const next = p.slice(); next[i] = part; return next; }
-      return [...p, part];
+      // Reuse the existing part id when replacing (re-emit / new version) so the
+      // React key is stable — the CanvasFrame/UIRenderer updates in place instead
+      // of remounting (no iframe reload/flash, no wiping typed interactive state).
+      if (i >= 0) { const next = p.slice(); next[i] = { id: p[i]!.id, kind: "ui", partId: e.partId, surface: e.surface }; return next; }
+      return [...p, { id: uid(), kind: "ui", partId: e.partId, surface: e.surface }];
     });
     return setStatus(withPart, assistantId, null);
   });

@@ -112,8 +112,15 @@ takt-cite{cursor:pointer}
   border-radius:5px;padding:.05em .38em;margin:0 .12em;line-height:1.4;white-space:nowrap;user-select:none}
 .takt-cite:hover{background:color-mix(in srgb,var(--takt-accent) 22%,transparent)}
 figure.takt-figure{margin:1.4em 0}
-figure.takt-figure img{width:100%;border-radius:var(--takt-radius-sm);border:1px solid var(--takt-border);background:var(--takt-surface)}
+figure.takt-figure img{width:100%;border-radius:var(--takt-radius-sm);border:1px solid var(--takt-border);background:var(--takt-surface);display:block}
 figure.takt-figure figcaption{font-size:.82rem;color:var(--takt-muted);margin-top:.5em;font-family:var(--takt-sans)}
+/* annotation overlay — agent points things out; labels are user-draggable */
+.takt-figwrap{position:relative;display:block;line-height:0}
+svg.takt-anno{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
+.takt-anno-label{position:absolute;transform:translate(-50%,-135%);background:var(--takt-arc);color:#fff;font-family:var(--takt-sans);
+  font-size:.72rem;font-weight:650;line-height:1.3;padding:.16em .5em;border-radius:6px;white-space:nowrap;cursor:grab;user-select:none;
+  touch-action:none;box-shadow:0 2px 8px rgba(0,0,0,.3);z-index:2}
+.takt-anno-label::after{content:"";position:absolute;left:50%;top:100%;transform:translateX(-50%);border:5px solid transparent;border-top-color:var(--takt-arc)}
 .takt-media{position:relative;border-radius:var(--takt-radius-sm);overflow:hidden;border:1px solid var(--takt-border);background:var(--takt-surface-2)}
 video.takt-video{width:100%;display:block;border-radius:var(--takt-radius-sm);border:1px solid var(--takt-border);background:#000}
 .takt-model-tile{cursor:pointer;display:flex;align-items:center;gap:.7em;padding:.9em 1.1em;border:1px solid var(--takt-border);
@@ -145,7 +152,7 @@ const RUNTIME_JS = String.raw`
       .replace(/<script[\s\S]*?<\/script>/gi,'')
       .replace(/<iframe[\s\S]*?<\/iframe>/gi,'')
       .replace(/<link\b[^>]*>/gi,'')
-      .replace(/ on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi,'')
+      .replace(/[\s/]on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi,' ')
       .replace(/(href|src)\s*=\s*("javascript:[^"]*"|'javascript:[^']*')/gi,'$1="#"');
   }
 
@@ -159,12 +166,67 @@ const RUNTIME_JS = String.raw`
     el.textContent=''; el.appendChild(s);
     el.addEventListener('click', function(){ post({ type:'cite', page: Number(page)||0, product: el.getAttribute('product')||null }); });
   });
+  var SVGNS = 'http://www.w3.org/2000/svg';
+  function toneColor(t){ return t==='ok'?'var(--takt-ok)':t==='warn'?'var(--takt-warn)':t==='danger'?'var(--takt-danger)':'var(--takt-arc)'; }
+  function parseAnnos(s){ if(!s) return []; try{ var a = JSON.parse(s); return Array.isArray(a) ? a : []; }catch(e){ return []; } }
+  function dragLabel(el, wrap){
+    el.addEventListener('pointerdown', function(e){
+      e.preventDefault(); el.setPointerCapture(e.pointerId); el.style.cursor='grabbing';
+      function move(ev){ var r = wrap.getBoundingClientRect(); if(!r.width) return;
+        el.style.left = Math.max(0, Math.min(100, ((ev.clientX - r.left) / r.width) * 100)) + '%';
+        el.style.top  = Math.max(0, Math.min(100, ((ev.clientY - r.top)  / r.height) * 100)) + '%'; }
+      function up(){ try{ el.releasePointerCapture(e.pointerId); }catch(x){} el.style.cursor='grab';
+        el.removeEventListener('pointermove', move); el.removeEventListener('pointerup', up); }
+      el.addEventListener('pointermove', move); el.addEventListener('pointerup', up);
+    });
+  }
+  // Draw the agent's annotations over the image: boxes/arrows/redaction as SVG
+  // (non-scaling stroke so it stays crisp), labels as draggable HTML (so text
+  // isn't distorted by the non-uniform viewBox and the user can nudge them).
+  function overlay(wrap, annos){
+    var svg = document.createElementNS(SVGNS, 'svg'); svg.setAttribute('class','takt-anno');
+    svg.setAttribute('viewBox','0 0 100 100'); svg.setAttribute('preserveAspectRatio','none');
+    var defs = document.createElementNS(SVGNS, 'defs');
+    defs.innerHTML = '<marker id="tk-arrow" markerWidth="7" markerHeight="7" refX="5.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" style="fill:var(--takt-arc)"/></marker>';
+    svg.appendChild(defs);
+    annos.forEach(function(a){
+      if(a.kind==='box' || a.kind==='redact'){
+        var r = document.createElementNS(SVGNS,'rect');
+        r.setAttribute('x', a.x*100); r.setAttribute('y', a.y*100); r.setAttribute('width', a.w*100); r.setAttribute('height', a.h*100); r.setAttribute('rx','1.2');
+        r.setAttribute('vector-effect','non-scaling-stroke');
+        if(a.kind==='redact'){ r.style.fill='#111'; r.style.stroke='none'; }
+        else { r.style.fill='none'; r.style.stroke = toneColor(a.tone); r.setAttribute('stroke-width','2.5'); }
+        svg.appendChild(r);
+      } else if(a.kind==='arrow'){
+        var ln = document.createElementNS(SVGNS,'line');
+        ln.setAttribute('x1', a.x1*100); ln.setAttribute('y1', a.y1*100); ln.setAttribute('x2', a.x2*100); ln.setAttribute('y2', a.y2*100);
+        ln.style.stroke = 'var(--takt-arc)'; ln.setAttribute('stroke-width','2.5'); ln.setAttribute('vector-effect','non-scaling-stroke'); ln.setAttribute('marker-end','url(#tk-arrow)');
+        svg.appendChild(ln);
+      }
+    });
+    wrap.appendChild(svg);
+    annos.forEach(function(a){
+      var txt = a.label || (a.kind==='label' ? a.text : null); if(!txt) return;
+      var lx, ly;
+      if(a.kind==='arrow'){ lx=a.x1; ly=a.y1; }          // label sits at the arrow's tail
+      else if(a.kind==='label'){ lx=a.x; ly=a.y; }
+      else { lx=a.x + (a.w||0)/2; ly=a.y; }               // box: top-centre
+      if(typeof lx!=='number' || typeof ly!=='number') return;
+      var d = document.createElement('div'); d.className='takt-anno-label'; d.textContent = txt;
+      d.style.left = (lx*100)+'%'; d.style.top = (ly*100)+'%';
+      dragLabel(d, wrap); wrap.appendChild(d);
+    });
+  }
   def('takt-figure', function(el){
     var src = el.getAttribute('src'); if(!src){ return; }
     var cap = el.getAttribute('caption');
     var fig = document.createElement('figure'); fig.className='takt-figure';
+    var wrap = document.createElement('div'); wrap.className='takt-figwrap';
     var img = document.createElement('img'); img.src=src; img.alt = el.getAttribute('alt')||cap||'';
-    fig.appendChild(img);
+    wrap.appendChild(img);
+    var annos = parseAnnos(el.getAttribute('annos'));
+    if(annos.length){ var draw = function(){ if(!wrap.querySelector('svg.takt-anno')) overlay(wrap, annos); postHeight(); }; if(img.complete) draw(); else { img.addEventListener('load', draw); img.addEventListener('error', draw); } }
+    fig.appendChild(wrap);
     if(cap){ var fc=document.createElement('figcaption'); fc.textContent=cap; fig.appendChild(fc); }
     el.textContent=''; el.appendChild(fig);
   });

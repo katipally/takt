@@ -114,7 +114,7 @@ function LiveSessionCard({ turns, live, selectedUserId, onSelectTurn }: {
               className={cn("block w-full rounded-lg px-2 py-1.5 text-left transition hover:bg-foreground/[0.04]", t.userId === selectedUserId && "bg-foreground/[0.05]")}>
               <span className="block text-[12px] font-medium text-foreground">{t.userText}</span>
               {agentText(t) && <span className="mt-0.5 line-clamp-2 block text-[11.5px] text-muted-foreground">{agentText(t)}</span>}
-              {t.assistant?.parts.some((p) => p.kind === "ui") && <span className="mt-1 inline-flex items-center gap-1 rounded bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent"><Boxes className="size-2.5" /> artifact</span>}
+              {t.assistant?.parts.some((p) => p.kind === "ui") && <span className="mt-1 inline-flex items-center gap-1 rounded bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent"><Boxes className="size-2.5" /> canvas</span>}
             </button>
           ))}
         </div>
@@ -156,10 +156,10 @@ function TurnCard({ turn, selected, live, isLatest, onSelect, onOpenSource, onRe
       ) : streaming && work.length === 0 ? (
         <div className="px-3 pb-2 text-[12px]"><span className="arc-shimmer font-medium">Takt is replying…</span></div>
       ) : null}
-      {/* artifact-on-canvas pointer */}
+      {/* on-canvas pointer */}
       {hasArtifact && (
         <button onClick={onSelect} className="mx-3 mb-2 inline-flex items-center gap-1 rounded-md bg-accent-soft px-1.5 py-0.5 text-[10.5px] text-accent transition hover:brightness-110">
-          <Boxes className="size-2.5" /> Artifact on canvas
+          <Boxes className="size-2.5" /> On the canvas
         </button>
       )}
       {work.length > 0 && (

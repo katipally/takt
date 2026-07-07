@@ -44,7 +44,13 @@ export function Stage({
   // internal padding via the design system). Legacy catalog surfaces stay in a
   // centered reading column. Empty/building/idle keep the narrow, calm layout.
   const showingSurfaces = !empty && !building && surfaces.length > 0;
-  const pageMode = showingSurfaces && surfaces.every(isPageSurface);
+  // Full-bleed the canvas if ANY surface is a Page; each non-Page (catalog)
+  // surface then keeps its own centered reading column, so a mixed turn still
+  // renders the Page edge-to-edge instead of boxing everything.
+  const pageMode = showingSurfaces && surfaces.some(isPageSurface);
+  const renderSurface = (p: UIPart) => (
+    <UIRenderer key={p.id} surface={p.surface} ctx={{ ...ctx, readOnly: ctx.readOnly ?? !isLatest }} animate={isLatest && streaming} />
+  );
 
   return (
     <div ref={scrollRef} className="takt-scroll relative min-h-0 flex-1 overflow-y-auto">
@@ -55,8 +61,10 @@ export function Stage({
         ) : building ? (
           <ArtifactSkeleton live={liveMode} />
         ) : surfaces.length ? (
-          <div className={pageMode ? "" : "space-y-6"}>
-            {surfaces.map((p) => <UIRenderer key={p.id} surface={p.surface} ctx={{ ...ctx, readOnly: ctx.readOnly ?? !isLatest }} animate={isLatest && streaming} />)}
+          <div className={pageMode ? "space-y-8" : "space-y-6"}>
+            {surfaces.map((p) => pageMode && !isPageSurface(p)
+              ? <div key={p.id} className="mx-auto w-full max-w-3xl px-6">{renderSurface(p)}</div>
+              : renderSurface(p))}
           </div>
         ) : (
           <ArtifactIdle streaming={streaming} live={liveMode} />

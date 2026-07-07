@@ -3,10 +3,11 @@
 **An AI that actually understands your product — and answers, shows, and talks like it.**
 
 Takt turns a product's scattered documentation — manuals, spec sheets, diagrams,
-photos, and (soon) video and 3D — into knowledge an AI can search, cite, and reason
-over. Ask it anything in chat or by voice; it answers grounded in the real docs, shows
-you the exact page, and builds live interactive tools (calculators, configurators,
-diagrams) when a picture beats a paragraph.
+photos, video, and 3D models — into a **knowledge graph** an AI can search, cite, and
+reason over. Ask it anything in chat or by voice; it answers grounded in the real docs,
+cites the exact page, and composes a **designed, full-page answer** — cropped and
+annotated figures, the interactive 3D part, specs, and step-by-step guides — when a
+picture beats a paragraph.
 
 ![Takt answering a grounded, cited question — 25% duty cycle at 200A / 240V, cited to p.7 and p.19](docs/media/hero.png)
 
@@ -16,10 +17,11 @@ yourself:
 
 ![Clicking a citation opens the exact manual page it came from](docs/media/source-page.png)
 
-> Built around two ideas most assistants get wrong: product knowledge should be
-> **human- and AI-readable** (plain markdown you can open and edit), and the agent
-> should **search it like a person searches a codebase** — grep and read, not a black-box
-> vector database.
+> Built around one idea most assistants get wrong: product knowledge should stay
+> **human- and AI-readable** — plain markdown you can open and edit is the source of
+> truth. From it Takt compiles a transparent, regenerable **knowledge graph + search
+> index** (parts, faults, procedures, specs and how they connect), so answers are
+> grounded in the product's real structure, not a black-box embedding blob.
 
 ---
 
@@ -32,10 +34,10 @@ yourself:
 - **Understands images, not just text.** A vision pass reads every page — transcribing
   tables, describing diagrams, and capturing what each figure answers — so image-only
   content becomes fully searchable.
-- **Builds interactive artifacts.** When the answer is a calculation or a decision, it
-  writes a live React tool (duty-cycle calculator, settings configurator, troubleshooting
-  flowchart) that renders in a sandboxed panel — versioned, so "change it" gives you a new
-  revision to flip between.
+- **Designs the answer, full-page.** The canvas isn't a wall of text — Takt composes an
+  editorial, full-bleed page (headline, cropped and *annotated* figures, the interactive
+  3D part, spec tables, step-by-step guides, live calculators) in a sandboxed frame, held
+  to a consistent design system by a built-in anti-slop check.
 - **Talks.** On-device voice mode: speak to it, it speaks back, and with the camera on it
   can look at what you're looking at.
 - **Asks before guessing.** When a choice would change the answer, it asks a short
@@ -45,31 +47,33 @@ yourself:
 
 |  |  |
 |---|---|
-| ![An interactive artifact — a duty-cycle calculator the agent generated](docs/media/artifact.png) | ![A product's Profile: its knowledge as readable markdown](docs/media/profile.png) |
-| *Generates live, interactive tools on demand* | *Every product's knowledge is readable markdown you can edit* |
+| ![A designed, full-page answer the agent composed on the canvas](docs/media/artifact.png) | ![A product's Profile: its knowledge as readable markdown](docs/media/profile.png) |
+| *Composes designed, full-page answers on the canvas* | *Every product's knowledge is readable markdown you can edit* |
 
 ---
 
-## The idea: OKF Profiles + Direct Corpus Interaction
+## The idea: markdown you own + a graph compiled from it
 
 Each product's knowledge lives in a **Profile** — a folder of
 [OKF](https://okf.md/)-style markdown (`data/products/<slug>/`), one concept per source,
 with the vision captions inlined next to their page images. It's **canonical and
-human-editable**: open a `.md`, fix a fact, and it's live on the next question.
+human-editable**: open a `.md`, fix a fact, rebuild the index, and it's live.
 
-The agent retrieves by **Direct Corpus Interaction** — the same loop a coding agent uses
-on a codebase:
+From that markdown Takt compiles a **PKB** (`.pkb/`) — a regenerable index, never the
+source of truth:
 
 ```
-list_profile   → the map: which concepts exist, and the product's vocabulary
-grep_profile   → search the markdown for a term (ranked, with line numbers)
-read_profile   → read the concept in full, follow its links
+graph.json    → the knowledge graph: parts, faults, procedures, specs + how they
+                connect, each tied to its media (a page crop, a 3D part, a video clip)
+chunks.json   → text units for lexical + semantic search
+vectors.json  → local embeddings (Xenova MiniLM, no API key)
 ```
 
-No embeddings, no vector database, no separate index to keep in sync. The markdown *is*
-the store — which means retrieval is transparent, instant, and the exact same files a
-person can read. (Why not vector RAG? For a curated, product-sized corpus, grep-and-read
-is simpler, faster, and more accurate — see [docs/architecture.md](docs/architecture.md).)
+Retrieval is **hybrid**: traverse the graph from the entity the question is about, blend
+in semantic search for symptoms described in the user's own words, and fall back to grep
+for exact codes and part numbers. It stays **transparent and regenerable** — delete the
+`.pkb` and rebuild it (`pnpm pkb:build <slug>`) any time; a markdown-only product still
+answers via grep. See [docs/architecture.md](docs/architecture.md).
 
 ---
 
@@ -89,9 +93,10 @@ pnpm dev                      # web on :3000, agent on :8787
 ```
 
 Open http://localhost:3000, pick a product, and ask. There's no seeding step — a key-free
-catalog (`data/seed.db`), the rendered manual pages, and each product's Profile
-(`data/products/`) ship in the repo and load on first boot. No model download, no vector
-index: retrieval is just the agent grepping the markdown.
+catalog (`data/seed.db`), the rendered manual pages, and each product's Profile + compiled
+`.pkb` (`data/products/`) ship in the repo and load on first boot. It works offline out of
+the box (grep + the prebuilt knowledge graph); semantic search downloads a small local
+embedding model on first use (no API key) and quietly falls back to lexical if it can't.
 
 Questions to try (Vulcan OmniPro 220 welder):
 
@@ -105,13 +110,15 @@ Questions to try (Vulcan OmniPro 220 welder):
 
 ## Add a product
 
-Upload its manuals in-app (**Settings → Products**) — Takt renders the pages, reads them
-with vision, writes the Profile, and the product shows up in the picker immediately. Or
-from the CLI:
+Upload its manuals — plus source URLs, 3D part models (`.stl`), and a walkthrough video —
+in-app (**Settings → Products**). Takt renders the pages, reads them with vision, writes
+the Profile, builds the knowledge graph, and the product shows up in the picker
+immediately (with its resources + explorable graph on the landing page). Or from the CLI:
 
 ```bash
 pnpm ingest --product <slug> --name "<Name>" --manufacturer "<Maker>" \
-  --dir ./path/to/pdfs --hero ./photo.webp --model claude-sonnet-5
+  --dir ./path/to/pdfs --models ./stls --video ./walkthrough.mp4 \
+  --hero ./photo.webp --model gpt-5-mini
 ```
 
 Full details in [docs/adding-a-product.md](docs/adding-a-product.md).
@@ -126,14 +133,14 @@ A pnpm monorepo:
 |---|---|
 | `apps/web` | Next.js UI + API routes |
 | `services/agent` | the agent loop, tools, and live-voice WebSocket (Hono) |
-| `pipeline/ingest` | offline loader: docs → Profile (render → vision-caption → markdown) |
+| `pipeline/ingest` | offline loader: docs → Profile + PKB (render → vision-caption → markdown → extract graph + embeddings; fold in 3D/video) |
 | `packages/db` | SQLite metadata + connection |
 | `packages/harness` | LLM provider adapters (Anthropic / OpenAI / Google) |
-| `packages/profile` | the OKF Profile store + grep — the retrieval layer |
-| `packages/shared` | shared types + SSE/artifact specs |
+| `packages/profile` | the OKF Profile store + the compiled PKB (graph, chunks, embeddings) + hybrid retrieval |
+| `packages/shared` | shared types + SSE / UI-surface (Page) specs |
 
-The SQLite database holds only metadata + app state (catalog, chats, artifacts); the
-product knowledge is the markdown in `data/products/`. Full architecture and the SSE
+The SQLite database holds only metadata + app state (catalog, chats); the product
+knowledge is the markdown + compiled `.pkb` in `data/products/`. Full architecture and the SSE
 protocol are in [docs/architecture.md](docs/architecture.md); hosting on a free Hugging
 Face Space is in [docs/hosting.md](docs/hosting.md).
 

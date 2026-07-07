@@ -1,7 +1,7 @@
 import { readdirSync } from "node:fs";
 import { loadEnv, PRODUCTS_DIR } from "@takt/db";
 import { BUILTIN_PROVIDERS, type ProviderInfo } from "@takt/harness";
-import { listConcepts, pkbExists, loadGraph } from "@takt/profile";
+import { listConcepts, pkbExists, loadGraph, loadChunks, buildVectors } from "@takt/profile";
 import { buildPkb, type ExtractUnit } from "./extract.js";
 
 // Backfill a product's PKB (knowledge graph + chunks + vectors) from its EXISTING
@@ -52,6 +52,12 @@ async function buildOne(slug: string, provider: ProviderInfo, model: string, api
     console.log(`· ${slug}: already has a .pkb (skip; pass --force to rebuild from markdown)`);
     return;
   }
+  // Guard: a markdown-only rebuild can't recreate 3D/video/page anchors, so refuse
+  // --force on a product that has them — those come from the full ingest pipeline.
+  if (pkbExists(slug) && force) {
+    const rich = loadGraph(slug).anchors.some((a) => a.kind === "mesh_node" || a.kind === "video_clip");
+    if (rich) { console.log(`· ${slug}: has 3D/video anchors — refusing --force (markdown rebuild would drop them). Re-ingest via 'pnpm ingest' instead.`); return; }
+  }
   const units = unitsFor(slug);
   if (!units.length) { console.log(`· ${slug}: no concept markdown found — skip`); return; }
   console.log(`· ${slug}: ${units.length} units → building graph with ${provider.id}/${model}…`);
@@ -63,8 +69,33 @@ async function buildOne(slug: string, provider: ProviderInfo, model: string, api
   console.log(`\n✓ ${slug}: ${res.entities} entities, ${res.edges} links, ${g.hyperedges?.length ?? 0} procedures, ${res.chunks} chunks`);
 }
 
+// Rebuild ONLY the vector store from an existing graph + chunks, tagging each
+// vector with its kind ("chunk"/"entity") so entity and chunk searches don't
+// dilute each other. Cheap: local embeddings, no LLM, no re-extraction.
+async function reindexVectors(slug: string): Promise<void> {
+  const g = loadGraph(slug);
+  const chunks = loadChunks(slug);
+  if (!g.entities.length && !chunks.length) { console.log(`· ${slug}: no .pkb to reindex — skip`); return; }
+  const entries = [
+    ...chunks.map((c) => ({ id: c.id, kind: "chunk", text: `${c.title}\n${c.text}` })),
+    ...g.entities.map((e) => ({ id: e.id, kind: "entity", text: `${e.name}${e.aliases?.length ? ` (${e.aliases.join(", ")})` : ""} — ${e.description}` })),
+  ];
+  process.stdout.write(`· ${slug}: re-embedding ${entries.length} vectors…\r`);
+  const store = await buildVectors(slug, entries);
+  console.log(`\n✓ ${slug}: ${store ? store.ids.length : 0} kind-tagged vectors`);
+}
+
 async function main() {
   loadEnv();
+
+  // `--reindex`: rebuild vectors with kind tags from the existing graph/chunks.
+  // No provider/model needed (local embeddings only).
+  if (flag("reindex")) {
+    const slugs = flag("all") ? listAllProducts() : [arg("product")].filter((s): s is string => !!s);
+    if (!slugs.length) { console.error("Usage: pnpm pkb:build --reindex (--product <slug> | --all)"); process.exit(1); }
+    for (const slug of slugs) await reindexVectors(slug);
+    process.exit(0);
+  }
 
   // Provider: --provider, else first builtin with an env key. Prefer OpenAI's
   // cheap tier for the bulk extraction (configurable via --model).

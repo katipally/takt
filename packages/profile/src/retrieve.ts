@@ -1,5 +1,5 @@
 import {
-  loadGraph, loadChunks, getEntity, getEntityAnchors, neighbors, traverseToText,
+  loadGraph, loadChunks, getEntity, getEntityAnchors, traverseToText,
   type ProductGraph, type Entity, type Chunk, type Anchor, normName,
 } from "./pkb";
 import { semanticSearch } from "./embed";
@@ -94,7 +94,7 @@ export async function searchProduct(slug: string, query: string, k = 8): Promise
   const chunks = loadChunks(slug);
   if (!chunks.length) return [];
   const byId = new Map(chunks.map((c) => [c.id, c]));
-  const sem = await semanticSearch(slug, query, k);
+  const sem = await semanticSearch(slug, query, k, "chunk");
   if (sem) {
     return sem.map((s) => ({ chunk: byId.get(s.id), score: s.score }))
       .filter((h): h is SearchHit => !!h.chunk);
@@ -113,7 +113,7 @@ export async function findEntity(slug: string, low: string[], high: string[] = [
   const g = loadGraph(slug);
   const lexical = findEntitiesInGraph(g, low, high);
   // blend a semantic pass over entity descriptions when a vector store exists
-  const sem = await semanticSearch(slug, [...low, ...high].join(" "), 8);
+  const sem = await semanticSearch(slug, [...low, ...high].join(" "), 8, "entity");
   if (!sem) return lexical.slice(0, 12);
   const semEntities = sem.map((s) => getEntity(g, s.id)).filter((e): e is Entity => !!e);
   const seen = new Set<string>();

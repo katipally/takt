@@ -193,8 +193,14 @@ export async function ingestProduct(input: IngestInput): Promise<IngestResult> {
     });
     inputTokens += pkb.inputTokens; outputTokens += pkb.outputTokens;
     await report(`Knowledge graph: ${pkb.entities} entities, ${pkb.edges} links, ${pkb.anchors} anchors`);
+  } catch (e: any) {
+    await report(`Knowledge graph skipped: ${String(e?.message ?? e)}`);
+  }
 
-    // Fold 3D part models + video into the graph (deterministic, no LLM).
+  // Fold 3D part models + video into the graph — deterministic (no LLM) and
+  // INDEPENDENT of extraction success, so a caption/extract failure never drops
+  // the meshes/video. addMeshParts/addVideo create-and-save even if no graph exists.
+  try {
     if (input.models?.length) {
       await report("Adding 3D part models…");
       const mesh = await addMeshParts(input.slug, input.models, { onProgress: report });
@@ -205,7 +211,7 @@ export async function ingestProduct(input: IngestInput): Promise<IngestResult> {
       await addVideo(input.slug, input.video, { provider: input.captionProvider, model: input.captionModel, apiKey: input.apiKey, onProgress: report });
     }
   } catch (e: any) {
-    await report(`Knowledge graph skipped: ${String(e?.message ?? e)}`);
+    await report(`3D/video skipped: ${String(e?.message ?? e)}`);
   }
 
   // Product-specific starter questions: one cheap text call, stored for reuse.

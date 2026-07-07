@@ -6,10 +6,12 @@ import { z } from "zod";
 // A surface is a FLAT adjacency list of typed nodes (id → node, children by id).
 // It streams and caches well, renders order-independently (render as soon as
 // `root` exists; unknown child refs become placeholders and fill in later), and
-// the union of the per-component prop schemas below IS: the validation contract,
-// the security boundary (only these components can ever render), and the model's
-// vocabulary (the system prompt is generated from these schemas — see
-// `catalogPromptSection`). Replaces the old free-form React/HTML `emit_artifact`.
+// the union of the per-component prop schemas below IS: the validation contract
+// and the model's vocabulary (the system prompt is generated from these schemas —
+// see `catalogPromptSection`). The PRIMARY surface is a single `Page` node — a
+// freeform HTML page rendered in a sandboxed iframe with host-controlled island
+// elements (there the security boundary is the sandbox + CSP + sanitized HTML,
+// not the catalog); the smaller catalog components remain for simple surfaces.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── node / surface ───────────────────────────────────────────────────────────

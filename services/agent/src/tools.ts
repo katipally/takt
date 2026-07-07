@@ -6,6 +6,7 @@ import { z, type ZodRawShape } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import type { Product, Manual, ManualKind, SseEvent, AskAnswer } from "@takt/shared";
 import { askQuestionsSchema, uiSurfaceSchema, validateSurface, surfacePartId } from "@takt/shared";
+import { lintSurface, p0, lintFeedback } from "./lint-surface.js";
 import {
   DATA_DIR, getPageImage,
   listProducts, getProductBySlug,
@@ -55,7 +56,7 @@ function htmlToText(html: string): string {
 // Zod shape → JSON Schema for the model. Inline refs and drop $schema so every
 // provider adapter (Anthropic input_schema / OpenAI parameters / Google) accepts it.
 // ponytail: args aren't re-validated against the schema before execute() — the
-// model follows the schema, and emit_artifact re-parses its own input anyway.
+// model follows the schema, and emit_ui re-validates its own surface anyway.
 function params(shape: ZodRawShape): Record<string, unknown> {
   const js = zodToJsonSchema(z.object(shape), { $refStrategy: "none" }) as Record<string, unknown>;
   delete js.$schema;
@@ -106,6 +107,11 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
   // Master mode = no single product selected → cross-product tools; the page
   // tools then require a `product` slug to say which product to read from.
   const masterMode = !product;
+  // Bound one-shot anti-slop gate, keyed per surface: a Page with P0 design
+  // issues is rejected ONCE per key (fed back for self-correction), then allowed
+  // through — so a stubborn model can't loop forever, and a DIFFERENT sloppy page
+  // later in the turn still gets its own correction pass.
+  const lintRejected = new Set<string>();
 
   // Which product a page tool should read: the bound one in single-product mode,
   // or the slug the model passed in master mode.
@@ -271,9 +277,11 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
   };
 
   // DRAW — render a designed answer on the stage as a declarative UI surface
-  // (a flat list of typed catalog nodes). The catalog vocabulary + rules live in
-  // the system prompt (generated from the same schemas). Invalid surfaces are
-  // rejected with precise errors so the model self-corrects before anything shows.
+  // The primary surface is a single `Page` node (freeform HTML + islands);
+  // smaller catalog nodes remain for simple surfaces. The vocabulary + rules live
+  // in the system prompt (generated from the same schemas). Invalid surfaces are
+  // rejected (schema + anti-slop) with precise errors so the model self-corrects
+  // before anything shows.
   const emitUi: TaktTool = {
     name: "emit_ui",
     description: "Render a designed, multimodal answer on the main stage as a UI surface — reach for this when structure, media, data, or interaction beats plain prose (a diagram, chart, comparison table, image/gallery, 3D model, procedure, calculator, form). Skip it for a short factual reply — plain chat text already renders richly on the stage. A surface is a flat list of `nodes` (each `{ id, type, props, children? }`) with one `root`. For a rich answer, make `root` a single `Page` node — a full freeform HTML page that fills the canvas (see the DESIGN guide + island elements in your system prompt); use the smaller catalog components only for a simple surface. Prose still streams as normal chat text around it — use Prose nodes only inside a surface. Reuse the SAME `key` to revise a surface (new version); use a NEW `key` for a different one. If rejected, fix exactly what's listed and call emit_ui again with the same key.",
@@ -299,9 +307,20 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
         return text(`UI surface rejected — fix these and call emit_ui again with the SAME key:\n- ${res.errors.map((e) => `${e.path}: ${e.message}`).join("\n- ")}`);
       }
       const partId = surfacePartId(res.surface);
+      // Anti-slop design gate (Page surfaces only). Reject P0 issues ONCE per key
+      // so the model revises before anything shows; then let it through.
+      const lint = lintSurface(res.surface);
+      const hard = p0(lint);
+      if (hard.length && !lintRejected.has(partId)) {
+        lintRejected.add(partId);
+        await emit({ type: "tool_done", id, detail: `design fixes: ${hard.map((f) => f.rule).join(", ")}`.slice(0, 160) });
+        return text(lintFeedback(hard));
+      }
       await emit({ type: "ui_surface", partId, surface: { ...res.surface, id: res.surface.id || partId } });
       await emit({ type: "tool_done", id, detail: "rendered" });
-      return text(`Rendered "${title}" on the stage. Give a one-line takeaway in chat if useful; don't repeat the surface's contents.`);
+      const advisories = lint.filter((f) => f.level !== "P0");
+      const note = advisories.length ? ` (next time: ${advisories.slice(0, 2).map((f) => f.rule).join(", ")})` : "";
+      return text(`Rendered "${title}" on the stage.${note} Give a one-line takeaway in chat if useful; don't repeat the surface's contents.`);
     },
   };
 

@@ -68,6 +68,8 @@ function AddProduct() {
   const [files, setFiles] = useState<File[]>([]);
   const [urls, setUrls] = useState("");
   const [hero, setHero] = useState<File | null>(null);
+  const [models, setModels] = useState<File[]>([]);
+  const [video, setVideo] = useState<File | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [progress, setProgress] = useState<string>("");
@@ -79,7 +81,7 @@ function AddProduct() {
   const hasUrls = urls.split(/[\n,]+/).some((u) => /^https?:\/\//i.test(u.trim()));
 
   function reset() {
-    setName(""); setManufacturer(""); setFiles([]); setUrls(""); setHero(null);
+    setName(""); setManufacturer(""); setFiles([]); setUrls(""); setHero(null); setModels([]); setVideo(null);
     setEstimate(null); setPhase("done");
   }
 
@@ -107,6 +109,8 @@ function AddProduct() {
     files.forEach((f) => fd.append("pdfs", f));
     if (urls.trim()) fd.set("urls", urls.trim());
     if (hero) fd.set("hero", hero);
+    models.forEach((f) => fd.append("models", f));
+    if (video) fd.set("video", video);
     try {
       const res = await fetch("/api/products/ingest", { method: "POST", body: fd });
       if (!res.body) throw new Error("no stream");
@@ -136,7 +140,7 @@ function AddProduct() {
     <section>
       <h2 className="text-[15px] font-semibold">Add a product</h2>
       <p className="mt-1 text-[12.5px] text-muted-foreground">
-        Add the product&apos;s manuals as PDFs (Takt renders every page and reads its diagrams/tables), and/or paste source links — web pages and YouTube videos are ingested as searchable text. Everything lands in one index, no redeploy.
+        Add the product&apos;s manuals as PDFs (Takt renders every page and reads its diagrams/tables), and/or paste source links — web pages and YouTube videos are ingested as searchable text. Add 3D part models (.stl) and a walkthrough video to enrich the knowledge graph with interactive parts and clips. Everything lands in one index, no redeploy.
       </p>
       <div className="mt-4 grid grid-cols-2 gap-2">
         <input className={inputCls} name="product-name" placeholder="Product name" aria-label="Product name" value={name} onChange={(e) => setName(e.target.value)} />
@@ -158,6 +162,14 @@ function AddProduct() {
         <label className="flex items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-[12.5px] text-muted-foreground transition hover:border-border-heavy hover:text-foreground cursor-pointer">
           <Upload className="size-4" /> {hero ? "Hero ✓" : "Hero image"}
           <input type="file" accept="image/*" hidden onChange={(e) => setHero(e.target.files?.[0] ?? null)} />
+        </label>
+        <label className="flex items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-[12.5px] text-muted-foreground transition hover:border-border-heavy hover:text-foreground cursor-pointer">
+          <Upload className="size-4" /> {models.length ? `3D models · ${models.length}` : "3D models (.stl)"}
+          <input type="file" accept=".stl" multiple hidden onChange={(e) => { setModels(Array.from(e.target.files ?? [])); }} />
+        </label>
+        <label className="flex items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-[12.5px] text-muted-foreground transition hover:border-border-heavy hover:text-foreground cursor-pointer">
+          <Upload className="size-4" /> {video ? "Video ✓" : "Walkthrough video"}
+          <input type="file" accept="video/*" hidden onChange={(e) => setVideo(e.target.files?.[0] ?? null)} />
         </label>
       </div>
 

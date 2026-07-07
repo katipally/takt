@@ -27,24 +27,34 @@ export function CanvasFrame({ props, ctx }: { props: { html?: string; css?: stri
       const d = e.data;
       if (!d || !d.__takt || e.source !== ref.current?.contentWindow) return;
       if (d.type === "ready") setReady(true);
-      else if (d.type === "height") setH(Math.min(6000, Math.max(120, d.height + 8)));
+      else if (d.type === "height") setH(Math.min(12000, Math.max(120, d.height + 8)));
       else if (d.type === "cite") ctx.onCitation?.(Number(d.page) || 0, d.product ?? undefined);
       else if (d.type === "action") ctx.onAction?.(String(d.id ?? "action"), d.value);
-      else if (d.type === "model" && typeof d.src === "string") setModel({ src: d.src, caption: d.caption });
-      else if (d.type === "link" && typeof d.url === "string") window.open(d.url, "_blank", "noopener");
+      // The iframe is untrusted — only act on a same-origin /assets model and an
+      // http(s) link; never open a javascript:/data: url or fetch an arbitrary src.
+      else if (d.type === "model" && typeof d.src === "string" && d.src.startsWith("/assets/")) setModel({ src: d.src, caption: d.caption });
+      else if (d.type === "link" && typeof d.url === "string" && /^https?:\/\//i.test(d.url)) window.open(d.url, "_blank", "noopener");
     }
     window.addEventListener("message", onMsg);
     return () => window.removeEventListener("message", onMsg);
   }, [ctx]);
 
-  // Post the page once the frame is ready; re-post on content/theme change.
+  // Post the full page when ready or when its html/css changes.
   useEffect(() => {
     if (!ready) return;
     ref.current?.contentWindow?.postMessage(
       { __takt: true, type: "render", html: props.html ?? "", css: props.css ?? "", theme: resolvedTheme },
       "*",
     );
-  }, [ready, props.html, props.css, resolvedTheme]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, props.html, props.css]);
+
+  // A theme flip is a cheap class toggle in the host — don't re-render the whole
+  // page (that would rebuild every island and lose annotation-drag / input state).
+  useEffect(() => {
+    if (!ready) return;
+    ref.current?.contentWindow?.postMessage({ __takt: true, type: "theme", theme: resolvedTheme }, "*");
+  }, [ready, resolvedTheme]);
 
   return (
     <>
@@ -54,6 +64,9 @@ export function CanvasFrame({ props, ctx }: { props: { html?: string; css?: stri
         sandbox="allow-scripts"
         title="Answer"
         className="w-full"
+        // Fallback: if the host's 'ready' postMessage is ever missed, onLoad still
+        // flips ready so the page renders (the inline host runtime is live by load).
+        onLoad={() => setReady(true)}
         style={{ height: h, border: 0, background: "transparent", display: "block" }}
       />
       {model && (
