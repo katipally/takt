@@ -102,6 +102,29 @@ function renderAnchorHint(a: Anchor, slug: string): string {
   }
 }
 
+// Overlay a faint 0–1 coordinate grid on the image the MODEL sees (vision only),
+// so it can read a feature's position straight off the grid instead of guessing —
+// this is what makes crop regions and <takt-figure> annotations land accurately.
+// The user-facing image (the file on disk / its URL) is never touched.
+async function withCoordGrid(buf: Buffer): Promise<Buffer> {
+  const meta = await sharp(buf).metadata();
+  const w = meta.width ?? 0, h = meta.height ?? 0;
+  if (!w || !h) return buf;
+  const L: string[] = [];
+  for (let i = 0; i <= 10; i++) {
+    const x = Math.round((i / 10) * w), y = Math.round((i / 10) * h);
+    L.push(`<line x1="${x}" y1="0" x2="${x}" y2="${h}" stroke="#ff3b00" stroke-opacity="0.28" stroke-width="1"/>`);
+    L.push(`<line x1="0" y1="${y}" x2="${w}" y2="${y}" stroke="#ff3b00" stroke-opacity="0.28" stroke-width="1"/>`);
+    if (i > 0 && i < 10) {
+      const f = (i / 10).toFixed(1);
+      L.push(`<text x="${x + 2}" y="14" font-size="13" fill="#ff3b00" font-family="sans-serif">${f}</text>`);
+      L.push(`<text x="3" y="${y - 3}" font-size="13" fill="#ff3b00" font-family="sans-serif">${f}</text>`);
+    }
+  }
+  const svg = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">${L.join("")}</svg>`);
+  return sharp(buf).composite([{ input: svg, top: 0, left: 0 }]).png().toBuffer();
+}
+
 export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]; emit: Emit; chatId?: string; spawnBuild?: (brief: string, key?: string) => void }): TaktTool[] {
   const { product, emit, chatId, spawnBuild } = ctx;
   // Master mode = no single product selected → cross-product tools; the page
@@ -186,7 +209,7 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
 
   const getPageImageTool: TaktTool = {
     name: "get_page_image",
-    description: "Fetch a specific manual page as an image and SHOW it to the user. Use for diagrams, schematics, control-panel layouts, duty-cycle tables, the selection chart, and weld-diagnosis pages. The page is displayed in the user's Canvas and also returned so you can read it. To put a figure in an artifact, prefer calling crop_page_image next to embed just the relevant region rather than the whole page.",
+    description: "Fetch a specific manual page as an image and SHOW it to the user. Use for diagrams, schematics, control-panel layouts, duty-cycle tables, the selection chart, and weld-diagnosis pages. The page is displayed in the user's Canvas and also returned so you can read it. The returned page has a faint 0–1 coordinate grid overlaid FOR YOUR REFERENCE (the user sees it clean) — use it to pick accurate crop x,y,w,h. To put a figure in an artifact, prefer calling crop_page_image next to embed just the relevant region rather than the whole page.",
     parameters: params({
       page: z.number().int().min(1).describe("Page number"),
       manual: z.string().optional()
@@ -210,7 +233,8 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
       });
       let images: ToolResult["images"];
       try {
-        images = [{ data: readFileSync(resolve(DATA_DIR, pi.pngPath)).toString("base64"), mime: "image/png" }];
+        const gridded = await withCoordGrid(readFileSync(resolve(DATA_DIR, pi.pngPath)));
+        images = [{ data: gridded.toString("base64"), mime: "image/png" }];
       } catch { /* fall through to text-only */ }
       // Give the model the real URL so it can embed this exact image in an
       // artifact (it must never invent an image URL).
@@ -221,7 +245,7 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
 
   const cropPageImage: TaktTool = {
     name: "crop_page_image",
-    description: "Crop a manual page to the exact region that matters and SHOW that crop — use this AFTER get_page_image so you've seen the full page and can pick the region. Give the region as fractions of the page (0=left/top, 1=right/bottom): x,y = top-left corner, w,h = width,height. The cropped image is displayed in the user's Canvas and returned so you can confirm it, and you get a verbatim URL to embed in an artifact. Prefer this over embedding a whole page (whole pages have tab-strips/footers/whitespace and look broken).",
+    description: "Crop a manual page to the exact region that matters and SHOW that crop — use this AFTER get_page_image so you've seen the full page and can pick the region. Give the region as fractions of the page (0=left/top, 1=right/bottom): x,y = top-left corner, w,h = width,height. The cropped image is displayed in the user's Canvas and returned so you can confirm it, and you get a verbatim URL to embed in an artifact. The returned crop has a faint 0–1 coordinate GRID overlaid FOR YOUR REFERENCE ONLY (the user sees the clean crop) — when you add <takt-figure> annotations, read each feature's x,y straight off this grid so arrows/boxes/labels land ACCURATELY on the right part. Prefer this over embedding a whole page (whole pages have tab-strips/footers/whitespace and look broken).",
     parameters: params({
       page: z.number().int().min(1).describe("Page number"),
       manual: z.string().optional()
@@ -270,7 +294,7 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
       });
       await emit({ type: "tool_done", id, detail: `p.${pi.pageNumber} crop` });
       let images: ToolResult["images"];
-      try { images = [{ data: readFileSync(dest).toString("base64"), mime: "image/png" }]; } catch { /* text-only */ }
+      try { const gridded = await withCoordGrid(readFileSync(dest)); images = [{ data: gridded.toString("base64"), mime: "image/png" }]; } catch { /* text-only */ }
       const meta = `Cropped ${pi.manualTitle} p.${pi.pageNumber}. To embed this exact crop in an artifact, use this URL verbatim as the <img> src: ${url}`;
       return { output: meta, images };
     },

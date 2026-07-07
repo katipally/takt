@@ -52,7 +52,7 @@ const DESIGN_CSS = String.raw`
   --takt-sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   --takt-mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
   --takt-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px -12px rgba(0,0,0,.18);
-  --takt-maxcol:74ch;
+  --takt-maxcol:66ch;
 }
 .dark{
   --takt-bg:#131315; --takt-fg:#f2f1ee; --takt-muted:#a6a6a1; --takt-faint:#76766f;
@@ -63,15 +63,30 @@ const DESIGN_CSS = String.raw`
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:auto;background:var(--takt-bg);color:var(--takt-fg);
-  font-family:var(--takt-sans);font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased}
-.takt-page{container-type:inline-size;padding:clamp(20px,4cqi,56px);max-width:1400px;margin:0 auto}
-img{max-width:100%;height:auto;display:block}
+  font-family:var(--takt-sans);font-size:17px;line-height:1.66;-webkit-font-smoothing:antialiased;overflow-x:hidden;text-rendering:optimizeLegibility}
+.takt-page{container-type:inline-size;padding:clamp(20px,4cqi,56px);max-width:1400px;margin:0 auto;overflow-x:clip}
+img,video,model-viewer{max-width:100%;height:auto}
+img{display:block}
+/* never let a wide child force horizontal overflow */
+.takt-page *{max-width:100%}
+.takt-page pre{overflow-x:auto}
+/* GUARANTEED vertical rhythm — top-level blocks and stacked content always get
+   breathing room, so a page never renders cramped even if the model forgets
+   margins. (Grid items use gap, so they're unaffected.) */
+/* two-tier rhythm: a big, editorial jump BETWEEN top-level sections; a small,
+   tight step WITHIN a card/panel. This gap is what reads as "designed". */
+.takt-page > * + *{margin-top:clamp(30px,4.2cqi,68px)}
+.takt-card > * + *,.takt-panel > * + *,.takt-callout > * + *{margin-top:.7em}
+.takt-page > :is(h1,h2,h3){margin-top:0}
+.takt-grid{align-items:start}
 
 /* Type hierarchy — dramatic scale jumps (editorial), not additive weight. */
-h1,.takt-display{font-family:var(--takt-serif);font-weight:600;line-height:1.05;letter-spacing:-.01em;
-  font-size:clamp(2rem,5.2cqi,3.6rem);margin:0 0 .3em}
-h2{font-family:var(--takt-serif);font-weight:600;line-height:1.12;font-size:clamp(1.4rem,3cqi,2.1rem);margin:1.6em 0 .5em;letter-spacing:-.01em}
-h3{font-family:var(--takt-sans);font-weight:650;font-size:1.12rem;margin:1.4em 0 .4em;letter-spacing:.005em}
+/* Headline is a VISUAL EVENT: oversized serif, LIGHT weight, tight negative
+   tracking, capped measure — scale + whitespace carry hierarchy, not boldness. */
+h1,.takt-display{font-family:var(--takt-serif);font-weight:500;line-height:1.02;letter-spacing:-.022em;
+  font-size:clamp(2.3rem,6.4cqi,4.2rem);margin:0 0 .3em;max-width:20ch;text-wrap:balance}
+h2{font-family:var(--takt-serif);font-weight:520;line-height:1.14;font-size:clamp(1.55rem,3.4cqi,2.5rem);margin:1.1em 0 .45em;letter-spacing:-.016em;text-wrap:balance}
+h3{font-family:var(--takt-sans);font-weight:650;font-size:1.12rem;margin:1.3em 0 .35em;letter-spacing:.005em}
 p,li{max-width:var(--takt-maxcol)}
 p{margin:0 0 1em}
 a{color:var(--takt-accent);text-decoration:none;border-bottom:1px solid color-mix(in srgb,var(--takt-accent) 35%,transparent)}
@@ -79,7 +94,7 @@ strong{font-weight:650}
 code{font-family:var(--takt-mono);font-size:.88em;background:var(--takt-surface);padding:.12em .38em;border-radius:5px}
 hr{border:0;border-top:1px solid var(--takt-border);margin:2em 0}
 .takt-eyebrow{font-family:var(--takt-sans);text-transform:uppercase;letter-spacing:.14em;font-size:.72rem;font-weight:650;color:var(--takt-arc);margin:0 0 .6em}
-.takt-lead{font-size:1.15rem;color:var(--takt-muted);max-width:var(--takt-maxcol)}
+.takt-lead{font-size:clamp(1.12rem,1.7cqi,1.34rem);line-height:1.5;color:var(--takt-muted);max-width:62ch}
 blockquote,.takt-quote{font-family:var(--takt-serif);font-size:1.3rem;line-height:1.35;border-left:3px solid var(--takt-arc);
   margin:1.4em 0;padding:.1em 0 .1em 1em;color:var(--takt-fg)}
 
@@ -87,9 +102,10 @@ blockquote,.takt-quote{font-family:var(--takt-serif);font-size:1.3rem;line-heigh
 .takt-grid{display:grid;gap:clamp(16px,2.4cqi,32px)}
 @container (min-width:640px){ .takt-cols-2{grid-template-columns:repeat(2,1fr)} .takt-cols-3{grid-template-columns:repeat(3,1fr)} }
 @container (min-width:900px){ .takt-cols-4{grid-template-columns:repeat(4,1fr)} .takt-split{grid-template-columns:1.4fr 1fr} }
-.takt-card{background:var(--takt-card);border:1px solid var(--takt-border);border-radius:var(--takt-radius);
-  padding:clamp(16px,2cqi,24px);box-shadow:var(--takt-shadow)}
-.takt-panel{background:var(--takt-surface);border:1px solid var(--takt-border);border-radius:var(--takt-radius);padding:clamp(16px,2cqi,24px)}
+/* Cards are FLAT paper: a 1px hairline + a one-shade surface offset separate
+   them — no drop shadow (whitespace does the work, not elevation). */
+.takt-card{background:var(--takt-card);border:1px solid var(--takt-border);border-radius:var(--takt-radius);padding:clamp(20px,2.4cqi,30px)}
+.takt-panel{background:var(--takt-surface);border:1px solid var(--takt-border);border-radius:var(--takt-radius);padding:clamp(20px,2.4cqi,30px)}
 
 /* Info blocks */
 .takt-callout{border:1px solid var(--takt-border);border-left-width:3px;border-radius:var(--takt-radius-sm);
@@ -98,11 +114,11 @@ blockquote,.takt-quote{font-family:var(--takt-serif);font-size:1.3rem;line-heigh
 .takt-callout[data-tone=danger]{border-left-color:var(--takt-danger);background:color-mix(in srgb,var(--takt-danger) 8%,var(--takt-card))}
 .takt-callout[data-tone=ok]{border-left-color:var(--takt-ok);background:color-mix(in srgb,var(--takt-ok) 8%,var(--takt-card))}
 .takt-callout[data-tone=tip]{border-left-color:var(--takt-accent);background:color-mix(in srgb,var(--takt-accent) 8%,var(--takt-card))}
-.takt-stat{display:flex;flex-direction:column;gap:.15em}
-.takt-stat .n{font-family:var(--takt-serif);font-size:clamp(1.8rem,4cqi,2.8rem);line-height:1;font-weight:600}
-.takt-stat .l{font-size:.8rem;text-transform:uppercase;letter-spacing:.08em;color:var(--takt-muted)}
-table{border-collapse:collapse;width:100%;font-size:.94rem;margin:1.2em 0}
-th,td{text-align:left;padding:.55em .7em;border-bottom:1px solid var(--takt-border)}
+.takt-stat{display:flex;flex-direction:column;gap:.22em}
+.takt-stat .n{font-family:var(--takt-serif);font-size:clamp(1.9rem,4.2cqi,3rem);line-height:1;font-weight:500;letter-spacing:-.02em}
+.takt-stat .l{font-size:.74rem;text-transform:uppercase;letter-spacing:.09em;color:var(--takt-muted)}
+table{border-collapse:collapse;width:100%;font-size:.94rem;margin:1.2em 0;table-layout:fixed}
+th,td{text-align:left;padding:.55em .7em;border-bottom:1px solid var(--takt-border);overflow-wrap:anywhere;vertical-align:top}
 th{font-size:.76rem;text-transform:uppercase;letter-spacing:.06em;color:var(--takt-muted)}
 
 /* Islands */
@@ -111,27 +127,60 @@ takt-cite{cursor:pointer}
   font-size:.72em;font-weight:600;color:var(--takt-accent);background:color-mix(in srgb,var(--takt-accent) 12%,transparent);
   border-radius:5px;padding:.05em .38em;margin:0 .12em;line-height:1.4;white-space:nowrap;user-select:none}
 .takt-cite:hover{background:color-mix(in srgb,var(--takt-accent) 22%,transparent)}
-figure.takt-figure{margin:1.4em 0}
-figure.takt-figure img{width:100%;border-radius:var(--takt-radius-sm);border:1px solid var(--takt-border);background:var(--takt-surface);display:block}
-figure.takt-figure figcaption{font-size:.82rem;color:var(--takt-muted);margin-top:.5em;font-family:var(--takt-sans)}
-/* annotation overlay — agent points things out; labels are user-draggable */
+/* ── Media: figures, video, 3D — ONE consistent editorial treatment ──────────
+   Images BLEED into the column (no boxy border); a hairline under the caption,
+   newspaper-style. Variants: default column · lead (wider, rounded) · inset
+   (floats so body text WRAPS around it, like a real newspaper column). */
+figure.takt-figure{margin:0;display:block}
+figure.takt-figure img{width:100%;display:block;border-radius:var(--takt-radius-sm);cursor:zoom-in}
+figure.takt-figure figcaption,.takt-mediacap{font-family:var(--takt-sans);font-size:.78rem;line-height:1.4;color:var(--takt-muted);
+  margin-top:.55em;padding-top:.5em;border-top:1px solid var(--takt-border)}
+figure.takt-figure figcaption .fignum{color:var(--takt-arc);font-weight:650}
+figure.takt-figure[data-variant=inset]{float:right;width:min(42cqi,360px);margin:.2em 0 1em 1.6em}
+figure.takt-figure[data-variant=lead] img{border-radius:var(--takt-radius)}
+@container (max-width:560px){ figure.takt-figure[data-variant=inset]{float:none;width:100%;margin:1.2em 0} }
+
+/* annotation overlay — EDITABLE marks (only when a figure has no printed
+   numbers). Labels drag; boxes/arrows move + resize via handles. */
 .takt-figwrap{position:relative;display:block;line-height:0}
 svg.takt-anno{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
-.takt-anno-label{position:absolute;transform:translate(-50%,-135%);background:var(--takt-arc);color:#fff;font-family:var(--takt-sans);
-  font-size:.72rem;font-weight:650;line-height:1.3;padding:.16em .5em;border-radius:6px;white-space:nowrap;cursor:grab;user-select:none;
-  touch-action:none;box-shadow:0 2px 8px rgba(0,0,0,.3);z-index:2}
+.takt-anno-label{position:absolute;transform:translate(-50%,-128%);background:var(--takt-arc);color:#fff;font-family:var(--takt-sans);
+  font-size:.64rem;font-weight:650;line-height:1.22;padding:.14em .44em;border-radius:6px;max-width:34cqi;text-align:center;cursor:grab;user-select:none;
+  touch-action:none;box-shadow:0 1px 6px rgba(0,0,0,.35);z-index:2}
 .takt-anno-label::after{content:"";position:absolute;left:50%;top:100%;transform:translateX(-50%);border:5px solid transparent;border-top-color:var(--takt-arc)}
-.takt-media{position:relative;border-radius:var(--takt-radius-sm);overflow:hidden;border:1px solid var(--takt-border);background:var(--takt-surface-2)}
-video.takt-video{width:100%;display:block;border-radius:var(--takt-radius-sm);border:1px solid var(--takt-border);background:#000}
-.takt-model-tile{cursor:pointer;display:flex;align-items:center;gap:.7em;padding:.9em 1.1em;border:1px solid var(--takt-border);
-  border-radius:var(--takt-radius-sm);background:var(--takt-surface);font-family:var(--takt-sans);font-weight:600;margin:1.2em 0;transition:border-color .15s}
-.takt-model-tile:hover{border-color:var(--takt-accent)}
-.takt-model-tile .badge{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:#fff;background:var(--takt-arc);border-radius:5px;padding:.2em .5em}
+.takt-anno-handle{position:absolute;width:13px;height:13px;border-radius:50%;background:#fff;border:2px solid var(--takt-arc);transform:translate(-50%,-50%);cursor:pointer;z-index:3;touch-action:none}
+
+/* Legend — maps the figure's OWN printed callout numbers to descriptions
+   (accurate; no guessed marks). Hovering a row highlights it. */
+.takt-legend{list-style:none;margin:.8em 0 0;padding:0;display:grid;gap:.35em;font-size:.94rem;line-height:1.45}
+.takt-legend li{display:grid;grid-template-columns:auto 1fr;gap:.6em;align-items:start;border-radius:8px;padding:.2em .35em;transition:background .12s}
+.takt-legend li:hover{background:var(--takt-surface)}
+.takt-legend .num{display:grid;place-items:center;width:1.55em;height:1.55em;border-radius:50%;border:1.5px solid var(--takt-arc);
+  color:var(--takt-arc);font-family:var(--takt-sans);font-weight:700;font-size:.78rem;line-height:1;margin-top:.05em}
+.takt-legend .d{color:var(--takt-muted)}
+
+video.takt-video{width:100%;display:block;border-radius:var(--takt-radius-sm);background:#000}
+
+/* 3D part reads as a MEDIA block (like a figure), not a button. */
+.takt-model-tile{cursor:pointer;position:relative;display:grid;place-items:center;gap:.45em;min-height:172px;
+  border:1px solid var(--takt-border);border-radius:var(--takt-radius-sm);background:var(--takt-surface);
+  font-family:var(--takt-sans);color:var(--takt-muted);transition:border-color .15s,background .15s}
+.takt-model-tile:hover{border-color:var(--takt-accent);background:var(--takt-surface-2)}
+.takt-model-tile .badge{font-size:.64rem;text-transform:uppercase;letter-spacing:.12em;color:var(--takt-arc);font-weight:700}
+.takt-model-tile .cap{font-weight:600;color:var(--takt-fg)}
+.takt-model-tile .hint{font-size:.8rem}
+
 button.takt-action{cursor:pointer;font-family:var(--takt-sans);font-weight:600;font-size:.92rem;color:#fff;background:var(--takt-accent);
   border:0;border-radius:var(--takt-radius-sm);padding:.6em 1.1em;margin:.3em .4em .3em 0;transition:filter .15s}
 button.takt-action:hover{filter:brightness(1.08)}
 button.takt-action[data-variant=secondary]{color:var(--takt-fg);background:var(--takt-surface-2);border:1px solid var(--takt-border)}
-svg{max-width:100%;height:auto}
+/* custom media elements are block-level so captions + margins flow correctly */
+takt-figure,takt-video,takt-model{display:block}
+/* charts/diagrams: sensible theme-aware defaults so a model SVG is never
+   invisible or a black box even if it forgets to set colors. */
+svg{max-width:100%;height:auto;color:var(--takt-fg)}
+svg text{fill:var(--takt-muted);font-family:var(--takt-sans);font-size:12px}
+svg .axis,svg line.axis{stroke:var(--takt-border)}
 .takt-err{white-space:pre-wrap;color:var(--takt-danger);font-family:var(--takt-mono);font-size:12px;padding:14px}
 `;
 
@@ -144,27 +193,42 @@ const RUNTIME_JS = String.raw`
   function applyTheme(t){ document.documentElement.classList.toggle('dark', t === 'dark'); }
   function postHeight(){ post({ type:'height', height: Math.ceil(document.body.scrollHeight) }); }
   new ResizeObserver(postHeight).observe(document.body);
+  window.addEventListener('resize', function(){ postHeight(); });
 
-  // Strip anything executable from model HTML (belt — the sandbox is the real
-  // boundary, but keep the DOM clean of scripts/handlers/framed content).
+  // The page runs in a SANDBOXED, opaque-origin iframe (allow-scripts, NO
+  // allow-same-origin, CSP default-src 'none') — model JS is fully contained and
+  // can't reach the app's DOM/cookies/storage. So we ALLOW <script> + inline
+  // handlers: that's what makes live calculators/configurators actually compute.
+  // We only drop nested frames + external <link> (CSP would block them anyway).
   function sanitize(html){
     return String(html)
-      .replace(/<script[\s\S]*?<\/script>/gi,'')
       .replace(/<iframe[\s\S]*?<\/iframe>/gi,'')
-      .replace(/<link\b[^>]*>/gi,'')
-      .replace(/[\s/]on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi,' ')
-      .replace(/(href|src)\s*=\s*("javascript:[^"]*"|'javascript:[^']*')/gi,'$1="#"');
+      .replace(/<link\b[^>]*>/gi,'');
+  }
+  // innerHTML-injected <script> tags don't auto-run — re-create them so the
+  // model's client-side logic (calculators, toggles, chart drawing) executes.
+  function runScripts(container){
+    container.querySelectorAll('script').forEach(function(old){
+      var s = document.createElement('script');
+      for(var i=0;i<old.attributes.length;i++){ s.setAttribute(old.attributes[i].name, old.attributes[i].value); }
+      s.textContent = old.textContent;
+      old.parentNode.replaceChild(s, old);
+    });
   }
 
   // ── island custom elements ─────────────────────────────────────────────────
   function def(tag, build){ try{ customElements.define(tag, class extends HTMLElement{ connectedCallback(){ if(this.__b) return; this.__b=1; build(this); } }); }catch(e){} }
 
   def('takt-cite', function(el){
-    var page = el.getAttribute('page') || '';
-    var label = el.getAttribute('label') || ('p.' + page);
+    var page = (el.getAttribute('page') || '').trim();
+    var isNum = /^\d+$/.test(page);
+    // Only a numeric page is a real, clickable manual page. A non-numeric value
+    // (e.g. a web-sourced concept name) shows plainly WITHOUT the "p." prefix.
+    var label = el.getAttribute('label') || (isNum ? 'p.' + page : (page || 'source'));
     var s = document.createElement('span'); s.className='takt-cite'; s.textContent=label;
     el.textContent=''; el.appendChild(s);
-    el.addEventListener('click', function(){ post({ type:'cite', page: Number(page)||0, product: el.getAttribute('product')||null }); });
+    if(isNum){ el.addEventListener('click', function(){ post({ type:'cite', page: Number(page), product: el.getAttribute('product')||null }); }); }
+    else { el.style.cursor='default'; }
   });
   var SVGNS = 'http://www.w3.org/2000/svg';
   function toneColor(t){ return t==='ok'?'var(--takt-ok)':t==='warn'?'var(--takt-warn)':t==='danger'?'var(--takt-danger)':'var(--takt-arc)'; }
@@ -212,35 +276,92 @@ const RUNTIME_JS = String.raw`
       else if(a.kind==='label'){ lx=a.x; ly=a.y; }
       else { lx=a.x + (a.w||0)/2; ly=a.y; }               // box: top-centre
       if(typeof lx!=='number' || typeof ly!=='number') return;
+      // keep the (centered) label inside the figure so it never spills over the edge
+      lx = Math.max(0.14, Math.min(0.86, lx));
+      ly = Math.max(0.08, Math.min(0.94, ly));
       var d = document.createElement('div'); d.className='takt-anno-label'; d.textContent = txt;
       d.style.left = (lx*100)+'%'; d.style.top = (ly*100)+'%';
       dragLabel(d, wrap); wrap.appendChild(d);
     });
+    // once laid out, push any labels that still overlap apart so they never stack
+    requestAnimationFrame(function(){ deoverlap(wrap); });
+  }
+  // Separate overlapping annotation labels by nudging the lower one down a few
+  // times — deterministic, so a cluttered set of callouts self-untangles.
+  function deoverlap(wrap){
+    var labels = [].slice.call(wrap.querySelectorAll('.takt-anno-label'));
+    if(labels.length < 2) return;
+    var wr = wrap.getBoundingClientRect(); if(!wr.height) return;
+    for(var pass=0; pass<5; pass++){
+      var moved = false;
+      for(var i=0;i<labels.length;i++){ for(var j=i+1;j<labels.length;j++){
+        var a=labels[i].getBoundingClientRect(), b=labels[j].getBoundingClientRect();
+        if(a.right>b.left-6 && a.left<b.right+6 && a.bottom>b.top-6 && a.top<b.bottom+6){
+          var lower = (a.top<=b.top) ? labels[j] : labels[i];
+          var cur = parseFloat(lower.style.top)||0;
+          lower.style.top = Math.min(97, cur + (Math.min(a.height,b.height)+9)/wr.height*100) + '%';
+          moved = true;
+        }
+      }}
+      if(!moved) break;
+    }
+  }
+  // Legend under a figure — maps the figure's OWN printed callout numbers to
+  // label+detail (accurate; no drawn marks). items: [{n,label,detail,cite}]
+  function buildLegend(items){
+    var ul = document.createElement('ul'); ul.className='takt-legend';
+    items.forEach(function(it){
+      var li = document.createElement('li');
+      var num = document.createElement('span'); num.className='num'; num.textContent = (it.n!=null ? it.n : '•');
+      var body = document.createElement('span');
+      var b = document.createElement('b'); b.textContent = it.label || ''; body.appendChild(b);
+      if(it.detail){ var d=document.createElement('span'); d.className='d'; d.textContent=' — '+it.detail; body.appendChild(d); }
+      if(it.cite){ var c=document.createElement('span'); c.className='takt-cite'; c.style.marginLeft='.4em'; c.style.cursor='pointer'; c.textContent='p.'+it.cite; c.addEventListener('click', function(){ post({type:'cite', page:Number(it.cite)||0}); }); body.appendChild(c); }
+      li.appendChild(num); li.appendChild(body); ul.appendChild(li);
+    });
+    return ul;
   }
   def('takt-figure', function(el){
     var src = el.getAttribute('src'); if(!src){ return; }
     var cap = el.getAttribute('caption');
     var fig = document.createElement('figure'); fig.className='takt-figure';
+    var variant = el.getAttribute('variant'); if(variant){ fig.setAttribute('data-variant', variant); }
     var wrap = document.createElement('div'); wrap.className='takt-figwrap';
     var img = document.createElement('img'); img.src=src; img.alt = el.getAttribute('alt')||cap||'';
+    img.addEventListener('click', function(){ post({ type:'lightbox', src: src, caption: cap||'' }); });   // click to zoom
     wrap.appendChild(img);
+    var legend = parseAnnos(el.getAttribute('legend'));
     var annos = parseAnnos(el.getAttribute('annos'));
-    if(annos.length){ var draw = function(){ if(!wrap.querySelector('svg.takt-anno')) overlay(wrap, annos); postHeight(); }; if(img.complete) draw(); else { img.addEventListener('load', draw); img.addEventListener('error', draw); } }
+    // Draw our OWN marks ONLY when there's no legend (the figure has no printed
+    // numbers to reference); otherwise the legend is the accurate source of truth.
+    if(!legend.length && annos.length){ var draw = function(){ if(!wrap.querySelector('svg.takt-anno')) overlay(wrap, annos); postHeight(); }; if(img.complete) draw(); else { img.addEventListener('load', draw); img.addEventListener('error', draw); } }
     fig.appendChild(wrap);
-    if(cap){ var fc=document.createElement('figcaption'); fc.textContent=cap; fig.appendChild(fc); }
+    if(cap || el.getAttribute('fignum')){
+      var fc=document.createElement('figcaption');
+      var num=el.getAttribute('fignum');
+      if(num){ var sp=document.createElement('span'); sp.className='fignum'; sp.textContent='Fig '+num+' · '; fc.appendChild(sp); }
+      fc.appendChild(document.createTextNode(cap||''));
+      fig.appendChild(fc);
+    }
+    if(legend.length){ fig.appendChild(buildLegend(legend)); }
     el.textContent=''; el.appendChild(fig);
   });
   def('takt-video', function(el){
     var src = el.getAttribute('src'); if(!src){ return; }
-    var v = document.createElement('video'); v.className='takt-video'; v.controls=true; v.src=src;
+    var v = document.createElement('video'); v.className='takt-video'; v.controls=true; v.src=src; v.preload='metadata';
     var poster = el.getAttribute('poster'); if(poster) v.poster=poster;
     el.textContent=''; el.appendChild(v);
+    var cap = el.getAttribute('caption');
+    if(cap){ var fc=document.createElement('div'); fc.className='takt-mediacap'; fc.textContent=cap; el.appendChild(fc); }
   });
   def('takt-model', function(el){
     var src = el.getAttribute('src'); if(!src){ return; }
     var cap = el.getAttribute('caption') || '3D part';
     var t = document.createElement('div'); t.className='takt-model-tile';
-    t.innerHTML = '<span class="badge">3D</span><span>' + cap + '</span><span style="color:var(--takt-muted);font-weight:400">— tap to rotate</span>';
+    var badge=document.createElement('span'); badge.className='badge'; badge.textContent='3D model';
+    var capEl=document.createElement('span'); capEl.className='cap'; capEl.textContent=cap;
+    var hint=document.createElement('span'); hint.className='hint'; hint.textContent='Click to rotate';
+    t.appendChild(badge); t.appendChild(capEl); t.appendChild(hint);
     el.textContent=''; el.appendChild(t);
     t.addEventListener('click', function(){ post({ type:'model', src: src, caption: cap }); });
   });
@@ -261,6 +382,7 @@ const RUNTIME_JS = String.raw`
   function render(html, css){
     pageCss.textContent = css || '';
     root.innerHTML = sanitize(html);
+    try{ runScripts(root); }catch(e){}
     requestAnimationFrame(postHeight);
     setTimeout(postHeight, 250);
   }

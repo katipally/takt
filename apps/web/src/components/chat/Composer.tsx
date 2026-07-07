@@ -65,7 +65,7 @@ export function Composer({
   }
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-5 pb-5">
+    <div className="mx-auto w-full max-w-3xl px-5 pb-3">
       <motion.div layoutId="takt-dock" className="rounded-[20px] border border-border bg-surface transition focus-within:border-border-heavy">
         {attachments.length > 0 && (
           <div className="flex flex-wrap gap-2 px-3 pt-3">
@@ -119,9 +119,8 @@ export function Composer({
           </div>
         </div>
       </motion.div>
-      <p className={cn("mt-2 text-center text-[11px]", micNote ? "text-muted-foreground" : "text-faint")} role={micNote ? "status" : undefined}>
-        {micNote ?? "Grounded in the manual · cited to the page · runs in the background"}
-      </p>
+      {/* Only a transient mic hint appears below the pill — no permanent caption. */}
+      {micNote && <p className="mt-2 text-center text-[11px] text-muted-foreground" role="status">{micNote}</p>}
     </div>
   );
 }

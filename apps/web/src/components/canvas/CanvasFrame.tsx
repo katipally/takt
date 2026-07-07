@@ -21,6 +21,7 @@ export function CanvasFrame({ props, ctx }: { props: { html?: string; css?: stri
   const [h, setH] = useState(360);
   const [ready, setReady] = useState(false);
   const [model, setModel] = useState<{ src: string; caption?: string } | null>(null);
+  const [lightbox, setLightbox] = useState<{ src: string; caption?: string } | null>(null);
 
   useEffect(() => {
     function onMsg(e: MessageEvent) {
@@ -33,6 +34,7 @@ export function CanvasFrame({ props, ctx }: { props: { html?: string; css?: stri
       // The iframe is untrusted — only act on a same-origin /assets model and an
       // http(s) link; never open a javascript:/data: url or fetch an arbitrary src.
       else if (d.type === "model" && typeof d.src === "string" && d.src.startsWith("/assets/")) setModel({ src: d.src, caption: d.caption });
+      else if (d.type === "lightbox" && typeof d.src === "string" && (d.src.startsWith("/assets/") || d.src.startsWith("data:image/"))) setLightbox({ src: d.src, caption: d.caption });
       else if (d.type === "link" && typeof d.url === "string" && /^https?:\/\//i.test(d.url)) window.open(d.url, "_blank", "noopener");
     }
     window.addEventListener("message", onMsg);
@@ -78,6 +80,13 @@ export function CanvasFrame({ props, ctx }: { props: { html?: string; css?: stri
             </button>
             <Model3D props={{ src: model.src, caption: model.caption }} />
           </div>
+        </div>
+      )}
+      {lightbox && (
+        <div className="fixed inset-0 z-[70] grid place-items-center bg-black/85 p-5" onClick={() => setLightbox(null)}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={lightbox.src} alt={lightbox.caption ?? ""} className="max-h-[92vh] max-w-[96vw] rounded-lg object-contain" />
+          {lightbox.caption && <div className="pointer-events-none absolute inset-x-0 bottom-5 mx-auto max-w-2xl px-6 text-center text-[13px] text-white/80">{lightbox.caption}</div>}
         </div>
       )}
     </>
