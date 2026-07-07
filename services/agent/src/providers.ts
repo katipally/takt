@@ -3,7 +3,7 @@ import {
   getProviderApiKey, getSetting, setSetting,
 } from "@takt/db";
 import { BUILTIN_PROVIDERS, type ProviderInfo, type Effort } from "@takt/harness";
-import { DEFAULT_EFFORT } from "@takt/shared";
+import { DEFAULT_EFFORT, liveRecsFor } from "@takt/shared";
 
 // Provider-neutral resolution. Keys live in the DB `providers` table (kind =
 // harness provider id) or fall back to the provider's declared env vars. Which
@@ -82,12 +82,18 @@ export function resolveChat(): ResolvedChat {
 export function resolveLive(): ResolvedChat {
   const liveProviderId = getSetting("liveProviderId");
   const liveModel = getSetting("liveModel");
-  if (!liveProviderId && !liveModel) return resolveChat(); // not configured → inherit chat
   const providerId = (liveProviderId && providerInfo(liveProviderId)) ? liveProviderId : resolveChatProviderId();
   const provider = providerInfo(providerId) ?? BUILTIN_PROVIDERS[0]!;
+  // When live isn't explicitly configured, prefer the provider's curated FAST
+  // live model (low time-to-first-token, reliable tool calls) over inheriting
+  // the chat model — a heavy/reasoning chat model (e.g. GPT-5) thinks silently
+  // then bursts its whole reply, which reads as "talks only after it finishes".
+  // The user can still pick any live model in Settings → Models.
+  const recs = liveRecsFor(provider.id);
+  const rec = recs.find((r) => r.default) ?? recs[0];
   return {
     provider,
-    model: liveModel ?? getSetting("chatModel") ?? "",
+    model: liveModel ?? rec?.model ?? getSetting("chatModel") ?? "",
     apiKey: getProviderKey(provider.id),
     effort: undefined, // live always drives lowest effort in the turn runner
   };

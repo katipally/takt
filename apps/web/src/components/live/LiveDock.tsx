@@ -14,7 +14,7 @@ import { CameraPiP } from "./CameraPiP";
 // animates in; once active it collapses to a VoiceBar (the composer morphs into
 // it) + a floating camera PiP, leaving the stage visible for concept visuals.
 export function LiveDock({ chatId, productSlug, onExit }: { chatId: string; productSlug: string | null; onExit: () => void }) {
-  const { start, stop, download, toggleMute, setPtt, holdTalk, toggleCamera, getLevels, getSpeechProgress, refreshDevices, setMic, setCam } = useLiveSession(chatId, productSlug);
+  const { start, stop, download, toggleMute, setPtt, holdTalk, toggleCamera, getLevels, refreshDevices, setMic, setCam } = useLiveSession(chatId, productSlug);
   const { active, phase, modelsDownloaded, downloading, downloadPct, downloadLoaded, downloadTotal, downloadModels, muted, pttEnabled, cameraOn, cameraStream, error, mics, cams, micId, camId } = useLiveStore();
 
   useEffect(() => { void refreshDevices(); }, [refreshDevices]);
@@ -51,7 +51,7 @@ export function LiveDock({ chatId, productSlug, onExit }: { chatId: string; prod
       {active && (
         <VoiceBar phase={phase} muted={muted} pttEnabled={pttEnabled} cameraOn={cameraOn}
           toggleMute={toggleMute} setPtt={setPtt} holdTalk={holdTalk} toggleCamera={toggleCamera}
-          getLevels={getLevels} getSpeechProgress={getSpeechProgress} onEnd={end} />
+          getLevels={getLevels} onEnd={end} />
       )}
     </>
   );

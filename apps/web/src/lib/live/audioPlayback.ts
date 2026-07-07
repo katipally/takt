@@ -15,6 +15,7 @@ export class AudioPlayer {
   private runStart = 0; // start time of the current continuous speaking run
   private minEpoch = 0;
   private sources = new Set<AudioBufferSourceNode>();
+  private timers = new Set<ReturnType<typeof setTimeout>>(); // pending onStart callbacks
   private rms = 0;
 
   private ensure(): AudioContext {
@@ -34,8 +35,10 @@ export class AudioPlayer {
     return this.ctx;
   }
 
-  // On-device TTS (Kokoro) hands us Float32 @ 24 kHz directly.
-  play(f32: Float32Array, epoch: number, sampleRate = 24000) {
+  // On-device TTS (Kokoro) hands us Float32 @ 24 kHz directly. `onStart` fires
+  // when THIS chunk actually begins playing (not when it was synthesized) — so a
+  // caption can track the voice instead of racing ahead of it.
+  play(f32: Float32Array, epoch: number, sampleRate = 24000, onStart?: () => void) {
     if (epoch < this.minEpoch || f32.length === 0) return;
     const ctx = this.ensure();
     let sum = 0;
@@ -52,12 +55,18 @@ export class AudioPlayer {
     this.nextAt = startAt + buf.duration;
     this.sources.add(src);
     src.onended = () => { this.sources.delete(src); if (this.sources.size === 0) this.rms = 0; };
+    if (onStart) {
+      const t = setTimeout(() => { this.timers.delete(t); onStart(); }, Math.max(0, (startAt - ctx.currentTime) * 1000));
+      this.timers.add(t);
+    }
   }
 
   flush(epoch: number) {
     this.minEpoch = epoch;
     for (const s of this.sources) { try { s.stop(); } catch { /* already stopped */ } }
     this.sources.clear();
+    for (const t of this.timers) clearTimeout(t); // drop pending caption updates
+    this.timers.clear();
     this.nextAt = 0;
     this.runStart = 0;
     this.rms = 0;

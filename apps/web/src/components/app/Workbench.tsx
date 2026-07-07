@@ -164,7 +164,9 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
             voiceEnabled={wb.voiceEnabled} setVoiceEnabled={wb.setVoiceEnabled} onOpenLive={() => setLiveOpen(true)}
             above={!wb.ask && !liveOpen ? <StatusBar node={latest?.assistant} streaming={wb.isStreaming} todos={wb.todos} /> : undefined} />
         )}
-        {liveOpen && <LiveDock chatId={wb.chatId} productSlug={slug} onExit={() => setLiveOpen(false)} />}
+        {/* Closing the call returns to a clean slate — a live conversation is its
+            own thing (still saved in history), not left lingering on the stage. */}
+        {liveOpen && <LiveDock chatId={wb.chatId} productSlug={slug} onExit={() => { setLiveOpen(false); follow(); wb.newChat(); }} />}
 
         <AnimatePresence>
           {wb.ask && <AskModal key="ask" ask={wb.ask} onSubmit={wb.submitAsk} onCancel={wb.cancelAsk} />}

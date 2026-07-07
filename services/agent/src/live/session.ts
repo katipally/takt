@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { writeFileSync, mkdirSync } from "node:fs";
+import { resolve, dirname } from "node:path";
 import type { WebSocket } from "ws";
 import type { Product, Manual, SseEvent, MessageBlock, LiveServerMsg } from "@takt/shared";
 import { LIVE_TAG, liveClientMsgSchema } from "@takt/shared";
-import { createChat, addMessage, listMessages } from "@takt/db";
+import { createChat, addMessage, listMessages, DATA_DIR } from "@takt/db";
 import type { Message } from "@takt/harness";
 import type { Emit, TaktTool } from "../tools.js";
 import { runBuildSubagent } from "../subagent.js";
@@ -128,9 +130,13 @@ export class LiveSession {
     // blockEmit guarded by a never-aborting signal, so it only stops when the
     // whole session closes (not on a barge-in that aborts the spoken turn). The
     // surface still lands on the stage while the main agent keeps talking.
+    // When the camera is on, hand the worker the freshest frame (persisted as an
+    // artifact resource) so it builds the answer AROUND what the user is showing
+    // — the frame embedded and annotated with arrows/labels.
     const spawnBuild = (brief: string, key?: string) => {
+      const frame = this.cameraOn && this.lastFrame ? this.persistFrame(this.lastFrame) : undefined;
       void runBuildSubagent({
-        brief, key, product: this.product, manuals: this.manuals, context: [],
+        brief, key, product: this.product, manuals: this.manuals, context: [], frame,
         emit: this.blockEmit(blocks, new AbortController().signal), signal: new AbortController().signal,
       });
     };
@@ -172,6 +178,21 @@ export class LiveSession {
   }
 
   private interrupt() { this.ac?.abort(); }
+
+  // Write a camera frame to disk as an artifact resource and return the /assets
+  // URL the build worker can embed (mirrors crop_page_image's scratch→/assets
+  // pattern). Returns undefined on any failure — a missing frame just means the
+  // worker builds from the product graph alone.
+  private persistFrame(frame: Frame): { url: string; image: Frame } | undefined {
+    try {
+      const rel = `scratch/frames/${this.chatId || "live"}/${randomUUID()}.jpg`;
+      const dest = resolve(DATA_DIR, rel);
+      mkdirSync(dirname(dest), { recursive: true });
+      writeFileSync(dest, Buffer.from(frame.data, "base64"));
+      const base = process.env.WEB_PUBLIC_URL ?? "http://localhost:3000";
+      return { url: `${base}/assets/${rel}`, image: frame };
+    } catch { return undefined; }
+  }
 
   // ── `look` handshake ────────────────────────────────────────────────────
   private requestFrame(): Promise<Frame | null> {

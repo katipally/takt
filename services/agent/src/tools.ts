@@ -106,7 +106,7 @@ function renderAnchorHint(a: Anchor, slug: string): string {
 // so it can read a feature's position straight off the grid instead of guessing —
 // this is what makes crop regions and <takt-figure> annotations land accurately.
 // The user-facing image (the file on disk / its URL) is never touched.
-async function withCoordGrid(buf: Buffer): Promise<Buffer> {
+export async function withCoordGrid(buf: Buffer): Promise<Buffer> {
   const meta = await sharp(buf).metadata();
   const w = meta.width ?? 0, h = meta.height ?? 0;
   if (!w || !h) return buf;

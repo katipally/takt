@@ -41,5 +41,42 @@ assert.ok(!/image|photo|picture/i.test(stripMarkdown("Look at the picture and th
   assert.equal(out.length, 0);
   assert.equal(c.flush(), "Hi. Yeah.");
 }
+{
+  // Fast start: a long first sentence releases its opening clause BEFORE the
+  // terminal period, streamed in small deltas — the agent talks while the rest
+  // still arrives. (Old behavior held everything until the sentence completed.)
+  const c = new SentenceChunker();
+  const spoken: string[] = [];
+  for (const d of ["The gas valve", ", which sits", " on the lower left, ", "controls the flow."]) spoken.push(...c.push(d));
+  assert.ok(spoken.length >= 1, "should emit before flush");
+  assert.equal(spoken[0], "The gas valve,");       // opening clause released early
+  assert.ok(spoken[0]!.length < MIN_TTS_CHARS);    // small enough to start fast
+}
+{
+  // A single short sentence with no clause boundary still speaks on completion
+  // (first-chunk bar), not held until flush like it used to be — and is emitted
+  // WHOLE, not chopped at a word boundary (a terminal is within reach).
+  const c = new SentenceChunker();
+  const out = c.push("The valve is on the left. ");
+  assert.equal(out.length, 1);
+  assert.equal(out[0], "The valve is on the left.");
+}
+{
+  // A LONG opening sentence with no early pause: release the first few words now
+  // so audio starts, instead of waiting for the whole sentence (the bug the user
+  // hit — "Sure — I'll put a simple labeled diagram of the … parts.").
+  const c = new SentenceChunker();
+  const spoken: string[] = [];
+  for (const d of ["I'll put ", "a simple labeled ", "diagram of the machine ", "on screen for you now."]) spoken.push(...c.push(d));
+  assert.ok(spoken.length >= 2, "long sentence should stream in pieces, not one late chunk");
+  assert.ok(spoken[0]!.length < 48 && !/[.!?]$/.test(spoken[0]!), "first chunk is the opening words, mid-sentence");
+}
+{
+  // After the first chunk, later short sentences hold to the stable MIN bar.
+  const c = new SentenceChunker();
+  c.push("Okay, here we go. ");                    // first chunk released
+  const out = c.push("Yes. ");                     // 4 chars, under MIN → held
+  assert.equal(out.length, 0);
+}
 
 console.log("voiceText.test.ts: all assertions passed");

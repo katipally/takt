@@ -9,16 +9,20 @@ import { Video } from "lucide-react";
 export function CameraPiP({ stream }: { stream: MediaStream | null }) {
   const vidRef = useRef<HTMLVideoElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState({ x: -1, y: -1 }); // -1 = default bottom-right
-  const [size, setSize] = useState(200);
+  const [pos, setPos] = useState({ x: -1, y: -1 }); // -1 = not yet placed
+  const [size, setSize] = useState(420);            // spotlight: large by default
 
   useEffect(() => { if (vidRef.current) vidRef.current.srcObject = stream; }, [stream]);
 
-  // Place bottom-right on first mount (once we know the parent size).
+  // Spotlight on first mount (camera just turned on): center it and size it to
+  // the stage. Still fully draggable/resizable afterward — this only sets where
+  // it lands, bringing the feed into focus instead of tucking it in a corner.
   useEffect(() => {
     if (pos.x >= 0 || !boxRef.current?.parentElement) return;
     const p = boxRef.current.parentElement.getBoundingClientRect();
-    setPos({ x: p.width - size - 16, y: p.height - size * 0.75 - 96 });
+    const sz = Math.min(size, Math.round(p.width * 0.5)); // shrink to fit a narrow stage
+    if (sz !== size) setSize(sz);
+    setPos({ x: Math.max(8, (p.width - sz) / 2), y: Math.max(8, (p.height - sz * 0.75) / 2 - 40) });
   }, [pos.x, size]);
 
   const clamp = (x: number, y: number, w: number, h: number) => {
@@ -40,14 +44,14 @@ export function CameraPiP({ stream }: { stream: MediaStream | null }) {
   const onResize = (e: React.PointerEvent) => {
     e.preventDefault(); e.stopPropagation();
     const startX = e.clientX, ow = size;
-    const move = (ev: PointerEvent) => setSize(Math.max(120, Math.min(360, ow + (ev.clientX - startX))));
+    const move = (ev: PointerEvent) => setSize(Math.max(120, Math.min(640, ow + (ev.clientX - startX))));
     const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
     window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
   };
 
   return (
     <div ref={boxRef} onPointerDown={onDrag}
-      style={{ left: pos.x < 0 ? undefined : pos.x, top: pos.y < 0 ? undefined : pos.y, width: size, height: size * 0.75, right: pos.x < 0 ? 16 : undefined, bottom: pos.y < 0 ? 96 : undefined }}
+      style={{ left: pos.x < 0 ? undefined : pos.x, top: pos.y < 0 ? undefined : pos.y, width: size, height: size * 0.75, right: pos.x < 0 ? 16 : undefined, bottom: pos.y < 0 ? 96 : undefined, opacity: pos.x < 0 ? 0 : 1 }}
       className="group absolute z-30 cursor-grab touch-none overflow-hidden rounded-2xl border border-border/60 bg-black shadow-2xl shadow-black/40 active:cursor-grabbing">
       {stream
         ? <video ref={vidRef} autoPlay muted playsInline className="h-full w-full object-cover" />

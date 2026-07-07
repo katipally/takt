@@ -190,9 +190,11 @@ export class VoiceEngine {
       if (!spoken) return;
       const { audio, sampleRate } = await tts(spoken);
       if (this.epoch !== epoch) return;
-      this.h.onAgentText(spoken);
       if (this.phase !== "speaking") { this.speakingStartAt = Date.now(); this.setPhase("speaking"); }
-      this.player.play(audio, epoch, sampleRate);
+      // Show the caption for THIS chunk when it actually starts playing (not now,
+      // when it finished synthesizing — synth runs ahead of the voice), so the
+      // subtitle reads out only the words being spoken right now.
+      this.player.play(audio, epoch, sampleRate, () => { if (this.epoch === epoch) this.h.onAgentText(spoken); });
     }).catch((e) => { console.warn("[live] TTS failed:", e?.message ?? e); });
   }
 

@@ -5,7 +5,6 @@ import { motion } from "motion/react";
 import { Mic, MicOff, Video, VideoOff, PhoneOff, Hand } from "lucide-react";
 import { useLiveStore, type LivePhase } from "@/lib/live/liveStore";
 import { Orb } from "./Orb";
-import { AgentCaption } from "./LiveStage";
 import { cn } from "@/lib/cn";
 
 const PHASE_LABEL: Record<LivePhase, string> = {
@@ -18,11 +17,11 @@ const PHASE_LABEL: Record<LivePhase, string> = {
 // and the mute / camera / end controls live on the right. Replaces the text
 // composer while voice is active; the stage stays visible behind it.
 export function VoiceBar({
-  phase, muted, pttEnabled, cameraOn, toggleMute, setPtt, holdTalk, toggleCamera, getLevels, getSpeechProgress, onEnd,
+  phase, muted, pttEnabled, cameraOn, toggleMute, setPtt, holdTalk, toggleCamera, getLevels, onEnd,
 }: {
   phase: LivePhase; muted: boolean; pttEnabled: boolean; cameraOn: boolean;
   toggleMute: () => void; setPtt: (v: boolean) => void; holdTalk: (v: boolean) => void; toggleCamera: () => void | Promise<void>;
-  getLevels: () => { mic: number; agent: number }; getSpeechProgress: () => number; onEnd: () => void;
+  getLevels: () => { mic: number; agent: number }; onEnd: () => void;
 }) {
   const { userCaption, userPartial, agentCaption } = useLiveStore();
 
@@ -34,10 +33,12 @@ export function VoiceBar({
     return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); };
   }, [pttEnabled, holdTalk]);
 
+  // Subtitle: the user's interim words while they talk, else the single chunk
+  // the agent is speaking RIGHT NOW (not the whole reply), else the phase label.
   const subtitle = userPartial && userCaption
     ? <span className="italic text-muted-foreground">{userCaption}</span>
     : agentCaption
-      ? <AgentCaption text={agentCaption} getProgress={getSpeechProgress} />
+      ? <span className="text-foreground">{agentCaption}</span>
       : <span className="text-muted-foreground">{PHASE_LABEL[phase] || "Listening…"}</span>;
 
   return (

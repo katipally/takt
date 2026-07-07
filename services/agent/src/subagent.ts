@@ -1,6 +1,6 @@
 import { streamProvider, type Message } from "@takt/harness";
 import type { Product, Manual, SseEvent } from "@takt/shared";
-import { buildTaktTools, type Emit } from "./tools.js";
+import { buildTaktTools, withCoordGrid, type Emit } from "./tools.js";
 import { collectTurn } from "./turn.js";
 import { resolveBuild } from "./providers.js";
 import { validateSurface, surfacePartId } from "@takt/shared";
@@ -21,10 +21,22 @@ export async function runBuildSubagent(opts: {
   context: { role: "user" | "assistant"; text: string }[];
   emit: Emit;
   signal: AbortSignal;
+  // A live camera frame to build the answer around: `url` is the servable
+  // /assets image to embed; `image` is the raw frame the worker gets to SEE.
+  frame?: { url: string; image: { data: string; mime: string } };
 }): Promise<void> {
-  const { brief, key, product, manuals, context, emit, signal } = opts;
+  const { brief, key, product, manuals, context, emit, signal, frame } = opts;
   const { provider, model, apiKey, effort } = resolveBuild();
   if (!model) return;
+
+  // If the user is showing something on camera, overlay a 0–1 grid on the
+  // worker's copy of the frame (same trick as crop_page_image) so it can read
+  // each part's position and place annotations accurately. Non-fatal on failure.
+  let frameSeed: { data: string; mime: string } | null = null;
+  if (frame) {
+    try { frameSeed = { data: (await withCoordGrid(Buffer.from(frame.image.data, "base64"))).toString("base64"), mime: "image/png" }; }
+    catch { frameSeed = frame.image; }
+  }
 
   // Build-lane emit: forward progress + the surface, but never prose.
   const buildEmit: Emit = async (e: SseEvent) => {
@@ -49,13 +61,14 @@ Always embed only a real \`/assets/\` URL a tool returned — never invent one. 
 
 Then call emit_ui ONCE with a surface whose root is a single \`Page\` node${key ? ` and key "${key}"` : ""}: \`{ "root":"pg", "nodes":[{ "id":"pg", "type":"Page", "props":{ "html":"…", "css":"…" } }] }\`.
 ${DESIGN_GUIDE}
-SHOW, DON'T TELL: the page MUST include at least one real visual island — a cropped manual figure (\`<takt-figure src="…" caption="…">\`), a 3D part (\`<takt-model src="…">\` — ALWAYS include it when get_anchors returns a mesh_node; a rotatable part beats a photo), or a video clip (\`<takt-video src="…">\`) — chosen for THIS brief. Carry the answer in visuals + structure (a \`.takt-grid\`, an \`<ol>\` of steps, a spec \`<table>\`, \`.takt-stat\` tiles), keep prose tight, cite facts with \`<takt-cite page="NN">\`. Crop tight, pull only the relevant part's 3D, don't dump the whole manual.
+SHOW, DON'T TELL: the page MUST include at least one real visual island — a cropped manual figure (\`<takt-figure src="…" caption="…">\`), a 3D part (\`<takt-model src="…">\` — ALWAYS include it when get_anchors returns a mesh_node; a rotatable part beats a photo), or a video clip (\`<takt-video src="…">\`) — chosen for THIS brief. Carry the answer in visuals + structure (a \`.takt-grid\`, an \`<ol>\` of steps, a spec \`<table>\`, \`.takt-stat\` tiles), keep prose tight, cite facts with \`<takt-cite page="NN">\`. Crop tight, pull only the relevant part's 3D, don't dump the whole manual.${frame ? `
+LIVE CAMERA: The user is showing you THIS on their camera right now (frame attached below, with a faint 0–1 grid for YOUR reference only — the user sees it clean). Build the page AROUND this frame: embed it as the LEAD visual — \`<takt-figure src="${frame.url}" caption="…" annos='[…]'>\` — and mark up the exact parts you're explaining with \`annos\` arrows/boxes/labels (the annos rules + coord grid above apply — read each part's x,y straight off the grid so marks land accurately). Then combine it with grounded steps/specs from the product graph. Use EXACTLY this src, never invent one: ${frame.url}` : ""}
 BE DECISIVE: a few tool calls to gather is plenty — one or two find_entity/search calls and the get_anchors/crop for the figures you'll show. Do NOT keep re-searching. As soon as you have enough, call emit_ui — you MUST emit_ui before you run out of steps, so build with what you have. When the surface is emitted you are done — do not narrate.`;
 
   const messages: Message[] = [
     { role: "system", text: sys },
     ...context.slice(-6).map((m) => ({ role: m.role, text: m.text })),
-    { role: "user", text: `Build the surface for: ${brief}` },
+    { role: "user", text: `Build the surface for: ${brief}`, ...(frameSeed ? { images: [frameSeed] } : {}) },
   ];
 
   try {

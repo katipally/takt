@@ -71,7 +71,9 @@ export function useLiveSession(chatId: string, productSlug: string | null) {
         onPhase: (p: EnginePhase) => set(p === "listening" ? { phase: p, agentCaption: "" } : { phase: p }),
         onPartial: (text) => set({ userCaption: text, userPartial: true }),
         onUserText: (text) => void handleUserText(text),
-        onAgentText: (sentence) => { const st = useLiveStore.getState(); set({ agentCaption: (st.agentCaption + " " + sentence).trim() }); },
+        // Subtitle, not transcript: show ONLY the chunk being spoken right now
+        // (replace, don't accumulate) — the full reply lives in the chat panel.
+        onAgentText: (sentence) => set({ agentCaption: sentence }),
         // Barge-in: cancel the server turn AND drop the stale caption immediately,
         // so interrupting gives instant "I'm listening" feedback.
         onBargeIn: () => { client.current?.cancel(); set({ agentCaption: "", userCaption: "", userPartial: false }); },
