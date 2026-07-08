@@ -3,21 +3,24 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { streamProvider, type ProviderInfo, type ChatRequest } from "@takt/harness";
-import { writeMedia, mediaDir, loadGraph, saveGraph, entityId, sameEntity, type Anchor, type Entity } from "@takt/profile";
+import { writeMedia, mediaDir, addMedia, type MediaItem } from "@takt/profile";
 
-// Turn a repair/how-to video into TIMESTAMPED snippet anchors: sample frames
-// with ffmpeg, have a vision model segment the video into chapters (each about
-// one part/action, with a start/end), and attach a video_clip anchor per chapter
-// to the matching graph entity. Then get_anchors hands the agent a `#t=start,end`
-// Video that plays exactly the relevant span — not the whole clip. Falls back to
-// a single whole-clip anchor if ffmpeg or the vision pass is unavailable.
+// Turn a repair/how-to video into TIMESTAMPED clips in the flat media index:
+// sample frames with ffmpeg, have a vision model segment the video into chapters
+// (each about one part/action, with a start/end), and record one `video_clip`
+// MediaItem per chapter. The canvas then plays exactly the relevant span
+// (`#t=start,end`) instead of the whole clip. Falls back to a single whole-clip
+// item if ffmpeg or the vision pass is unavailable. Best-effort throughout.
 
 export interface VideoFile { filename: string; data: Uint8Array }
 
 async function complete(provider: ProviderInfo, apiKey: string | undefined, req: ChatRequest): Promise<string> {
   let text = "";
   const signal = new AbortController().signal;
-  for await (const ev of streamProvider(provider, apiKey, req, signal)) if (ev.type === "text") text += ev.delta;
+  // Minimal reasoning so OpenAI reasoning models emit the JSON instead of
+  // burning the budget thinking (no-op for Anthropic/MiniMax).
+  const r: ChatRequest = { ...req, reasoningEffort: req.reasoningEffort ?? "minimal" };
+  for await (const ev of streamProvider(provider, apiKey, r, signal)) if (ev.type === "text") text += ev.delta;
   return text.trim();
 }
 
@@ -61,19 +64,6 @@ export async function addVideo(
   const link = writeMedia(slug, video.filename, video.data);
   const url = `/assets/products/${slug}/${link}`;
   const path = join(mediaDir(slug), video.filename);
-  const graph = loadGraph(slug);
-
-  // whole-clip fallback anchor on a "Repair walkthrough" procedure
-  const procId = entityId("Procedure", "repair walkthrough video");
-  const ensureProc = (): Entity => {
-    let e = graph.entities.find((x) => x.id === procId);
-    if (!e) { e = { id: procId, name: "Repair walkthrough", type: "Procedure", description: "A video walkthrough of repair/maintenance for this product.", confidence: "EXTRACTED", source_ids: [`video:${video.filename}`], anchors: [] }; graph.entities.push(e); }
-    return e;
-  };
-  const addAnchor = (a: Anchor, entIds: string[]) => {
-    a.entityIds = entIds; graph.anchors.push(a);
-    for (const id of entIds) { const e = graph.entities.find((x) => x.id === id); if (e && !e.anchors.includes(a.id)) e.anchors.push(a.id); }
-  };
 
   const dur = opts.provider && opts.model ? probeDuration(path) : 0;
   let chapters: Chapter[] = [];
@@ -82,10 +72,8 @@ export async function addVideo(
     await opts.onProgress?.("Sampling video frames…");
     const frames = extractFrames(path, interval);
     if (frames.length >= 2) {
-      const names = graph.entities.filter((e) => /part|subsystem|fault|procedure/i.test(e.type)).map((e) => e.name).slice(0, 60);
-      const prompt = `This is a ${dur}s repair/how-to video for the product. Below are ${frames.length} frames sampled in order at these timestamps (seconds): ${frames.map((f) => f.t).join(", ")}.
-Segment the video into CHAPTERS — each a contiguous span about ONE part or action. For each chapter return {"tStart":<sec>,"tEnd":<sec>,"part":"<the component it's about; match one of the product parts below when possible>","caption":"<one short line>"}.
-Product parts: ${names.join(", ") || "(unknown)"}.
+      const prompt = `This is a ${dur}s repair/how-to video for a product. Below are ${frames.length} frames sampled in order at these timestamps (seconds): ${frames.map((f) => f.t).join(", ")}.
+Segment the video into CHAPTERS — each a contiguous span about ONE part or action. For each chapter return {"tStart":<sec>,"tEnd":<sec>,"part":"<the component/step it's about>","caption":"<one short line describing what happens>"}.
 Return ONLY a JSON array, timestamps within 0..${dur}.`;
       try {
         await opts.onProgress?.("Chaptering the video…");
@@ -98,19 +86,15 @@ Return ONLY a JSON array, timestamps within 0..${dur}.`;
     }
   }
 
-  if (chapters.length) {
-    let seq = graph.anchors.length;
-    for (const ch of chapters) {
-      const ent = ch.part ? graph.entities.find((x) => sameEntity(x, { name: ch.part! })) : undefined;
-      const target = ent ?? ensureProc();
-      addAnchor({ id: `a-vid-${seq++}`, kind: "video_clip", ref: { videoUrl: url, tStart: ch.tStart, tEnd: ch.tEnd }, caption: ch.caption || (ch.part ? `${ch.part} (video)` : "Repair step"), entityIds: [] }, [target.id]);
-    }
-    await opts.onProgress?.(`Video: ${chapters.length} timestamped snippets`);
-  } else {
+  const items: MediaItem[] = chapters.length
+    ? chapters.map((ch, i) => ({
+        id: `clip:${i}`, kind: "video_clip" as const, url,
+        caption: ch.caption || (ch.part ? `${ch.part} (video)` : "Repair step"),
+        tStart: ch.tStart, tEnd: ch.tEnd,
+      }))
     // whole-clip fallback
-    addAnchor({ id: `a-vid-${graph.anchors.length}`, kind: "video_clip", ref: { videoUrl: url, tStart: 0, tEnd: dur || 0 }, caption: "Repair walkthrough video", entityIds: [] }, [ensureProc().id]);
-    await opts.onProgress?.("Attached repair video (whole clip)");
-  }
+    : [{ id: "clip:0", kind: "video_clip" as const, url, caption: "Repair walkthrough video", tStart: 0, tEnd: dur || 0 }];
 
-  saveGraph(slug, graph);
+  addMedia(slug, items);
+  await opts.onProgress?.(chapters.length ? `Video: ${chapters.length} timestamped clips` : "Attached repair video (whole clip)");
 }

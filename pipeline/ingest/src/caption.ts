@@ -25,7 +25,12 @@ async function complete(
   let input = 0;
   let output = 0;
   const signal = new AbortController().signal;
-  for await (const ev of streamProvider(provider, apiKey, req, signal)) {
+  // Ingest is structured extraction, never a reasoning task. Force MINIMAL
+  // reasoning so OpenAI reasoning models (gpt-5*) don't spend the whole token
+  // budget "thinking" and emit no text. No-op for Anthropic/MiniMax (they read
+  // `effort`, not `reasoningEffort`).
+  const r: ChatRequest = { ...req, reasoningEffort: req.reasoningEffort ?? "minimal" };
+  for await (const ev of streamProvider(provider, apiKey, r, signal)) {
     if (ev.type === "text") text += ev.delta;
     else if (ev.type === "usage") { input += ev.input; output += ev.output; }
   }
@@ -54,6 +59,32 @@ export async function captionPage(
     messages: [{ role: "user", text: PROMPT, images: [{ data: base64, mime: "image/png" }] }],
   });
   return { text, inputTokens: input, outputTokens: output };
+}
+
+// Vision-detect the product's identity from its cover / first manual page. One
+// cheap call at the very start of an ingest so a "drop a folder" run needs no
+// --name/--manufacturer: the model reads the title block and tells us what this
+// is. Robust parse; {} on any failure so ingest can fall back to file names.
+export async function detectProduct(
+  coverPng: Uint8Array,
+  provider: ProviderInfo,
+  model: string,
+  apiKey?: string,
+): Promise<{ name?: string; manufacturer?: string; summary?: string }> {
+  try {
+    const base64 = Buffer.from(coverPng).toString("base64");
+    const { text: raw } = await complete(provider, apiKey, {
+      model, maxTokens: 500, tools: [],
+      messages: [{
+        role: "user",
+        text: `This is the cover / first page of a product's manual. Identify the product. Return ONLY a JSON object: {"name":"<product model name>","manufacturer":"<maker>","summary":"<one concise line describing what it is>"}. Use "" for anything you can't determine.`,
+        images: [{ data: base64, mime: "image/png" }],
+      }],
+    });
+    const obj = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1));
+    const clean = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
+    return { name: clean(obj.name), manufacturer: clean(obj.manufacturer), summary: clean(obj.summary) };
+  } catch { return {}; }
 }
 
 // Generate a few natural, product-specific starter questions from what we know

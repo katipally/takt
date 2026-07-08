@@ -26,3 +26,35 @@ export interface Concept {
 }
 
 export const RESERVED = new Set(["index.md", "log.md"]);
+
+// ── compiled index (regenerable, under <slug>/.index/) ───────────────────────
+// The markdown Profile is canonical; the index is a fast lookup built once at
+// ingest so runtime needs zero processing. Retrieval = grep + cached semantic
+// search over chunks, plus a flat media index so the canvas always has visuals.
+
+/** A retrievable text unit (a manual page or a section of a concept). */
+export interface Chunk {
+  id: string;          // e.g. "owner-manual#p12"
+  conceptId: string;   // the .md concept it came from
+  title: string;       // concept title (for display / citation)
+  page?: number;       // manual page number, when applicable
+  text: string;        // the chunk body (~500 tokens)
+}
+
+export type MediaKind = "figure" | "page" | "mesh" | "video_clip" | "image";
+
+/** A render-ready visual the canvas can pull in. Flat — no graph. */
+export interface MediaItem {
+  id: string;
+  kind: MediaKind;
+  url: string;         // /assets/... path the client loads
+  caption: string;     // what it shows (embedded for semantic lookup)
+  conceptId?: string;  // owning concept, when known
+  page?: number;       // figure/page: source manual page
+  manualKind?: string; // figure/page: which manual
+  subsystem?: string;  // mesh: assembly/group (from the folder it lived in)
+  nodeName?: string;   // mesh: part name
+  tStart?: number;     // video_clip: start seconds
+  tEnd?: number;       // video_clip: end seconds
+  poster?: string;     // video_clip: thumbnail url
+}

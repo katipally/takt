@@ -32,7 +32,6 @@ echo "▸ Folding WAL, stripping key, clearing chats + model settings…"
 sqlite3 "$OUT" "
   PRAGMA wal_checkpoint(TRUNCATE);
   UPDATE providers SET api_key_ciphertext=NULL, key_last4=NULL;
-  DELETE FROM artifacts;
   DELETE FROM messages;
   DELETE FROM chats;
   DELETE FROM settings WHERE key IN ('chatModel','captionModel','effort');

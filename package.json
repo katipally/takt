@@ -13,8 +13,6 @@
     "stop": "bash scripts/free-ports.sh",
     "build": "pnpm -r --filter @takt/web build",
     "ingest": "pnpm --filter @takt/ingest start --",
-    "profile:build": "pnpm --filter @takt/ingest profile:build --",
-    "pkb:build": "pnpm --filter @takt/ingest pkb:build --",
     "db:reset": "pnpm --filter @takt/db reset",
     "typecheck": "pnpm -r typecheck"
   },

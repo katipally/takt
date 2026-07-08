@@ -1,6 +1,8 @@
 // Idempotent schema. Product knowledge lives in the Profile markdown bundles
 // (data/products/<slug>/); the DB holds only metadata + app state. Retrieval is
-// Direct Corpus Interaction — the agent greps/reads the markdown, no vectors.
+// hybrid over a compiled index (grep + cached semantic search over chunks) plus
+// a flat media index — all built once at ingest and stored beside the markdown
+// (<slug>/.index/), never in the DB.
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS products (
   id           TEXT PRIMARY KEY,
@@ -89,6 +91,8 @@ function isNotNull(handle: MigrateHandle, table: string, column: string): boolea
 export function migrate(handle: MigrateHandle) {
   // The old artifacts table + its data are retired with the artifact pipeline.
   try { handle.exec("DROP TABLE IF EXISTS artifacts"); } catch { /* harmless */ }
+  // Orphan live_artifacts table (defined nowhere in code) from an earlier era.
+  try { handle.exec("DROP TABLE IF EXISTS live_artifacts"); } catch { /* harmless */ }
 
   // Retrieval moved to Direct Corpus Interaction over the Profile markdown — the
   // vector store is gone. Drop the old chunks/vec_chunks tables if a pre-existing

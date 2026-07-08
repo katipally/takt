@@ -11,8 +11,6 @@
   },
   "scripts": {
     "start": "tsx src/cli.ts",
-    "profile:build": "tsx src/profile-cli.ts",
-    "pkb:build": "tsx src/pkb-cli.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
