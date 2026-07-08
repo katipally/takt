@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS messages (
   chat_id      TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
   role         TEXT NOT NULL,
   content_json TEXT NOT NULL,
+  live         INTEGER NOT NULL DEFAULT 0,
   created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id);
@@ -96,6 +97,11 @@ export function migrate(handle: MigrateHandle) {
   // is harmless since nothing queries it.
   try { handle.exec("DROP TABLE IF EXISTS vec_chunks"); } catch { /* module gone; harmless orphan */ }
   try { handle.exec("DROP TABLE IF EXISTS chunks"); } catch { /* ignore */ }
+
+  // messages.live: marks a turn produced in live-voice mode so reloaded history
+  // regroups it into the Live-session card (else it re-renders as normal turns).
+  // Additive column — ADD COLUMN is safe/atomic; throws if it already exists.
+  try { handle.exec("ALTER TABLE messages ADD COLUMN live INTEGER NOT NULL DEFAULT 0"); } catch { /* already present */ }
 
   // Master mode: chats.product_id must be NULLABLE. Rebuild the table if it's
   // still the old NOT NULL shape. FKs OFF so dropping chats (referenced by

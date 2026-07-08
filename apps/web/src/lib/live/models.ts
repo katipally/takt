@@ -23,9 +23,28 @@ export function hasWebGPU(): boolean {
 
 export function modelsReady(): boolean { return ready; }
 
+// Persistent "weights are already in the Cache API" flag, keyed to the device
+// tier (webgpu/wasm download DIFFERENT files). The in-memory `ready` flag resets
+// on every page refresh, so without this the pre-call screen re-asks to download
+// forever even though the bytes are cached. Set after a successful load; read on
+// mount so a refresh auto-loads silently instead of prompting.
+const READY_KEY = "takt-live-models-ready-v1";
+const deviceTier = () => (hasWebGPU() ? "webgpu" : "wasm");
+export function modelsCached(): boolean {
+  if (ready) return true;
+  try { return localStorage.getItem(READY_KEY) === deviceTier(); } catch { return false; }
+}
+
+let loading: Promise<void> | null = null;
+
 export function loadModels(onProgress: (p: LoadProgress) => void): Promise<void> {
   if (ready) return Promise.resolve();
-  return new Promise((resolve, reject) => {
+  // In-flight guard: a silent background preload and the start() lazy-load must
+  // share ONE worker, not race to spawn two. Late callers join the same promise.
+  if (loading) return loading;
+  // Best-effort: ask the browser not to evict the model cache under storage pressure.
+  try { navigator.storage?.persist?.(); } catch { /* not supported */ }
+  loading = new Promise<void>((resolve, reject) => {
     const w = new Worker(new URL("./models.worker.ts", import.meta.url), { type: "module" });
     worker = w;
     w.onmessage = (e: MessageEvent) => {
@@ -51,7 +70,11 @@ export function loadModels(onProgress: (p: LoadProgress) => void): Promise<void>
           }
           break;
         }
-        case "ready": ready = true; turnAvailable = !!m.turn; resolve(); break;
+        case "ready":
+          ready = true; turnAvailable = !!m.turn;
+          try { localStorage.setItem(READY_KEY, deviceTier()); } catch { /* private mode */ }
+          resolve();
+          break;
         case "result": { const p = pending.get(m.id); if (p) { pending.delete(m.id); p.resolve(m); } break; }
         case "error":
           if (m.id != null) { const p = pending.get(m.id); if (p) { pending.delete(m.id); p.reject(new Error(m.message)); } }
@@ -62,6 +85,8 @@ export function loadModels(onProgress: (p: LoadProgress) => void): Promise<void>
     w.onerror = (e) => reject(new Error(e.message || "model worker failed to load"));
     w.postMessage({ type: "load", device: hasWebGPU() ? "webgpu" : "wasm" });
   });
+  loading.finally(() => { loading = null; }); // free the guard so a post-reset reload can re-run
+  return loading;
 }
 
 function call<T>(msg: any, transfer?: Transferable[]): Promise<T> {
@@ -106,7 +131,7 @@ export function disposeModels() { /* keep models warm across sessions */ }
 export function destroyModels() {
   try { worker?.postMessage({ type: "dispose" }); } catch { /* */ }
   try { worker?.terminate(); } catch { /* */ }
-  worker = null; ready = false;
+  worker = null; ready = false; loading = null;
   files.clear();
   for (const p of pending.values()) p.reject(new Error("models disposed"));
   pending.clear();

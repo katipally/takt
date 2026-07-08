@@ -73,6 +73,7 @@ export interface ChatMessage {
   chatId: string;
   role: MessageRole;
   content: MessageBlock[];
+  live?: boolean; // produced in live-voice mode → history regroups it into the Live card
   createdAt: string;
 }
 

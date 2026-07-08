@@ -4,7 +4,7 @@ import { buildTaktTools, withCoordGrid, type Emit } from "./tools.js";
 import { collectTurn } from "./turn.js";
 import { resolveBuild } from "./providers.js";
 import { validateSurface, surfacePartId } from "@takt/shared";
-import { DESIGN_GUIDE } from "./prompt.js";
+import { DESIGN_GUIDE, UI_SHAPE } from "./prompt.js";
 
 const MAX_STEPS = 20;
 
@@ -45,8 +45,11 @@ export async function runBuildSubagent(opts: {
     return emit(e);
   };
 
-  const tools = buildTaktTools({ product, manuals, emit: buildEmit, chatId: undefined })
-    .filter((t) => t.name !== "ask_user" && t.name !== "delegate_build");
+  // The ONE surface pipeline. Track every /assets URL a tool returns this build so
+  // emit_ui's allow-list can strip any invented (404-ing) media the model embeds.
+  const allowedAssets = new Set<string>();
+  if (frame) { const p = frame.url.match(/\/assets\/[^"'?\s)]+/)?.[0]; if (p) allowedAssets.add(p); }
+  const tools = buildTaktTools({ product, manuals, emit: buildEmit, chatId: undefined, context: "build", allowedAssets });
   const toolDefs = tools.map(({ name, description, parameters }) => ({ name, description, parameters }));
 
   const sys = `You are Takt's BUILD worker. Another agent is talking to the user; your ONLY job is to compose ONE designed PAGE that answers this brief, then stop. You never write prose to the user — you gather what you need and call emit_ui exactly once with a single \`Page\` node.
@@ -57,11 +60,12 @@ Gather REAL material first when the brief involves a product — reach for the t
 - A part / fault / procedure / spec and how it connects → \`find_entity\`, then \`get_anchors\` on it to get the EXACT media to show: the \`crop_page_image\` call for a manual figure, the \`/assets/*.glb\` for a 3D part, or a video clip. Use \`walk_graph\` to pull related faults/steps.
 - A described symptom in plain words → \`search_product\` (semantic). An exact code / part number → \`grep_profile\`. Full concept text → \`read_profile\`.
 - A product overview / map → \`product_map\`.
-Always embed only a real \`/assets/\` URL a tool returned — never invent one. NEVER embed a whole manual page (a \`/assets/pages/…\` URL) — always \`crop_page_image\` to the exact region (the table, the diagram, the labeled part); whole pages have headers/margins/whitespace and read like a screenshot.
+Always embed only a real \`/assets/\` URL a tool returned — never invent one. NEVER embed a whole manual page (a \`/assets/pages/…\` URL) — always \`crop_page_image\` to the exact region. Crop to the VISUAL — a diagram, schematic, table, or labeled part — NEVER a block of body text (a figure of text is just a screenshot). Whole pages have headers/margins/whitespace and read broken.
 
 Then call emit_ui ONCE with a surface whose root is a single \`Page\` node${key ? ` and key "${key}"` : ""}: \`{ "root":"pg", "nodes":[{ "id":"pg", "type":"Page", "props":{ "html":"…", "css":"…" } }] }\`.
 ${DESIGN_GUIDE}
-SHOW, DON'T TELL: the page MUST include at least one real visual island — a cropped manual figure (\`<takt-figure src="…" caption="…">\`), a 3D part (\`<takt-model src="…">\` — ALWAYS include it when get_anchors returns a mesh_node; a rotatable part beats a photo), or a video clip (\`<takt-video src="…">\`) — chosen for THIS brief. Carry the answer in visuals + structure (a \`.takt-grid\`, an \`<ol>\` of steps, a spec \`<table>\`, \`.takt-stat\` tiles), keep prose tight, cite facts with \`<takt-cite page="NN">\`. Crop tight, pull only the relevant part's 3D, don't dump the whole manual.${frame ? `
+${UI_SHAPE}
+SHOW, DON'T TELL: the page MUST include at least one real visual island — a cropped manual figure (\`<takt-figure src="…" caption="…">\`), a 3D part (\`<takt-model src="…">\` — ALWAYS include it when get_anchors returns a mesh_node; a rotatable part beats a photo), or a video clip (\`<takt-video src="…">\`) — chosen for THIS brief. Carry the answer in visuals + structure (a \`.takt-grid\`, an \`<ol>\` of steps, a spec \`<table>\`, \`.takt-stat\` tiles); OPEN with a SHORT standfirst (1–2 lines) then get to the visual — never several prose paragraphs before the first figure; cite facts with \`<takt-cite page="NN">\`. Crop tight, pull only the relevant part's 3D, don't dump the whole manual.${frame ? `
 LIVE CAMERA: The user is showing you THIS on their camera right now (frame attached below, with a faint 0–1 grid for YOUR reference only — the user sees it clean). Build the page AROUND this frame: embed it as the LEAD visual — \`<takt-figure src="${frame.url}" caption="…" annos='[…]'>\` — and mark up the exact parts you're explaining with \`annos\` arrows/boxes/labels (the annos rules + coord grid above apply — read each part's x,y straight off the grid so marks land accurately). Then combine it with grounded steps/specs from the product graph. Use EXACTLY this src, never invent one: ${frame.url}` : ""}
 BE DECISIVE: a few tool calls to gather is plenty — one or two find_entity/search calls and the get_anchors/crop for the figures you'll show. Do NOT keep re-searching. As soon as you have enough, call emit_ui — you MUST emit_ui before you run out of steps, so build with what you have. When the surface is emitted you are done — do not narrate.`;
 
@@ -99,6 +103,9 @@ BE DECISIVE: a few tool calls to gather is plenty — one or two find_entity/sea
         let res;
         try { res = await tool.execute(safeParse(tc.arguments)); }
         catch (e: any) { res = { output: `Error: ${String(e?.message ?? e)}`, isError: true as const }; }
+        // Register any /assets URLs this tool surfaced so emit_ui's allow-list knows
+        // they're real (invented ones the model tries to embed get stripped).
+        if (!res.isError) for (const m of (res.output || "").matchAll(/\/assets\/[^\s"'?)]+/g)) allowedAssets.add(m[0]);
         if (tc.name === "emit_ui" && !res.isError) emitted = true;
         else if (!res.isError && (res.output?.length ?? 0) > lastGood.length) lastGood = res.output;
         messages.push({ role: "tool", callId: tc.id, name: tc.name, result: res.output, images: res.images, isError: res.isError });
@@ -109,8 +116,23 @@ BE DECISIVE: a few tool calls to gather is plenty — one or two find_entity/sea
     // it gathered — so the canvas never ends up empty.
     if (!emitted && !signal.aborted) {
       const esc = (s: string) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] ?? c));
-      const md = (lastGood || `Here's what I found for: ${brief}`).replace(/```[\s\S]*?```/g, "").slice(0, 1400).trim();
-      const html = `<p class="takt-eyebrow">Summary</p><h1>${esc(brief.slice(0, 80))}</h1><p class="takt-lead">${esc(md || "No details available.")}</p>`;
+      // Clean the gathered material into a SHORT lead: drop code fences, markdown
+      // headings, image tags, and raw /assets URLs (a raw tool-output dump reads as
+      // broken), then keep a tight excerpt.
+      const md = (lastGood || "")
+        .replace(/```[\s\S]*?```/g, "")
+        .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+        .replace(/\/assets\/\S+/g, "")
+        .replace(/^#+\s*/gm, "")
+        .replace(/\s+/g, " ")
+        .trim().slice(0, 320);
+      // A gathered figure LEADS so the fallback still SHOWS (real URL — no 404).
+      const imgs = [...allowedAssets].filter((u) => /\.(png|jpe?g|webp)$/i.test(u));
+      const fig = imgs.find((u) => /scratch\/crops\//i.test(u)) ?? imgs.find((u) => !/\/assets\/pages\//i.test(u)) ?? imgs[0];
+      const figHtml = fig ? `<takt-figure src="${fig}" caption="From the manual"></takt-figure>` : "";
+      // Clean the brief into a title (strip "show me a / draw me the …" lead-ins).
+      const title = (brief.replace(/^\s*(please\s+)?(build|make|draw|show|create|give)\s+(me\s+)?(a|an|the)?\s*/i, "").trim() || brief).slice(0, 70);
+      const html = `${figHtml}<p class="takt-eyebrow">From the manual</p><h1>${esc(title)}</h1>${md ? `<p class="takt-lead">${esc(md)}</p>` : ""}`;
       const fb = { id: "fallback", ...(key ? { key } : {}), title: brief.slice(0, 64), root: "pg", nodes: [
         { id: "pg", type: "Page", props: { html } },
       ] };

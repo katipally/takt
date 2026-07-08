@@ -140,7 +140,7 @@ export class LiveSession {
     const blocks: MessageBlock[] = [];
     const emit = this.blockEmit(blocks, ac.signal);
 
-    if (this.chatId) addMessage(this.chatId, "user", [{ type: "text", text }]);
+    if (this.chatId) addMessage(this.chatId, "user", [{ type: "text", text }], true /* live */);
     // Background builds delegated this turn use a SESSION-stable emit — the
     // blockEmit guarded by a never-aborting signal, so it only stops when the
     // whole session closes (not on a barge-in that aborts the spoken turn). The
@@ -172,7 +172,7 @@ export class LiveSession {
       if (ac.signal.aborted && this.bargeSpoken != null) truncateSpokenText(blocks, this.bargeSpoken);
       this.bargeSpoken = null;
       // Persist the assistant reply even on barge-in/abort, so reload shows it.
-      if (this.chatId && blocks.length) { try { messageId = addMessage(this.chatId, "assistant", blocks).id; } catch { /* */ } }
+      if (this.chatId && blocks.length) { try { messageId = addMessage(this.chatId, "assistant", blocks, true /* live */).id; } catch { /* */ } }
       this.send({ t: "sse", event: { type: "done" } });
       if (this.ac === ac) { this.ac = null; this.turnActive = false; }
       const q = this.queuedText; this.queuedText = null;

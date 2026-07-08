@@ -61,6 +61,10 @@ export function AskModal({ ask, onSubmit, onCancel }: {
   const activeRender: AskRender | undefined = cur
     ? (preview != null ? cur.options?.[preview]?.render : undefined) ?? cur.render
     : undefined;
+  // If this ask has NO diagram anywhere, drop the render pane entirely rather than
+  // showing an empty "No diagram for this question" dead state (a plain clarifying
+  // question is single-column).
+  const hasAnyRender = questions.some((q) => q.render || q.options?.some((o) => o.render));
 
   return (
     <motion.div
@@ -95,9 +99,9 @@ export function AskModal({ ask, onSubmit, onCancel }: {
         {reviewing ? (
           <ReviewBody questions={questions} answers={answers} onJump={setStep} />
         ) : (
-          <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-2">
+          <div className={cn("grid min-h-0 flex-1 grid-cols-1", hasAnyRender && "md:grid-cols-2")}>
             {/* Left: question + options + custom */}
-            <div className="takt-scroll min-h-0 overflow-y-auto border-border p-5 md:border-r">
+            <div className={cn("takt-scroll min-h-0 overflow-y-auto border-border p-5", hasAnyRender && "md:border-r")}>
               <div className="text-[11px] uppercase tracking-[0.14em] text-faint">Question {step + 1} of {n}</div>
               <h2 className="mt-1.5 text-[16px] font-semibold leading-snug text-foreground">{cur!.question}</h2>
 
@@ -134,10 +138,12 @@ export function AskModal({ ask, onSubmit, onCancel }: {
               )}
             </div>
 
-            {/* Right: render area */}
-            <div className="takt-scroll hidden min-h-0 overflow-y-auto bg-background/40 md:block">
-              <RenderArea render={activeRender} fromOption={preview != null && !!cur!.options?.[preview]?.render} />
-            </div>
+            {/* Right: render area — only when the ask actually has a diagram */}
+            {hasAnyRender && (
+              <div className="takt-scroll hidden min-h-0 overflow-y-auto bg-background/40 md:block">
+                <RenderArea render={activeRender} fromOption={preview != null && !!cur!.options?.[preview]?.render} />
+              </div>
+            )}
           </div>
         )}
 

@@ -2,7 +2,7 @@ import {
   listProviders, createProvider, updateProvider,
   getProviderApiKey, getSetting, setSetting,
 } from "@takt/db";
-import { BUILTIN_PROVIDERS, type ProviderInfo, type Effort } from "@takt/harness";
+import { BUILTIN_PROVIDERS, defaultModel, type ProviderInfo, type Effort } from "@takt/harness";
 import { DEFAULT_EFFORT, liveRecsFor } from "@takt/shared";
 
 // Provider-neutral resolution. Keys live in the DB `providers` table (kind =
@@ -68,7 +68,9 @@ export function resolveChat(): ResolvedChat {
   const effortSetting = getSetting("effort") ?? DEFAULT_EFFORT;
   return {
     provider,
-    model: getSetting("chatModel") ?? "",
+    // Empty chatModel (never picked, or reset on a provider switch) → a 400 on
+    // EVERY provider. Fall back to the provider's default model so chat works.
+    model: getSetting("chatModel") || defaultModel(provider.id),
     apiKey: getProviderKey(provider.id),
     // "none" disables reasoning; anything else passes through and the adapter
     // computes the thinking budget from the effort level.
@@ -93,7 +95,7 @@ export function resolveLive(): ResolvedChat {
   const rec = recs.find((r) => r.default) ?? recs[0];
   return {
     provider,
-    model: liveModel ?? rec?.model ?? getSetting("chatModel") ?? "",
+    model: liveModel || rec?.model || getSetting("chatModel") || defaultModel(provider.id),
     apiKey: getProviderKey(provider.id),
     effort: undefined, // live always drives lowest effort in the turn runner
   };
@@ -111,7 +113,7 @@ export function resolveBuild(): ResolvedChat {
   const effortSetting = getSetting("effort") ?? DEFAULT_EFFORT;
   return {
     provider,
-    model: buildModel ?? getSetting("chatModel") ?? "",
+    model: buildModel || getSetting("chatModel") || defaultModel(provider.id),
     apiKey: getProviderKey(provider.id),
     effort: effortSetting === "none" ? undefined : (effortSetting as Effort),
   };
@@ -124,7 +126,7 @@ export function resolveCaption(): { provider: ProviderInfo; model: string; apiKe
   const provider = (providerId && providerInfo(providerId)) || resolveChat().provider;
   return {
     provider,
-    model: getSetting("captionModel") ?? getSetting("chatModel") ?? "",
+    model: getSetting("captionModel") || getSetting("chatModel") || defaultModel(provider.id),
     apiKey: getProviderKey(provider.id),
   };
 }

@@ -31,10 +31,15 @@ export async function collectTurn(gen: AsyncGenerator<ProviderEvent>, emit: Emit
 
   for await (const ev of gen) {
     switch (ev.type) {
-      case "text":
-        text += ev.delta;
-        await emit({ type: "text_delta", text: ev.delta });
+      case "text": {
+        // Drop leading whitespace at the very start of the reply so the chat
+        // bubble never opens with blank lines (weak models often emit "\n\n…").
+        let d = ev.delta;
+        if (text.length === 0) { d = d.replace(/^\s+/, ""); if (!d) break; }
+        text += d;
+        await emit({ type: "text_delta", text: d });
         break;
+      }
       case "reasoning":
         reasoning += ev.delta;
         await emit({ type: "reasoning_delta", text: ev.delta });

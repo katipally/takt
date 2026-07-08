@@ -161,11 +161,21 @@ export const BUILTIN_PROVIDERS: BuiltinProvider[] = [
   },
 ]
 
+/** A sane default model id for a provider when the user hasn't picked one — the
+ *  first snapshot entry (curated "good default" per provider). Keeps the promise
+ *  that adding any single key and chatting Just Works with no model pick; without
+ *  it the model id is "" and every provider 400s. */
+export function defaultModel(providerId: string): string {
+  return MODEL_SNAPSHOT[providerId]?.[0] ?? ""
+}
+
 /** Small offline snapshot so the /model picker always has options (overridden by models.dev). */
 export const MODEL_SNAPSHOT: Record<string, string[]> = {
   anthropic: ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
   openai: ["gpt-5", "gpt-5-mini", "o3"],
-  google: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
+  // gemini-2.0-flash was SHUT DOWN 2026-06-01. gemini-flash-latest tracks the
+  // current flash (3.5 as of 2026-07) and never 404s.
+  google: ["gemini-flash-latest", "gemini-2.5-flash", "gemini-2.5-pro"],
   openrouter: ["anthropic/claude-opus-4-8", "openai/gpt-5", "moonshotai/kimi-k2"],
   "opencode-zen": ["claude-sonnet-4-6", "kimi-k2", "gpt-5", "minimax-m2.5"],
   groq: ["moonshotai/kimi-k2-instruct", "llama-3.3-70b-versatile"],

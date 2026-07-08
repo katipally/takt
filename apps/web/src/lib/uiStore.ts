@@ -14,8 +14,10 @@ interface UiState {
   toggleRail: () => void;
   sidebarWidth: number;
   canvasWidth: number;
+  railWidth: number; // width of the right chat rail (user-resizable)
   setSidebarWidth: (w: number) => void;
   setCanvasWidth: (w: number) => void;
+  setRailWidth: (w: number) => void;
   voiceEnabled: boolean;
   setVoiceEnabled: (v: boolean) => void;
   liveOpen: boolean;
@@ -36,14 +38,16 @@ export const useUi = create<UiState>()(
       toggleRail: () => set((s) => ({ railOpen: !s.railOpen })),
       sidebarWidth: 248,
       canvasWidth: 480,
+      railWidth: 340,
       setSidebarWidth: (w) => set({ sidebarWidth: w }),
       setCanvasWidth: (w) => set({ canvasWidth: w }),
+      setRailWidth: (w) => set({ railWidth: w }),
       voiceEnabled: false,
       setVoiceEnabled: (v) => set({ voiceEnabled: v }),
       liveOpen: false,
       setLiveOpen: (v) => set({ liveOpen: v }),
       toggleLive: () => set((s) => ({ liveOpen: !s.liveOpen })),
     }),
-    { name: "takt-ui", partialize: (s) => ({ sidebarWidth: s.sidebarWidth, canvasWidth: s.canvasWidth, voiceEnabled: s.voiceEnabled, sidebarCollapsed: s.sidebarCollapsed, railOpen: s.railOpen }) },
+    { name: "takt-ui", partialize: (s) => ({ sidebarWidth: s.sidebarWidth, canvasWidth: s.canvasWidth, railWidth: s.railWidth, voiceEnabled: s.voiceEnabled, sidebarCollapsed: s.sidebarCollapsed, railOpen: s.railOpen }) },
   ),
 );

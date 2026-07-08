@@ -53,7 +53,7 @@ export class LiveTurnRunner {
     // Build tools with THIS turn's emit so their artifact/page_image events are
     // dropped by the same epoch guard when a barge-in interrupts the turn. Drop
     // the tools that can't work in a spoken call.
-    const tools = [...buildTaktTools({ product: this.product, manuals: this.manuals, emit, chatId: this.chatId, spawnBuild }), ...this.extraTools]
+    const tools = [...buildTaktTools({ product: this.product, manuals: this.manuals, emit, chatId: this.chatId, spawnBuild, context: "main" }), ...this.extraTools]
       .filter((t) => !LIVE_TOOL_DENY.has(t.name));
     const toolDefs = tools.map(({ name, description, parameters }) => ({ name, description, parameters }));
 

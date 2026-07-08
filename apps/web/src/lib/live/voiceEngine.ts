@@ -14,7 +14,7 @@ export interface VoiceEngineHandlers {
   onPhase: (p: EnginePhase) => void;
   onPartial: (text: string) => void;      // interim user caption (greyed)
   onUserText: (text: string) => void;      // final user turn → send to server
-  onAgentText: (sentence: string) => void; // agent caption line
+  onAgentText: (sentence: string, durationMs: number) => void; // agent caption chunk + how long it plays (for word-timed reveal)
   onBargeIn: (spoken: string) => void;      // cancel the LLM stream; `spoken` = what was actually voiced so far
 }
 
@@ -207,6 +207,7 @@ export class VoiceEngine {
       if (!spoken) return;
       const { audio, sampleRate } = await tts(spoken);
       if (this.epoch !== epoch) return;
+      const durationMs = (audio.length / sampleRate) * 1000; // how long THIS chunk voices — paces the caption reveal
       if (this.phase !== "speaking") {
         this.speakingStartAt = Date.now(); this.setPhase("speaking");
         if (this.turnSentAt) { console.debug(`[live:perf] first audio ${Math.round(performance.now() - this.turnSentAt)}ms after user done`); this.turnSentAt = 0; }
@@ -220,7 +221,7 @@ export class VoiceEngine {
         // `spokenText` is exactly what was voiced, and the unspoken (still-queued)
         // tail is excluded from the saved history.
         this.spokenText += (this.spokenText ? " " : "") + spoken;
-        this.h.onAgentText(spoken);
+        this.h.onAgentText(spoken, durationMs);
       });
     }).catch((e) => { console.warn("[live] TTS failed:", e?.message ?? e); });
   }

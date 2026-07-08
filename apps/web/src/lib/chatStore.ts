@@ -309,7 +309,7 @@ export const chatStore = {
       for (const m of msgs) {
         const id = m.id;
         if (m.role === "user") {
-          next = addNode(next, { id, parentId, role: "user", text: m.content.filter((b) => b.type === "text").map((b: any) => b.text).join("") });
+          next = addNode(next, { id, parentId, role: "user", text: m.content.filter((b) => b.type === "text").map((b: any) => b.text).join(""), live: (m as any).live || undefined });
         } else {
           const parts: Part[] = [];
           for (const b of m.content) {

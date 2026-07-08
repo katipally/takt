@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { AudioLines } from "lucide-react";
 import { UIRenderer } from "@/components/ui-catalog/UIRenderer";
 import type { RenderCtx } from "@/components/ui-catalog/ctx";
 import type { UIPart } from "@/lib/chatStore";
@@ -43,6 +45,7 @@ export function Stage({
   // A freeform `Page` surface owns the WHOLE canvas (full-bleed, its own layout +
   // internal padding via the design system). Legacy catalog surfaces stay in a
   // centered reading column. Empty/building/idle keep the narrow, calm layout.
+  const reduce = useReducedMotion();
   const showingSurfaces = !empty && !building && surfaces.length > 0;
   // Full-bleed the canvas if ANY surface is a Page; each non-Page (catalog)
   // surface then keeps its own centered reading column, so a mixed turn still
@@ -52,22 +55,34 @@ export function Stage({
     <UIRenderer key={p.id} surface={p.surface} ctx={{ ...ctx, readOnly: ctx.readOnly ?? !isLatest }} animate={isLatest && streaming} />
   );
 
+  // One canvas state at a time; the placeholder states (empty · building · idle)
+  // CROSSFADE into each other so there's no hard cut when the flow moves from
+  // "working" to skeleton to answer. Surfaces render outside the crossfade (they
+  // own their layout + their own entrance animation) so their iframes never remount.
+  const mode: "empty" | "building" | "surfaces" | "idle" =
+    empty ? "empty" : building ? "building" : surfaces.length ? "surfaces" : "idle";
+  const fade = { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 }, transition: { duration: reduce ? 0 : 0.18 } };
+
   return (
     <div ref={scrollRef} className="takt-scroll relative min-h-0 flex-1 overflow-y-auto">
       {liveMode && <div aria-hidden className="pointer-events-none absolute inset-0 bg-[radial-gradient(55%_45%_at_50%_28%,var(--accent-soft,rgba(120,130,255,0.1)),transparent_70%)]" />}
-      <div className={pageMode ? "relative w-full pb-40" : "relative mx-auto w-full max-w-3xl px-6 pb-40 pt-8"}>
-        {empty ? (
-          <EmptyState heading={heading} subheading={subheading} starters={starters} onStarter={onStarter} />
-        ) : building ? (
-          <ArtifactSkeleton live={liveMode} />
-        ) : surfaces.length ? (
+      <div className={pageMode ? "relative w-full pb-48" : "relative mx-auto w-full max-w-3xl px-6 pb-48 pt-8"}>
+        {mode === "surfaces" ? (
           <div className={pageMode ? "space-y-8" : "space-y-6"}>
             {surfaces.map((p) => pageMode && !isPageSurface(p)
               ? <div key={p.id} className="mx-auto w-full max-w-3xl px-6">{renderSurface(p)}</div>
               : renderSurface(p))}
           </div>
         ) : (
-          <ArtifactIdle streaming={streaming} live={liveMode} />
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div key={mode} {...fade}>
+              {mode === "empty"
+                ? <EmptyState heading={heading} subheading={subheading} starters={starters} onStarter={onStarter} />
+                : mode === "building"
+                ? <ArtifactSkeleton live={liveMode} />
+                : <ArtifactIdle streaming={streaming} live={liveMode} />}
+            </motion.div>
+          </AnimatePresence>
         )}
       </div>
     </div>
@@ -102,18 +117,42 @@ function ArtifactSkeleton({ live }: { live?: boolean }) {
 }
 
 // Calm placeholder when the current reply carries no artifact (a purely
-// conversational answer lives in the chat).
+// conversational answer lives in the chat). Live mode gets its own animated
+// "listening" view — the canvas is the stage for a voice call even when idle.
 function ArtifactIdle({ streaming, live }: { streaming: boolean; live?: boolean }) {
+  if (live) return <LiveIdle streaming={streaming} />;
   return (
     <div className="flex min-h-[55vh] flex-col items-center justify-center text-center">
       {streaming ? (
         <span className="arc-shimmer text-[13px] font-medium text-muted-foreground">Working…</span>
       ) : (
         <>
-          <div className="text-[13px] text-muted-foreground">{live ? "Talking with Takt" : "The reply is in the chat"}</div>
+          <div className="text-[13px] text-muted-foreground">The reply is in the chat</div>
           <div className="mt-1 max-w-xs text-[12px] text-faint">Diagrams, cropped figures, 3D parts, video and step-by-step guides appear here when they help explain something.</div>
         </>
       )}
+    </div>
+  );
+}
+
+// Live-call empty/idle canvas: a breathing "listening" orb with pulsing rings so
+// the stage feels alive during a voice call before any visual is built.
+function LiveIdle({ streaming }: { streaming: boolean }) {
+  return (
+    <div className="flex min-h-[55vh] flex-col items-center justify-center text-center">
+      <div className="relative mb-7 grid size-24 place-items-center">
+        <span className="absolute inset-0 rounded-full bg-accent/10 motion-safe:animate-ping" />
+        <span className="absolute inset-2 rounded-full bg-accent/10 motion-safe:animate-ping" style={{ animationDelay: "0.7s" }} />
+        <motion.span
+          className="grid size-14 place-items-center rounded-full bg-accent/20 text-accent"
+          animate={{ scale: [1, 1.08, 1] }}
+          transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
+        >
+          <AudioLines className="size-6" />
+        </motion.span>
+      </div>
+      <div className="text-[13px] font-medium text-foreground">{streaming ? "Takt is thinking…" : "Talking with Takt"}</div>
+      <div className="mt-1 max-w-xs text-[12px] text-faint">Diagrams, cropped figures, 3D parts and step-by-step guides appear here as you talk.</div>
     </div>
   );
 }

@@ -42,7 +42,9 @@ export function Orb({ phase, getLevels, size = 240 }: { phase: LivePhase; getLev
       // Target amplitude 0..1: mic when listening, agent when speaking, a soft
       // sine while busy, near-flat when idle/reduced-motion.
       let amp = 0;
-      if (p === "speaking") amp = Math.min(1, agent * 4);
+      // Speaking: the analyser gives a live, moving amplitude — plus a gentle base
+      // wobble so the orb keeps breathing through quiet syllables (never goes flat).
+      if (p === "speaking") amp = Math.min(1, agent * 4 + 0.06 * (1 + Math.sin(time * 6)));
       else if (p === "listening" || p === "idle") amp = Math.min(1, mic * 4);
       else if (busy) amp = 0.35 + 0.2 * Math.sin(time * 3);
       if (reduce) amp = busy ? 0.3 : Math.min(0.3, amp);

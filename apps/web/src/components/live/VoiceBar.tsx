@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
-import { motion } from "motion/react";
+import { useEffect, useState } from "react";
+import { motion, useReducedMotion } from "motion/react";
 import { Mic, MicOff, Video, VideoOff, PhoneOff, Hand } from "lucide-react";
 import { useLiveStore, type LivePhase } from "@/lib/live/liveStore";
 import { Orb } from "./Orb";
@@ -23,7 +23,32 @@ export function VoiceBar({
   toggleMute: () => void; setPtt: (v: boolean) => void; holdTalk: (v: boolean) => void; toggleCamera: () => void | Promise<void>;
   getLevels: () => { mic: number; agent: number }; onEnd: () => void;
 }) {
-  const { userCaption, userPartial, agentCaption } = useLiveStore();
+  const { userCaption, userPartial, agentCaption, agentCaptionMs } = useLiveStore();
+  const reduce = useReducedMotion();
+
+  // Karaoke subtitle: reveal the agent's current chunk a few words at a time,
+  // paced to how long it actually voices — so the bar shows the ~3-4 words being
+  // spoken RIGHT NOW, not the whole sentence dumped at once.
+  const [agentWindow, setAgentWindow] = useState("");
+  useEffect(() => {
+    const words = agentCaption.split(/\s+/).filter(Boolean);
+    if (words.length <= 4) { setAgentWindow(words.join(" ")); return; }
+    const dur = agentCaptionMs > 0 ? agentCaptionMs : words.length * 320;
+    const WINDOW = 4;
+    const start = performance.now();
+    let raf = 0;
+    const tick = () => {
+      const frac = Math.min(1, (performance.now() - start) / dur);
+      const idx = Math.max(1, Math.min(words.length, Math.ceil(frac * words.length)));
+      setAgentWindow(words.slice(Math.max(0, idx - WINDOW), idx).join(" "));
+      if (frac < 1) raf = requestAnimationFrame(tick);
+    };
+    tick();
+    return () => cancelAnimationFrame(raf);
+  }, [agentCaption, agentCaptionMs]);
+  // MUST match Composer's morph spring so the composer ⇄ voice-bar shape animates
+  // identically in both directions (layoutId "takt-dock").
+  const morph = reduce ? { duration: 0 } : { type: "spring" as const, stiffness: 400, damping: 34, mass: 0.9 };
 
   useEffect(() => {
     if (!pttEnabled) return;
@@ -38,15 +63,16 @@ export function VoiceBar({
   const subtitle = userPartial && userCaption
     ? <span className="italic text-muted-foreground">{userCaption}</span>
     : agentCaption
-      ? <span className="text-foreground">{agentCaption}</span>
+      ? <span className="font-medium text-foreground">{agentWindow || agentCaption}</span>
       : <span className="text-muted-foreground">{PHASE_LABEL[phase] || "Listening…"}</span>;
 
   return (
     <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex flex-col">
-      <div className="h-14 bg-gradient-to-t from-card to-transparent" />
-      <div className="pointer-events-auto bg-card/85 backdrop-blur-sm">
+      {/* Transparent wrapper — NO band, NO backdrop-blur; the stage shows through
+          everywhere except the bar pill itself, which carries its own lift. */}
+      <div className="pointer-events-auto">
         <div className="mx-auto w-full max-w-3xl px-5 pb-5">
-          <motion.div layoutId="takt-dock" className="flex items-center gap-3 rounded-[20px] border border-border bg-surface px-3 py-2.5 shadow-[var(--shadow-card)]">
+          <motion.div layoutId="takt-dock" transition={morph} className="flex items-center gap-3 rounded-[20px] border border-border bg-surface px-3 py-2.5 shadow-[0_10px_34px_-10px_rgba(0,0,0,0.32)]">
             {/* orb, inside the bar — the elements fade in as the composer morphs */}
             <motion.div initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.12 }} className="grid size-11 shrink-0 place-items-center"><Orb phase={phase} getLevels={getLevels} size={44} /></motion.div>
 

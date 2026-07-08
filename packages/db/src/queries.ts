@@ -324,12 +324,12 @@ export function getSuggestions(productId: string | null, limit = 4): string[] {
   return merged;
 }
 
-export function addMessage(chatId: string, role: MessageRole, content: MessageBlock[]): ChatMessage {
+export function addMessage(chatId: string, role: MessageRole, content: MessageBlock[], live = false): ChatMessage {
   const id = randomUUID();
-  db().prepare(`INSERT INTO messages (id, chat_id, role, content_json) VALUES (?,?,?,?)`)
-    .run(id, chatId, role, JSON.stringify(content));
+  db().prepare(`INSERT INTO messages (id, chat_id, role, content_json, live) VALUES (?,?,?,?,?)`)
+    .run(id, chatId, role, JSON.stringify(content), live ? 1 : 0);
   return db().prepare(
-    `SELECT id, chat_id AS chatId, role, content_json AS content, created_at AS createdAt FROM messages WHERE id=?`,
+    `SELECT id, chat_id AS chatId, role, content_json AS content, live, created_at AS createdAt FROM messages WHERE id=?`,
   ).get(id) as any as ChatMessage;
 }
 
@@ -339,10 +339,10 @@ export function listMessages(chatId: string): ChatMessage[] {
     // written in the same second tie. `rowid` (monotonic insertion order) breaks
     // the tie — otherwise reloaded live chats reorder (assistant before its user)
     // and the transcript "breaks up".
-    `SELECT id, chat_id AS chatId, role, content_json AS content, created_at AS createdAt
+    `SELECT id, chat_id AS chatId, role, content_json AS content, live, created_at AS createdAt
      FROM messages WHERE chat_id=? ORDER BY created_at, rowid`,
   ).all(chatId) as any[];
-  return rows.map((r) => ({ ...r, content: JSON.parse(r.content) as MessageBlock[] }));
+  return rows.map((r) => ({ ...r, live: !!r.live, content: JSON.parse(r.content) as MessageBlock[] }));
 }
 
 /** Overwrite a message's blocks — used to re-persist an assistant turn after a

@@ -9,7 +9,7 @@ import { askQuestionsSchema, uiSurfaceSchema, validateSurface, surfacePartId } f
 import { lintSurface, p0, lintFeedback } from "./lint-surface.js";
 import {
   DATA_DIR, getPageImage,
-  listProducts, getProductBySlug,
+  listProducts, getProductBySlug, listMessages,
 } from "@takt/db";
 import {
   profileExists, listConcepts, readConcept, readIndex, generateIndex, grepProfile,
@@ -51,6 +51,27 @@ function htmlToText(html: string): string {
     .replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&quot;/g, '"')
     .replace(/\s+/g, " ")
     .trim();
+}
+
+// Strip media whose `/assets` src was NOT returned by a tool this turn — kills
+// invented URLs (e.g. a hallucinated `*.glb`) that would 404. Only touches Page
+// html + a catalog node's `src`; leaves data: URIs and non-/assets srcs alone.
+function sanitizeSurfaceMedia(surface: any, allowed: Set<string>): any {
+  const assetPath = (s: string): string | null => s.match(/\/assets\/[^"'?\s)]+/)?.[0] ?? null;
+  const badTag = (tag: string): boolean => {
+    const s = tag.match(/src=["']([^"']+)["']/i)?.[1];
+    const p = s ? assetPath(s) : null;
+    return p ? !allowed.has(p) : false; // only judge /assets srcs; leave data:/others
+  };
+  const clean = (html: string): string => html
+    .replace(/<(takt-figure|takt-model|takt-video)\b[^>]*>[\s\S]*?<\/\1>/gi, (m) => (badTag(m) ? "" : m))
+    .replace(/<(?:takt-figure|takt-model|takt-video|img)\b[^>]*?\/?>/gi, (m) => (badTag(m) ? "" : m));
+  const nodes = (surface.nodes ?? []).map((n: any) => {
+    if (n?.type === "Page" && n?.props && typeof n.props.html === "string") return { ...n, props: { ...n.props, html: clean(n.props.html) } };
+    if (typeof n?.props?.src === "string") { const p = assetPath(n.props.src); if (p && !allowed.has(p)) return { ...n, props: { ...n.props, src: "" } }; }
+    return n;
+  });
+  return { ...surface, nodes };
 }
 
 // Zod shape → JSON Schema for the model. Inline refs and drop $schema so every
@@ -125,8 +146,8 @@ export async function withCoordGrid(buf: Buffer): Promise<Buffer> {
   return sharp(buf).composite([{ input: svg, top: 0, left: 0 }]).png().toBuffer();
 }
 
-export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]; emit: Emit; chatId?: string; spawnBuild?: (brief: string, key?: string) => void }): TaktTool[] {
-  const { product, emit, chatId, spawnBuild } = ctx;
+export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]; emit: Emit; chatId?: string; spawnBuild?: (brief: string, key?: string) => void; context?: "main" | "build"; allowedAssets?: Set<string> }): TaktTool[] {
+  const { product, emit, chatId, spawnBuild, context = "main", allowedAssets } = ctx;
   // Master mode = no single product selected → cross-product tools; the page
   // tools then require a `product` slug to say which product to read from.
   const masterMode = !product;
@@ -314,13 +335,16 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
       const id = randomUUID();
       const title = typeof args?.title === "string" && args.title ? args.title : "answer";
       await emit({ type: "tool_start", id, tool: "emit_ui", summary: title });
-      // Auto-heal the common LLM mistakes so a valid-nodes surface isn't rejected
-      // over trivial top-level fields (weaker models — e.g. MiniMax — often omit
-      // `id`/`root` entirely). Saves a slow reject/retry round-trip.
+      // Auto-heal common LLM mistakes so a mostly-valid surface isn't rejected
+      // over trivial issues (weaker models — e.g. MiniMax — omit id/root, or slip
+      // in a malformed node). Saves a slow reject/retry round-trip.
+      if (args && typeof args === "object" && Array.isArray(args.nodes)) {
+        // Drop structurally-unusable nodes (no id/type) so one bad node doesn't
+        // sink the whole surface, THEN heal id/root from what remains.
+        args.nodes = args.nodes.filter((n: any) => n && typeof n === "object" && typeof n.id === "string" && typeof n.type === "string");
+      }
       if (args && typeof args === "object" && Array.isArray(args.nodes) && args.nodes.length) {
-        // `id` is just a surface identifier — fill it if missing.
         if (typeof (args as any).id !== "string" || !(args as any).id) (args as any).id = id;
-        // `root` must name a node: heal it if missing or pointing at an unknown id.
         const ids = new Set(args.nodes.map((n: any) => n?.id));
         if (!ids.has(args.root)) {
           const childIds = new Set(args.nodes.flatMap((n: any) => (Array.isArray(n?.children) ? n.children : [])));
@@ -331,19 +355,26 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
       const res = validateSurface(args);
       if (!res.ok) {
         await emit({ type: "tool_done", id, detail: `needs fixing: ${res.errors.slice(0, 2).map((e) => `${e.path} ${e.message}`).join("; ")}`.slice(0, 160) });
-        return text(`UI surface rejected — fix these and call emit_ui again with the SAME key:\n- ${res.errors.map((e) => `${e.path}: ${e.message}`).join("\n- ")}`);
+        // isError so the build worker knows it did NOT emit (its `emitted` guard is
+        // `!res.isError`); otherwise a rejected surface reads as success, the worker
+        // stops, and the guaranteed fallback never fires → empty canvas.
+        return { output: `UI surface rejected — fix these and call emit_ui again with the SAME key:\n- ${res.errors.map((e) => `${e.path}: ${e.message}`).join("\n- ")}`, isError: true };
       }
       const partId = surfacePartId(res.surface);
+      // Media allow-list: strip any /assets src the tools didn't actually return
+      // this build (invented URLs → 404). Active when the caller passes the set
+      // (the build worker does — see subagent.ts).
+      const surface = allowedAssets ? sanitizeSurfaceMedia(res.surface, allowedAssets) : res.surface;
       // Anti-slop design gate (Page surfaces only). Reject P0 issues ONCE per key
       // so the model revises before anything shows; then let it through.
-      const lint = lintSurface(res.surface);
+      const lint = lintSurface(surface);
       const hard = p0(lint);
       if (hard.length && !lintRejected.has(partId)) {
         lintRejected.add(partId);
         await emit({ type: "tool_done", id, detail: `design fixes: ${hard.map((f) => f.rule).join(", ")}`.slice(0, 160) });
-        return text(lintFeedback(hard));
+        return { output: lintFeedback(hard), isError: true }; // isError → worker retries (see above)
       }
-      await emit({ type: "ui_surface", partId, surface: { ...res.surface, id: res.surface.id || partId } });
+      await emit({ type: "ui_surface", partId, surface: { ...surface, id: surface.id || partId } });
       await emit({ type: "tool_done", id, detail: "rendered" });
       const advisories = lint.filter((f) => f.level !== "P0");
       const note = advisories.length ? ` (next time: ${advisories.slice(0, 2).map((f) => f.rule).join(", ")})` : "";
@@ -356,7 +387,7 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
   // appears on the stage when ready. Only present when a build lane is available.
   const delegateBuild: TaktTool | null = spawnBuild ? {
     name: "delegate_build",
-    description: "Delegate building a designed visual (diagram, chart, annotated page, comparison, procedure, calculator) to a background worker, so you can keep answering the user WITHOUT waiting. Reach for this whenever a visual would help — especially when the answer draws on the product's sources (a figure to crop, specs to chart/table). The worker searches sources and composes the surface itself; it lands on the stage when done. Call this, tell the user in one line you're putting the visual together, and continue. Use the SAME `key` to revise a prior visual. Prefer delegate_build over emit_ui when the visual needs source-gathering; use emit_ui yourself only for a trivial surface you already have all the data for.",
+    description: "Put a designed visual answer on the CANVAS — a diagram, chart, annotated figure, comparison, procedure, spec sheet, or calculator. This is THE (only) way to show something on the canvas. A background worker gathers the real sources itself (crops the figure, pulls the 3D part, tables the specs) and composes the page — so you do NOT gather figures or design anything yourself. Call it with a clear brief, tell the user in ONE short line you're putting it together, and keep talking; it lands on the stage when ready. Reuse the SAME `key` to revise a prior visual.",
     parameters: params({
       brief: z.string().min(1).describe("What to build, with enough detail for the worker to gather sources and design it (e.g. 'annotated diagram of the fuse box from p.42 with each fuse labeled')"),
       key: z.string().optional().describe("Reuse a prior visual's key to publish a new version; omit for a new one"),
@@ -613,15 +644,60 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
     },
   };
 
+  // See what's currently ON the canvas — the agent DELEGATES the build and never
+  // sees the result, so without this it can't answer "what's on the canvas",
+  // "explain the title", or decide how to revise it. Reads the latest ui surface
+  // persisted for this chat and returns its readable text (title + body).
+  const readCanvasTool: TaktTool = {
+    name: "read_canvas",
+    description: "See what's on the CANVAS right now — the title and text of the visual you last built there. Call this BEFORE answering any question about the canvas ('what's on it', 'explain the title', 'what does this show'), and before revising it, so you speak about what's actually shown instead of guessing. Returns the current surface's text, or says the canvas is empty.",
+    parameters: params({}),
+    execute: async () => {
+      if (!chatId) return text("The canvas is empty — nothing has been built yet.");
+      let surface: any = null;
+      try {
+        const msgs = listMessages(chatId);
+        outer: for (let i = msgs.length - 1; i >= 0; i--) {
+          const blocks = msgs[i]!.content as any[];
+          for (let j = blocks.length - 1; j >= 0; j--) {
+            if (blocks[j]?.type === "ui" && blocks[j]?.surface) { surface = blocks[j].surface; break outer; }
+          }
+        }
+      } catch { /* db read best-effort */ }
+      if (!surface) return text("The canvas is empty — nothing has been built there yet. Use delegate_build to create a visual.");
+      const page = (surface.nodes ?? []).find((n: any) => n.id === surface.root && n.type === "Page");
+      let body = "";
+      if (page?.props?.html) body = htmlToText(page.props.html);
+      else body = (surface.nodes ?? [])
+        .map((n: any) => { const p = n?.props ?? {}; return [p.title, p.text, p.caption, p.label, p.markdown, p.content, p.value].filter((x) => typeof x === "string").join(" "); })
+        .filter(Boolean).join("\n");
+      body = body.replace(/\s+/g, " ").trim().slice(0, 2500);
+      const title = typeof surface.title === "string" ? surface.title : "";
+      return text(`CANVAS — what is on it right now${title ? ` (title: "${title}")` : ""}:\n${body || "(a visual with no readable text)"}`);
+    },
+  };
+
   // Retrieval is Direct Corpus Interaction over the Profile markdown — list (map)
   // → grep (find) → read (full concept). Works the same in single-product and
   // master mode. get_page_image/crop show pages; list_products + fetch_url both modes.
-  return [
+  const all = [
     // Graph/semantic retrieval first — the primary way to answer a product
     // question; legacy grep/list/read follow as exact-term / browse fallbacks.
     findEntityTool, searchProductTool, walkGraphTool, getAnchorsTool, queryProductTool, productMapTool,
     grepProfileTool, listProfileTool, readProfile,
     getPageImageTool, cropPageImage,
-    emitUi, ...(delegateBuild ? [delegateBuild] : []), updateTodos, listProductsTool, askUser, fetchUrl,
+    emitUi, ...(delegateBuild ? [delegateBuild] : []), readCanvasTool, updateTodos, listProductsTool, askUser, fetchUrl,
   ];
+  // ONE canvas path. The MAIN agent can only DELEGATE a visual (delegate_build →
+  // the robust background worker); it never composes a surface inline, so the
+  // fragile inline-emit path (empty canvas, no fallback, no media check) it used
+  // to pick simply doesn't exist for it. emit_ui is the WORKER's internal
+  // primitive; the worker in turn has no delegate/ask.
+  if (context === "build") return all.filter((t) => t.name !== "delegate_build" && t.name !== "ask_user");
+  // MAIN agent grounds chat facts with TEXT retrieval (find/grep/query/walk/read)
+  // and DELEGATES anything visual. It does not get the surface-building tools
+  // (emit_ui) or the media-gathering tools (get_page_image/crop/get_anchors) — those
+  // are the worker's — so a weak model can't spiral gathering figures it can't use.
+  const mainDeny = new Set(["emit_ui", "get_page_image", "crop_page_image", "get_anchors"]);
+  return all.filter((t) => !mainDeny.has(t.name));
 }

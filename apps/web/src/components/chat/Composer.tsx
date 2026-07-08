@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { motion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 import { ArrowUp, Square, Mic, Volume2, VolumeX, Plus, X, AudioLines } from "lucide-react";
 import type { Attachment } from "@/lib/chatStore";
 import { cn } from "@/lib/cn";
@@ -18,6 +18,11 @@ export function Composer({
   setVoiceEnabled: (v: boolean) => void;
   onOpenLive: () => void;
 }) {
+  const reduce = useReducedMotion();
+  // Shared morph spring for the composer ⇄ voice-bar transition (layoutId
+  // "takt-dock"). MUST match VoiceBar's so the shape animates identically both
+  // ways — normal → live and back.
+  const morph = reduce ? { duration: 0 } : { type: "spring" as const, stiffness: 400, damping: 34, mass: 0.9 };
   const [value, setValue] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [listening, setListening] = useState(false);
@@ -66,7 +71,7 @@ export function Composer({
 
   return (
     <div className="mx-auto w-full max-w-3xl px-5 pb-3">
-      <motion.div layoutId="takt-dock" className="rounded-[20px] border border-border bg-surface transition focus-within:border-border-heavy">
+      <motion.div layoutId="takt-dock" transition={morph} className="rounded-[20px] border border-border bg-surface shadow-[0_10px_34px_-10px_rgba(0,0,0,0.30)] transition-[box-shadow,border-color] focus-within:border-border-heavy focus-within:shadow-[0_14px_42px_-10px_rgba(0,0,0,0.40)]">
         {attachments.length > 0 && (
           <div className="flex flex-wrap gap-2 px-3 pt-3">
             {attachments.map((a) => (

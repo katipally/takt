@@ -131,8 +131,14 @@ takt-cite{cursor:pointer}
    Images BLEED into the column (no boxy border); a hairline under the caption,
    newspaper-style. Variants: default column · lead (wider, rounded) · inset
    (floats so body text WRAPS around it, like a real newspaper column). */
-figure.takt-figure{margin:0;display:block}
+/* Manual crops are white-background scans. Frame each in a fixed LIGHT "paper"
+   card (both themes) so it reads as an intentional clipping from the manual
+   instead of a jarring white block on the dark canvas. */
+figure.takt-figure{margin:0;display:block;background:#f7f6f2;border:1px solid rgba(20,20,18,.1);border-radius:var(--takt-radius);padding:.5rem .5rem 0;box-shadow:0 1px 2px rgba(0,0,0,.05)}
 figure.takt-figure img{width:100%;display:block;border-radius:var(--takt-radius-sm);cursor:zoom-in}
+/* caption sits on the light card → fixed dark tones so it stays legible in dark mode */
+figure.takt-figure figcaption{color:#6a6a66;border-top-color:rgba(20,20,18,.12)}
+figure.takt-figure figcaption .fignum{color:#c2521a}
 figure.takt-figure figcaption,.takt-mediacap{font-family:var(--takt-sans);font-size:.78rem;line-height:1.4;color:var(--takt-muted);
   margin-top:.55em;padding-top:.5em;border-top:1px solid var(--takt-border)}
 figure.takt-figure figcaption .fignum{color:var(--takt-arc);font-weight:650}

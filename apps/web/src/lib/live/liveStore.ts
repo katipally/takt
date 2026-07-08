@@ -23,6 +23,7 @@ interface LiveState {
   userCaption: string;
   userPartial: boolean; // true while the user caption is still interim (greyed)
   agentCaption: string;
+  agentCaptionMs: number; // playback duration of the current agent chunk — paces the word-by-word caption reveal
   error?: string;
   micId?: string;
   camId?: string;
@@ -50,6 +51,7 @@ export const useLiveStore = create<LiveState>((set) => ({
   userCaption: "",
   userPartial: false,
   agentCaption: "",
+  agentCaptionMs: 0,
   mics: [],
   cams: [],
   set: (p) => set(p),

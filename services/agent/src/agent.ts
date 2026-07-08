@@ -100,7 +100,7 @@ export async function runAgent(req: ChatRequest, emit: Emit, signal?: AbortSigna
     pendingBuilds.push(runBuildSubagent({ brief, key, product, manuals, context: ctxMsgs, emit, signal: ac.signal }));
   };
 
-  const tools = buildTaktTools({ product, manuals, emit, chatId: req.chatId, spawnBuild });
+  const tools = buildTaktTools({ product, manuals, emit, chatId: req.chatId, spawnBuild, context: "main" });
   const toolDefs = tools.map(({ name, description, parameters }) => ({ name, description, parameters }));
 
   // Proper role-alternating history (like live mode) — NOT one flattened user

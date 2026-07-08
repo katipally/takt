@@ -6,7 +6,7 @@ import { LiveClient } from "./liveClient";
 import { CameraCapture } from "./cameraCapture";
 import { AudioPlayer } from "./audioPlayback";
 import { VoiceEngine, type EnginePhase } from "./voiceEngine";
-import { loadModels, disposeModels, modelsReady } from "./models";
+import { loadModels, disposeModels, modelsReady, modelsCached } from "./models";
 import { useLiveStore } from "./liveStore";
 
 // Orchestrates one live call. THICK CLIENT: the VoiceEngine runs VAD+STT+TTS
@@ -23,11 +23,20 @@ export function useLiveSession(chatId: string, productSlug: string | null) {
   const assistantId = useRef<string | null>(null);
   const tornDown = useRef(false);
   const onPageHide = useRef<() => void>(() => {});
+  // Word-by-word transcript reveal, synced to the VOICE (not the generated stream):
+  // `spokenPrev` = chunks fully voiced, `curChunk` = the one revealing now, `revealRaf`
+  // = its animation frame. So the chat text always equals what's actually been said.
+  const spokenPrev = useRef("");
+  const curChunk = useRef<string | null>(null);
+  const revealRaf = useRef<number | null>(null);
+  const stopReveal = () => { if (revealRaf.current != null) { cancelAnimationFrame(revealRaf.current); revealRaf.current = null; } };
+  const resetTranscript = () => { stopReveal(); spokenPrev.current = ""; curChunk.current = null; };
 
   // ── single teardown authority — releases EVERYTHING, always ───────────────
   const teardown = useCallback(() => {
     if (tornDown.current) return;
     tornDown.current = true;
+    stopReveal();
     window.removeEventListener("pagehide", onPageHide.current);
     try { client.current?.close(); } catch { /* */ }
     try { engine.current?.stop(); } catch { /* */ }              // destroys VAD + closes audio
@@ -71,15 +80,43 @@ export function useLiveSession(chatId: string, productSlug: string | null) {
         onPhase: (p: EnginePhase) => set(p === "listening" ? { phase: p, agentCaption: "" } : { phase: p }),
         onPartial: (text) => set({ userCaption: text, userPartial: true }),
         onUserText: (text) => void handleUserText(text),
-        // Subtitle, not transcript: show ONLY the chunk being spoken right now
-        // (replace, don't accumulate) — the full reply lives in the chat panel.
-        onAgentText: (sentence) => set({ agentCaption: sentence }),
+        // A chunk just STARTED voicing. Drive TWO things from it: the composer
+        // subtitle (rolling 3-4 word window — VoiceBar reads agentCaption) AND the
+        // chat transcript, which types this chunk word-by-word in lockstep with the
+        // audio so the panel shows exactly what's been said (honest on barge-in).
+        onAgentText: (sentence, durationMs) => {
+          set({ agentCaption: sentence, agentCaptionMs: durationMs });
+          // The previous chunk's audio has finished (this one is now playing) — commit it.
+          if (curChunk.current) spokenPrev.current = spokenPrev.current ? `${spokenPrev.current} ${curChunk.current}` : curChunk.current;
+          curChunk.current = sentence;
+          stopReveal();
+          const id = assistantId.current;
+          if (!id) return;
+          const words = sentence.split(/\s+/).filter(Boolean);
+          const prev = spokenPrev.current;
+          const dur = durationMs > 0 ? durationMs : words.length * 320;
+          const startedAt = performance.now();
+          const step = () => {
+            if (id !== assistantId.current) return; // turn moved on
+            const frac = Math.min(1, (performance.now() - startedAt) / dur);
+            const idx = Math.max(1, Math.min(words.length, Math.ceil(frac * words.length)));
+            const revealed = words.slice(0, idx).join(" ");
+            chatStore.liveSetText(chatId, id, prev ? `${prev} ${revealed}` : revealed);
+            if (frac < 1) { revealRaf.current = requestAnimationFrame(step); }
+            else { revealRaf.current = null; spokenPrev.current = prev ? `${prev} ${sentence}` : sentence; curChunk.current = null; }
+          };
+          step();
+        },
         // Barge-in: cancel the server turn AND drop the stale caption immediately,
         // so interrupting gives instant "I'm listening" feedback.
         onBargeIn: (spoken) => {
           client.current?.cancel(spoken);
           // Truncate the assistant node to what was actually spoken — the server
           // persists the same cutoff, so the panel and the saved history agree.
+          // Stop the in-flight word reveal and snap the transcript to `spoken`
+          // (the engine's authoritative, sentence-granular cutoff).
+          stopReveal();
+          spokenPrev.current = spoken; curChunk.current = null;
           if (assistantId.current && spoken) chatStore.liveSetText(chatId, assistantId.current, spoken);
           set({ agentCaption: "", userCaption: "", userPartial: false });
         },
@@ -98,7 +135,10 @@ export function useLiveSession(chatId: string, productSlug: string | null) {
         onError: (m) => set({ error: m }),
         onSse: (e) => {
           if (e.type === "error") { set({ error: e.message }); return; }
-          if (e.type === "text_delta") engine.current?.feedAgentDelta(e.text);
+          // Prose text drives the VOICE only; the chat transcript is filled word-by-word
+          // as each chunk is spoken (onAgentText), NOT from the generated stream (which
+          // races ahead) — so an interrupt leaves the panel showing only what was said.
+          if (e.type === "text_delta") { engine.current?.feedAgentDelta(e.text); return; }
           if (e.type === "done") {
             engine.current?.endAgentTurn();
             // Finish the spoken turn but KEEP assistantId pointing at it: a
@@ -148,6 +188,7 @@ export function useLiveSession(chatId: string, productSlug: string | null) {
     turns.push({ role: "user", text });
     set({ turns: turns.slice(-40), userCaption: "", userPartial: false, agentCaption: "" });
     if (assistantId.current) chatStore.liveFinish(chatId, assistantId.current);
+    resetTranscript(); // new turn → the word reveal starts fresh (don't carry prior spoken text)
     assistantId.current = chatStore.liveUserTurn(chatId, productSlug, text);
   }, [chatId, productSlug, set]);
 
@@ -165,7 +206,13 @@ export function useLiveSession(chatId: string, productSlug: string | null) {
   }, [set]);
 
   const refreshDevices = useCallback(async () => {
-    set({ modelsDownloaded: modelsReady() }); // reflect warm/cached models in the UI
+    // Cached (from a prior session's Cache-API weights) counts as "downloaded" so
+    // the pre-call screen never re-asks after a refresh. If cached but the worker
+    // isn't warm in THIS page, silently pre-load it in the background so hitting
+    // start is instant — no visible progress bar (it reads from cache, fast).
+    const cached = modelsCached();
+    set({ modelsDownloaded: cached || modelsReady() });
+    if (cached && !modelsReady()) void loadModels(() => {}).catch(() => {});
     try {
       const devs = await navigator.mediaDevices.enumerateDevices();
       set({

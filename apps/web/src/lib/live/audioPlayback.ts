@@ -11,6 +11,8 @@ export class AudioPlayer {
   private ctx: AudioContext | null = null;
   private sink: MediaStreamAudioDestinationNode | null = null;
   private el: HTMLAudioElement | null = null;
+  private analyser: AnalyserNode | null = null;   // taps the output for LIVE amplitude
+  private tap: Float32Array | null = null;         // reusable time-domain buffer
   private nextAt = 0;
   private runStart = 0; // start time of the current continuous speaking run
   private minEpoch = 0;
@@ -22,6 +24,11 @@ export class AudioPlayer {
     if (!this.ctx) {
       this.ctx = new AudioContext();
       this.sink = this.ctx.createMediaStreamDestination();
+      // A parallel analyser tap so level() reflects the REAL, moment-to-moment
+      // voice amplitude (drives a lively orb) instead of a static per-chunk RMS.
+      this.analyser = this.ctx.createAnalyser();
+      this.analyser.fftSize = 256;
+      this.tap = new Float32Array(this.analyser.fftSize);
       const el = document.createElement("audio");
       el.autoplay = true;
       el.setAttribute("playsinline", "");
@@ -49,6 +56,7 @@ export class AudioPlayer {
     const src = ctx.createBufferSource();
     src.buffer = buf;
     src.connect(this.sink!); // → MediaStreamDestination → <audio> (AEC-visible)
+    if (this.analyser) src.connect(this.analyser); // parallel tap (no audio output)
     const startAt = Math.max(ctx.currentTime + 0.02, this.nextAt);
     if (this.nextAt <= ctx.currentTime) this.runStart = startAt; // fresh run after a gap
     src.start(startAt);
@@ -72,7 +80,17 @@ export class AudioPlayer {
     this.rms = 0;
   }
 
-  level() { return this.rms; }
+  // Live output amplitude from the analyser tap (0..~1) while audio plays — a
+  // moving value so the orb pulses with the voice. Falls back to the last chunk's
+  // static RMS if the analyser isn't available or nothing is scheduled.
+  level() {
+    if (this.analyser && this.tap && this.sources.size > 0) {
+      this.analyser.getFloatTimeDomainData(this.tap as Float32Array<ArrayBuffer>);
+      let sum = 0; for (let i = 0; i < this.tap.length; i++) sum += this.tap[i]! * this.tap[i]!;
+      return Math.sqrt(sum / this.tap.length);
+    }
+    return this.sources.size > 0 ? this.rms : 0;
+  }
   /** 0..1 fraction of the current speaking run's audio that has played — drives
    *  word-by-word caption reveal so the text tracks the actual voice. */
   progress() {
@@ -85,6 +103,6 @@ export class AudioPlayer {
     this.flush(Number.MAX_SAFE_INTEGER);
     try { this.el?.pause(); this.el?.remove(); } catch { /* */ }
     try { void this.ctx?.close(); } catch { /* */ }
-    this.el = null; this.sink = null; this.ctx = null;
+    this.el = null; this.sink = null; this.ctx = null; this.analyser = null; this.tap = null;
   }
 }

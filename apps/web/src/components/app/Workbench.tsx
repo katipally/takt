@@ -43,13 +43,21 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
   const heading = productName ?? (isMaster ? "Takt" : "");
   const empty = wb.messages.length === 0;
   const prompts = starters?.length ? starters : STARTERS;
-  const { sidebarCollapsed, toggleSidebar, railOpen, toggleRail, liveOpen, setLiveOpen } = useUi();
+  const { sidebarCollapsed, toggleSidebar, railOpen, toggleRail, liveOpen, setLiveOpen, railWidth, setRailWidth } = useUi();
   const liveActive = useLiveStore((s) => s.active);
   const reduce = useReducedMotion();
   const [drawerOpen, setDrawerOpen] = useState(false); // mobile sidebar
   const [sheetOpen, setSheetOpen] = useState(false);    // mobile activity sheet
   const [viewUserId, setViewUserId] = useState<string | null>(null); // which turn on stage (null = latest)
+  const [resizing, setResizing] = useState(false);
+  const [handleHover, setHandleHover] = useState(false);
   const widthTransition = reduce ? { duration: 0 } : { type: "spring" as const, stiffness: 380, damping: 40 };
+  // Rail width: user-draggable when open, collapsed to a slim strip when closed.
+  // Canvas is flex-1 so it reflows automatically as this changes. While dragging we
+  // kill the width spring (instant follow) and overlay the page so pointer moves
+  // aren't swallowed by the canvas iframe.
+  const railW = railOpen ? railWidth : 44;
+  const onResizeMove = (e: React.PointerEvent) => { setRailWidth(Math.max(300, Math.min(640, window.innerWidth - e.clientX - 8))); };
 
   // A fresh send/edit/regenerate snaps the stage back to the latest answer.
   const follow = () => setViewUserId(null);
@@ -72,17 +80,18 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
   // one (status is "Designing…") show a skeleton; otherwise show this turn's
   // artifact, and if it has none, hold the most recent artifact in the thread so
   // the canvas doesn't blank on a conversational follow-up.
-  const isDesigning = (s?: string | null) => !!s && /desig|visual|building/i.test(s);
   const viewSurfaces: UIPart[] = view?.assistant?.parts.filter((p): p is UIPart => p.kind === "ui") ?? [];
   // Show the build skeleton while a canvas is being composed AND no surface has
-  // landed yet. TWO signals: in a live call the shared node's `status` is cleared
-  // by the build worker's first tool_start and its `streaming` by the spoken turn's
-  // `done` — both long before the surface arrives, which is why the skeleton used
-  // to flash then vanish to "Talking with Takt". A delegate_build / build-lane tool
-  // part is the durable "still building" cue that survives both, so the skeleton
-  // now holds until the surface hands over.
+  // landed yet. The ONLY signal is a delegate_build / build-lane tool part: it's
+  // durable (stays in the parts array through tool_done until the surface arrives),
+  // so `building` is monotonic per turn — false → true (delegate fires) → false
+  // (surface lands). Previously we also OR'd in an `isDesigning(status)` check, but
+  // `status` is set→null→set churned by every tool_start/ui_surface, which flipped
+  // `building` mid-turn and caused the "Working… ↔ skeleton" flicker. In the
+  // canvas-first design the main agent never composes UI inline, so that signal was
+  // vestigial anyway — every visual now goes through delegate_build.
   const buildPending = (view?.assistant?.parts ?? []).some((p) => p.kind === "tool" && (p.tool === "delegate_build" || p.lane === "build"));
-  const building = viewSurfaces.length === 0 && (buildPending || (!!view?.assistant?.streaming && isDesigning(view?.assistant?.status)));
+  const building = viewSurfaces.length === 0 && buildPending;
   const canvasSurfaces: UIPart[] = viewSurfaces.length ? viewSurfaces : (() => {
     for (let i = turns.length - 1; i >= 0; i--) {
       const s = turns[i]!.assistant?.parts.filter((p): p is UIPart => p.kind === "ui");
@@ -115,17 +124,39 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
   }, []);
 
   return (
-    <div className="flex h-dvh w-full gap-2 overflow-hidden bg-background p-2">
-      {/* Sidebar (chat history) — hidden under md, drawer on mobile. */}
-      <motion.div initial={false} animate={{ width: sidebarCollapsed ? 0 : 248 }} transition={widthTransition}
+    <div className="flex h-dvh w-full gap-1.5 overflow-hidden bg-background p-2">
+      {/* Sidebar (chat history) — hidden under md, drawer on mobile. Collapsed = a
+          slim transparent "History" strip on the bg (click anywhere to open). */}
+      <motion.div initial={false} animate={{ width: sidebarCollapsed ? 44 : 248 }} transition={widthTransition}
         className="relative hidden h-full shrink-0 overflow-hidden md:block">
-        <div style={{ width: 248 }} className="h-full">
-          <Sidebar currentSlug={slug} onNewChat={() => { follow(); wb.newChat(); }} onSelectChat={(id) => { follow(); wb.loadChat(id); }} activeChatId={wb.chatId} />
-        </div>
+        {sidebarCollapsed ? (
+          <button onClick={toggleSidebar} title="Show history" aria-label="Show history"
+            className="group flex h-full w-11 flex-col items-center justify-center gap-3 rounded-2xl text-muted-foreground transition hover:bg-foreground/[0.05] hover:text-foreground">
+            <PanelLeftOpen className="size-4 opacity-70 transition group-hover:opacity-100" />
+            <span className="[writing-mode:vertical-rl] text-[11px] tracking-wide">History</span>
+          </button>
+        ) : (
+          <div style={{ width: 248 }} className="h-full">
+            <Sidebar currentSlug={slug} onNewChat={() => { follow(); wb.newChat(); }} onSelectChat={(id) => { follow(); wb.loadChat(id); }} activeChatId={wb.chatId} />
+          </div>
+        )}
       </motion.div>
 
       {/* STAGE — the rendered answer, the star. */}
       <section className="relative flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[var(--shadow-card)]">
+        {/* Resize feedback lives ON the canvas's right border — the section's
+            overflow-hidden + rounded-2xl clips this bar to the corner shape. */}
+        {railOpen && (resizing || handleHover) && (
+          <div aria-hidden className={cn("pointer-events-none absolute inset-y-0 right-0 z-30 transition-all", resizing ? "w-[3px] bg-accent" : "w-[2px] bg-accent/50")} />
+        )}
+        {/* Grab zone — absolute on the canvas's right edge so it takes ZERO layout
+            width; the rail can sit flush against the canvas (no gutter from a flex handle). */}
+        {railOpen && (
+          <div onPointerDown={(e) => { e.preventDefault(); setResizing(true); }}
+            onPointerEnter={() => setHandleHover(true)} onPointerLeave={() => setHandleHover(false)}
+            title="Drag to resize" role="separator" aria-orientation="vertical"
+            className="absolute inset-y-0 right-0 z-40 hidden w-2.5 cursor-col-resize md:block" />
+        )}
         <div className="flex h-12 shrink-0 items-center justify-between gap-2 px-3">
           <div className="flex min-w-0 items-center gap-1.5">
             <button onClick={() => setDrawerOpen(true)} title="Menu" aria-label="Open menu"
@@ -172,25 +203,34 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
             voiceEnabled={wb.voiceEnabled} setVoiceEnabled={wb.setVoiceEnabled} onOpenLive={() => setLiveOpen(true)}
             above={!wb.ask && !liveOpen ? <StatusBar node={latest?.assistant} streaming={wb.isStreaming} todos={wb.todos} /> : undefined} />
         )}
-        {/* Closing the call returns to a clean slate — a live conversation is its
-            own thing (still saved in history), not left lingering on the stage. */}
-        {liveOpen && <LiveDock key={wb.chatId} chatId={wb.chatId} productSlug={slug} onExit={() => { setLiveOpen(false); follow(); wb.newChat(); }} />}
+        {/* Closing the call just stops live (leak-free teardown in useLiveSession)
+            and stays in the SAME chat — the artifact it produced remains on the
+            canvas. `follow()` snaps the stage to the latest answer. */}
+        {liveOpen && <LiveDock key={wb.chatId} chatId={wb.chatId} productSlug={slug} onExit={() => { setLiveOpen(false); follow(); }} />}
 
         <AnimatePresence>
           {wb.ask && <AskModal key="ask" ask={wb.ask} onSubmit={wb.submitAsk} onCancel={wb.cancelAsk} />}
         </AnimatePresence>
       </section>
 
-      {/* PROCESS RAIL — collapsed strip by default; hidden under md (sheet there). */}
-      <motion.div initial={false} animate={{ width: railOpen ? 340 : 44 }} transition={widthTransition}
+      {/* PROCESS RAIL — collapsed strip by default; hidden under md (sheet there).
+          Handle is absolute on the canvas edge (above), so the rail sits flush. */}
+      <motion.div initial={false} animate={{ width: railW }} transition={resizing ? { duration: 0 } : widthTransition}
         className="hidden h-full shrink-0 overflow-hidden md:block">
-        <div style={{ width: railOpen ? 340 : 44 }} className="h-full">
+        <div style={{ width: railW }} className="h-full">
           <ProcessRail open={railOpen} onToggle={toggleRail} messages={wb.messages}
             selectedUserId={viewUserId} onSelectTurn={setViewUserId} streaming={wb.isStreaming}
             onRegenerate={() => { follow(); wb.regenerate(); }} onCitation={(page) => wb.openCitation(page)}
             onOpenSource={(s) => wb.openSource({ url: s.url, page: s.page, manualKind: "other" })} />
         </div>
       </motion.div>
+
+      {/* While dragging, a full-page overlay captures pointer moves so the canvas
+          iframe doesn't swallow them, and shows the col-resize cursor everywhere. */}
+      {resizing && (
+        <div className="fixed inset-0 z-50 cursor-col-resize select-none"
+          onPointerMove={onResizeMove} onPointerUp={() => setResizing(false)} onPointerLeave={() => setResizing(false)} />
+      )}
 
       {/* Mobile sidebar drawer. */}
       <AnimatePresence>
