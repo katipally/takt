@@ -11,7 +11,7 @@ export const EFFORTS: readonly Effort[] = ["low", "medium", "high", "xhigh", "ma
  * `reasoning_effort` only accepts low/medium/high (xhigh/max collapse to high), while Anthropic and
  * Google take a thinking-token budget and honor all five. A non-reasoning model supports none.
  */
-export function allowedEfforts(protocol?: "openai" | "anthropic" | "google", reasoning = true): readonly Effort[] {
+export function allowedEfforts(protocol?: "openai" | "anthropic", reasoning = true): readonly Effort[] {
   if (!reasoning) return []
   if (protocol === "openai") return ["low", "medium", "high"]
   return EFFORTS
@@ -58,8 +58,23 @@ export interface ChatRequest {
   maxTokens?: number
 }
 
-/** Provider wire protocol — selects the adapter. */
-export type Protocol = "openai" | "anthropic" | "google"
+/** Provider wire protocol — selects the adapter. Two adapters cover all three
+ *  supported providers: Anthropic (Claude + MiniMax via its Anthropic-compat
+ *  endpoint) and OpenAI (the Responses API). */
+export type Protocol = "openai" | "anthropic"
+
+/** Per-provider deviations from the canonical wire format of its protocol.
+ *  MiniMax speaks the Anthropic protocol but doesn't accept `cache_control`
+ *  blocks or Anthropic's adaptive-thinking params, and authenticates with a
+ *  Bearer token rather than `x-api-key`. */
+export interface ProviderQuirks {
+  /** don't send Anthropic `cache_control` blocks (provider does its own prefix caching) */
+  noCacheControl?: boolean
+  /** don't send `thinking`/`output_config` params (provider's reasoning is always-on or off) */
+  noThinking?: boolean
+  /** also send `Authorization: Bearer <key>` (Anthropic-compat providers that want it) */
+  bearerAuth?: boolean
+}
 
 /** A configured provider the user can connect to. */
 export interface ProviderInfo {
@@ -71,8 +86,8 @@ export interface ProviderInfo {
   envKeys?: string[]
   /** true for OpenAI-compatible local servers (ollama/llama.cpp) that need no key */
   keyless?: boolean
-  /** supports the OpenAI Responses API (/v1/responses) rather than just Chat Completions */
-  supportsResponses?: boolean
+  /** wire-format deviations from the protocol's canonical shape */
+  quirks?: ProviderQuirks
   /** user added this as a custom endpoint */
   custom?: boolean
 }
@@ -102,14 +117,3 @@ export type ProviderEvent =
   | { type: "tool_stop"; index: number }
   | { type: "usage"; input: number; output: number }
   | { type: "done"; stopReason: string }
-
-/** Tool permission categories, matched against a mode's PermissionPolicy. */
-export type PermissionCategory = "read" | "edit" | "bash" | "network" | "browser" | "computer"
-
-/** A single item in the agent's live task list (maintained via the todo_write tool). */
-export type TodoStatus = "pending" | "active" | "done"
-export interface TodoItem {
-  id: string
-  text: string
-  status: TodoStatus
-}

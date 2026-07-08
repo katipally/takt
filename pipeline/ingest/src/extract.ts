@@ -1,4 +1,4 @@
-import { streamProvider, type ProviderInfo, type ChatRequest } from "@takt/harness";
+import { streamProvider, isReasoningModel, type ProviderInfo, type ChatRequest } from "@takt/harness";
 import {
   entityId, mergeEntities, strongerConfidence, saveGraph, saveChunks, loadGraph,
   buildVectors,
@@ -115,9 +115,8 @@ const GLEAN_PROMPT = `You already extracted a knowledge graph from this source, 
 // force MINIMAL reasoning and give the output room. Non-reasoning models get no
 // reasoning params and behave normally.
 function reasoningFor(provider: ProviderInfo, model: string): Record<string, unknown> {
-  const isReasoning = /(^|[-/])(o\d|gpt-5|gpt-6)|reason|think|deepseek-r|r1|qwq|magistral/i.test(model);
-  if (!isReasoning) return {};
-  return provider.supportsResponses ? { reasoningEffort: "minimal" } : { effort: "low" };
+  if (!isReasoningModel(model)) return {};
+  return provider.protocol === "openai" ? { reasoningEffort: "minimal" } : { effort: "low" };
 }
 
 export async function extractUnit(unit: ExtractUnit, provider: ProviderInfo, model: string, apiKey?: string, glean = true) {

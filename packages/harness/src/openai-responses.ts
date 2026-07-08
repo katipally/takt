@@ -1,4 +1,5 @@
 import type { ChatRequest, Message, ProviderEvent, ToolDef } from "./types"
+import { EFFORT_MAP } from "./effort"
 import { fetchWithRetry } from "./retry"
 import { sseLines } from "./sse"
 
@@ -33,8 +34,6 @@ function toTools(tools: ToolDef[]): unknown[] {
   // Responses uses flattened function tools: { type, name, description, parameters }
   return tools.map((t) => ({ type: "function", name: t.name, description: t.description, parameters: t.parameters }))
 }
-
-const EFFORT_MAP: Record<string, string> = { low: "low", medium: "medium", high: "high", xhigh: "high", max: "high" }
 
 export async function* streamOpenAIResponses(opts: {
   baseURL: string

@@ -1,8 +1,9 @@
 import type { ProviderInfo } from "./types"
 
 /**
- * Built-in providers. Everything except Anthropic speaks the OpenAI-compatible protocol, so one
- * adapter covers the long tail. `catalogId` maps to the models.dev provider key for the catalog.
+ * The three supported providers. Claude and MiniMax both speak the Anthropic
+ * wire protocol (MiniMax via its Anthropic-compat endpoint, with quirks);
+ * OpenAI speaks the Responses API. `catalogId` maps to the models.dev key.
  */
 export interface BuiltinProvider extends ProviderInfo {
   catalogId?: string
@@ -24,140 +25,20 @@ export const BUILTIN_PROVIDERS: BuiltinProvider[] = [
     baseURL: "https://api.openai.com/v1",
     envKeys: ["OPENAI_API_KEY"],
     catalogId: "openai",
-    supportsResponses: true,
-  },
-  {
-    id: "google",
-    name: "Google Gemini",
-    protocol: "google",
-    baseURL: "https://generativelanguage.googleapis.com/v1beta",
-    envKeys: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
-    catalogId: "google",
-  },
-  {
-    id: "openrouter",
-    name: "OpenRouter",
-    protocol: "openai",
-    baseURL: "https://openrouter.ai/api/v1",
-    envKeys: ["OPENROUTER_API_KEY"],
-    catalogId: "openrouter",
-  },
-  {
-    id: "opencode-zen",
-    name: "OpenCode Zen",
-    protocol: "openai",
-    baseURL: "https://opencode.ai/zen/v1",
-    envKeys: ["OPENCODE_API_KEY"],
-    catalogId: "opencode",
-  },
-  {
-    id: "groq",
-    name: "Groq",
-    protocol: "openai",
-    baseURL: "https://api.groq.com/openai/v1",
-    envKeys: ["GROQ_API_KEY"],
-    catalogId: "groq",
-  },
-  {
-    id: "moonshot",
-    name: "Moonshot (Kimi)",
-    protocol: "openai",
-    baseURL: "https://api.moonshot.ai/v1",
-    envKeys: ["MOONSHOT_API_KEY"],
-    catalogId: "moonshotai",
   },
   {
     id: "minimax",
     name: "MiniMax",
-    protocol: "openai",
-    baseURL: "https://api.minimax.io/v1",
+    protocol: "anthropic",
+    // Anthropic-compatible endpoint (full path .../anthropic/v1; the adapter
+    // appends /messages). MiniMax authenticates with a Bearer token and does
+    // NOT accept cache_control blocks or Anthropic's adaptive-thinking params
+    // (its M2.x reasoning is always-on) — hence the quirks. It does its own
+    // automatic prefix caching, so caching isn't lost.
+    baseURL: "https://api.minimax.io/anthropic/v1",
     envKeys: ["MINIMAX_API_KEY"],
     catalogId: "minimax",
-  },
-  {
-    id: "deepseek",
-    name: "DeepSeek",
-    protocol: "openai",
-    baseURL: "https://api.deepseek.com/v1",
-    envKeys: ["DEEPSEEK_API_KEY"],
-    catalogId: "deepseek",
-  },
-  {
-    id: "together",
-    name: "Together",
-    protocol: "openai",
-    baseURL: "https://api.together.xyz/v1",
-    envKeys: ["TOGETHER_API_KEY"],
-    catalogId: "togetherai",
-  },
-  {
-    id: "xai",
-    name: "xAI (Grok)",
-    protocol: "openai",
-    baseURL: "https://api.x.ai/v1",
-    envKeys: ["XAI_API_KEY"],
-    catalogId: "xai",
-  },
-  {
-    id: "mistral",
-    name: "Mistral",
-    protocol: "openai",
-    baseURL: "https://api.mistral.ai/v1",
-    envKeys: ["MISTRAL_API_KEY"],
-    catalogId: "mistral",
-  },
-  {
-    id: "perplexity",
-    name: "Perplexity",
-    protocol: "openai",
-    baseURL: "https://api.perplexity.ai",
-    envKeys: ["PERPLEXITY_API_KEY"],
-    catalogId: "perplexity",
-  },
-  {
-    id: "cerebras",
-    name: "Cerebras",
-    protocol: "openai",
-    baseURL: "https://api.cerebras.ai/v1",
-    envKeys: ["CEREBRAS_API_KEY"],
-    catalogId: "cerebras",
-  },
-  {
-    id: "deepinfra",
-    name: "DeepInfra",
-    protocol: "openai",
-    baseURL: "https://api.deepinfra.com/v1/openai",
-    envKeys: ["DEEPINFRA_API_KEY"],
-    catalogId: "deepinfra",
-  },
-  {
-    id: "fireworks",
-    name: "Fireworks",
-    protocol: "openai",
-    baseURL: "https://api.fireworks.ai/inference/v1",
-    envKeys: ["FIREWORKS_API_KEY"],
-    catalogId: "fireworks",
-  },
-  {
-    id: "azure",
-    name: "Azure OpenAI",
-    protocol: "openai",
-    baseURL: "https://YOUR-RESOURCE.openai.azure.com/openai/v1",
-    envKeys: ["AZURE_OPENAI_API_KEY", "AZURE_API_KEY"],
-  },
-  {
-    id: "ollama",
-    name: "Ollama (local)",
-    protocol: "openai",
-    baseURL: "http://localhost:11434/v1",
-    keyless: true,
-  },
-  {
-    id: "llamacpp",
-    name: "llama.cpp / LM Studio (local)",
-    protocol: "openai",
-    baseURL: "http://localhost:8080/v1",
-    keyless: true,
+    quirks: { noCacheControl: true, noThinking: true, bearerAuth: true },
   },
 ]
 
@@ -173,23 +54,7 @@ export function defaultModel(providerId: string): string {
 export const MODEL_SNAPSHOT: Record<string, string[]> = {
   anthropic: ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
   openai: ["gpt-5", "gpt-5-mini", "o3"],
-  // gemini-2.0-flash was SHUT DOWN 2026-06-01. gemini-flash-latest tracks the
-  // current flash (3.5 as of 2026-07) and never 404s.
-  google: ["gemini-flash-latest", "gemini-2.5-flash", "gemini-2.5-pro"],
-  openrouter: ["anthropic/claude-opus-4-8", "openai/gpt-5", "moonshotai/kimi-k2"],
-  "opencode-zen": ["claude-sonnet-4-6", "kimi-k2", "gpt-5", "minimax-m2.5"],
-  groq: ["moonshotai/kimi-k2-instruct", "llama-3.3-70b-versatile"],
-  moonshot: ["kimi-k2-0711-preview", "kimi-k2-turbo-preview", "moonshot-v1-128k"],
-  minimax: ["MiniMax-M2.5", "abab7-chat-preview"],
-  deepseek: ["deepseek-chat", "deepseek-reasoner"],
-  together: ["moonshotai/Kimi-K2-Instruct", "meta-llama/Llama-3.3-70B-Instruct-Turbo"],
-  xai: ["grok-4", "grok-3"],
-  mistral: ["mistral-large-latest", "codestral-latest", "mistral-small-latest"],
-  perplexity: ["sonar-pro", "sonar", "sonar-reasoning"],
-  cerebras: ["llama-3.3-70b", "qwen-3-coder-480b"],
-  deepinfra: ["deepseek-ai/DeepSeek-V3", "meta-llama/Llama-3.3-70B-Instruct"],
-  fireworks: ["accounts/fireworks/models/deepseek-v3", "accounts/fireworks/models/kimi-k2-instruct"],
-  azure: ["gpt-5", "gpt-4.1", "o3"],
-  ollama: ["llama3.3", "qwen2.5-coder:7b"],
-  llamacpp: [],
+  // MiniMax-M3 (1M ctx, vision) and M2.5 (vision) support images over the
+  // Anthropic-compat endpoint; M2 is text-only.
+  minimax: ["MiniMax-M3", "MiniMax-M2.5", "MiniMax-M2.5-highspeed"],
 }

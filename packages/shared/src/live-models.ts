@@ -16,44 +16,13 @@ export const LIVE_MODEL_RECS: Record<string, LiveModelRec[]> = {
   anthropic: [
     { model: "claude-haiku-4-5", label: "Haiku 4.5", note: "~600ms first token, vision, natural short replies", vision: true, default: true },
   ],
-  google: [
-    { model: "gemini-2.5-flash", label: "Gemini 2.5 Flash", note: "fast, cheap, multimodal", vision: true, default: true },
-    { model: "gemini-2.5-flash-lite", label: "Flash Lite", note: "lowest latency, vision", vision: true },
-  ],
   openai: [
     { model: "gpt-5-mini", label: "GPT-5 mini", note: "fast, multimodal, cheap", vision: true, default: true },
     { model: "gpt-5-nano", label: "GPT-5 nano", note: "lowest latency", vision: true },
   ],
-  groq: [
-    { model: "meta-llama/llama-4-scout-17b-16e-instruct", label: "Llama 4 Scout", note: "sub-100ms first token, vision", vision: true, default: true },
-    { model: "moonshotai/kimi-k2-instruct", label: "Kimi K2", note: "very fast, strong chat (text)", vision: false },
-    { model: "openai/gpt-oss-120b", label: "gpt-oss 120B", note: "fast open model (text)", vision: false },
-  ],
-  cerebras: [
-    { model: "llama-3.3-70b", label: "Llama 3.3 70B", note: "fastest tokens/sec (text)", vision: false, default: true },
-    { model: "qwen-3-32b", label: "Qwen3 32B", note: "fast, capable (text)", vision: false },
-  ],
-  xai: [
-    { model: "grok-4-fast", label: "Grok 4 Fast", note: "fast, multimodal", vision: true, default: true },
-  ],
-  mistral: [
-    { model: "mistral-small-latest", label: "Mistral Small", note: "fast, cheap, multimodal", vision: true, default: true },
-  ],
-  deepseek: [
-    { model: "deepseek-chat", label: "DeepSeek Chat", note: "cheap, capable (text)", vision: false, default: true },
-  ],
-  openrouter: [
-    { model: "anthropic/claude-haiku-4-5", label: "Haiku 4.5", note: "fast, vision", vision: true, default: true },
-    { model: "google/gemini-2.5-flash", label: "Gemini 2.5 Flash", note: "fast, vision", vision: true },
-  ],
-  together: [
-    { model: "meta-llama/Llama-4-Scout-17B-16E-Instruct", label: "Llama 4 Scout", note: "fast, vision", vision: true, default: true },
-  ],
-  fireworks: [
-    { model: "accounts/fireworks/models/llama4-scout-instruct-basic", label: "Llama 4 Scout", note: "fast, vision", vision: true, default: true },
-  ],
-  deepinfra: [
-    { model: "meta-llama/Llama-4-Scout-17B-16E-Instruct", label: "Llama 4 Scout", note: "fast, vision", vision: true, default: true },
+  minimax: [
+    { model: "MiniMax-M2.5-highspeed", label: "M2.5 highspeed", note: "fast, vision, strong tool use", vision: true, default: true },
+    { model: "MiniMax-M3", label: "M3", note: "1M context, vision", vision: true },
   ],
 };
 
@@ -62,8 +31,16 @@ export function liveRecsFor(providerId: string): LiveModelRec[] {
   return LIVE_MODEL_RECS[providerId] ?? [];
 }
 
-/** Does this provider+model take a camera frame? Looks up the curated table;
- *  returns undefined when unknown (caller decides — we default to attaching). */
-export function liveModelVision(providerId: string, model: string): boolean | undefined {
-  return LIVE_MODEL_RECS[providerId]?.find((r) => r.model === model)?.vision;
+/** Does this provider+model accept image input? Curated table wins; otherwise a
+ *  per-provider heuristic. Consulted everywhere before attaching an image
+ *  (chat gather, live camera frames, page-image tools). */
+export function modelVision(providerId: string, model: string): boolean {
+  const rec = LIVE_MODEL_RECS[providerId]?.find((r) => r.model === model);
+  if (rec) return rec.vision;
+  switch (providerId) {
+    case "anthropic": return true;                 // all current Claude models see
+    case "openai": return !/^(o1-mini|o3-mini)$/i.test(model); // gpt-5 / 4o / o-series see
+    case "minimax": return /m3|m2\.5/i.test(model); // M3 + M2.5 see; M2 is text-only
+    default: return true;
+  }
 }

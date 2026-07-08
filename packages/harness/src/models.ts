@@ -1,5 +1,6 @@
 import type { ModelInfo, ProviderInfo } from "./types"
 import { catalogModels, getModels } from "./catalog"
+import { isReasoningModel } from "./effort"
 
 const NON_CHAT =
   /(embedding|embed|whisper|tts|text-to-speech|\baudio\b|speech|dall-?e|\bimage\b|moderation|rerank|guard|stable-diffusion|\bsora\b|realtime|transcribe|\bclip\b|reranker)/i
@@ -33,17 +34,6 @@ async function fetchAnthropic(baseURL: string, apiKey?: string): Promise<LiveMod
   return (json.data ?? []).map((m: any) => ({ id: m.id, name: m.display_name, raw: m }))
 }
 
-async function fetchGoogle(baseURL: string, apiKey?: string): Promise<LiveModel[]> {
-  const res = await fetch(`${baseURL.replace(/\/$/, "")}/models?key=${apiKey ?? ""}&pageSize=1000`, {
-    signal: AbortSignal.timeout(TIMEOUT),
-  })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  const json: any = await res.json()
-  return (json.models ?? [])
-    .filter((m: any) => (m.supportedGenerationMethods ?? []).includes("generateContent"))
-    .map((m: any) => ({ id: String(m.name).replace(/^models\//, ""), name: m.displayName, raw: m }))
-}
-
 function costFrom(meta: any, raw: any): { input: number; output: number } | undefined {
   if (meta?.cost && (meta.cost.input != null || meta.cost.output != null)) {
     return { input: meta.cost.input ?? 0, output: meta.cost.output ?? 0 }
@@ -55,10 +45,6 @@ function costFrom(meta: any, raw: any): { input: number; output: number } | unde
     if (!Number.isNaN(input) || !Number.isNaN(output)) return { input: input || 0, output: output || 0 }
   }
   return undefined
-}
-
-function inferReasoning(id: string): boolean {
-  return /(^|[-/])(o\d|gpt-5|gpt-6)|reason|think|deepseek-r|r1|qwq|magistral/i.test(id)
 }
 
 function isChat(id: string, meta: any): boolean {
@@ -75,7 +61,7 @@ function enrich(l: LiveModel, meta: any, providerId: string): ModelInfo {
     providerId,
     contextWindow: meta?.limit?.context ?? l.raw?.context_length ?? l.raw?.inputTokenLimit,
     maxOutput: meta?.limit?.output ?? l.raw?.outputTokenLimit,
-    reasoning: meta?.reasoning ?? inferReasoning(l.id),
+    reasoning: meta?.reasoning ?? isReasoningModel(l.id),
     cost: costFrom(meta, l.raw),
     live: true,
   }
@@ -89,7 +75,6 @@ function enrich(l: LiveModel, meta: any, providerId: string): ModelInfo {
 export async function validateKey(provider: ProviderInfo, apiKey?: string): Promise<{ ok: boolean; error?: string }> {
   try {
     if (provider.protocol === "anthropic") await fetchAnthropic(provider.baseURL, apiKey)
-    else if (provider.protocol === "google") await fetchGoogle(provider.baseURL, apiKey)
     else await fetchOpenAICompat(provider.baseURL, apiKey)
     return { ok: true }
   } catch (e: any) {
@@ -109,7 +94,6 @@ export async function fetchModels(provider: ProviderInfo, apiKey?: string): Prom
   let live: LiveModel[] = []
   try {
     if (provider.protocol === "anthropic") live = await fetchAnthropic(provider.baseURL, apiKey)
-    else if (provider.protocol === "google") live = await fetchGoogle(provider.baseURL, apiKey)
     else live = await fetchOpenAICompat(provider.baseURL, apiKey)
   } catch {
     // fall through to catalog/snapshot

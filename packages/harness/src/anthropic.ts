@@ -1,9 +1,9 @@
-import type { ChatRequest, Message, ProviderEvent, ToolDef } from "./types"
+import type { ChatRequest, Message, ProviderEvent, ProviderQuirks, ToolDef } from "./types"
 import { thinkingBudget } from "./effort"
 import { fetchWithRetry } from "./retry"
 import { safeJsonParse, sseLines } from "./sse"
 
-function toAnthropic(messages: Message[]): { system?: string; messages: unknown[] } {
+function toAnthropic(messages: Message[], noCacheControl?: boolean): { system?: string; messages: unknown[] } {
   let system: string | undefined
   const out: Record<string, unknown>[] = []
   for (const m of messages) {
@@ -53,22 +53,24 @@ function toAnthropic(messages: Message[]): { system?: string; messages: unknown[
   // the longest matching prefix). Without this, the growing `messages` array is re-billed at full
   // input price every turn — the single biggest cost/latency lever in a long agentic loop. The
   // system block + last tool def carry their own breakpoints, so this is the 3rd of Anthropic's 4.
-  const last = out[out.length - 1]
-  const content = last?.content
-  if (Array.isArray(content) && content.length) {
-    const block = content[content.length - 1] as Record<string, unknown>
-    block.cache_control = { type: "ephemeral" }
+  if (!noCacheControl) {
+    const last = out[out.length - 1]
+    const content = last?.content
+    if (Array.isArray(content) && content.length) {
+      const block = content[content.length - 1] as Record<string, unknown>
+      block.cache_control = { type: "ephemeral" }
+    }
   }
   return { system, messages: out }
 }
 
-function toTools(tools: ToolDef[]): unknown[] {
+function toTools(tools: ToolDef[], noCacheControl?: boolean): unknown[] {
   return tools.map((t, i) => ({
     name: t.name,
     description: t.description,
     input_schema: t.parameters,
     // Cache the (stable) tool list prefix — marking the last tool caches all of them.
-    ...(i === tools.length - 1 ? { cache_control: { type: "ephemeral" } } : {}),
+    ...(!noCacheControl && i === tools.length - 1 ? { cache_control: { type: "ephemeral" } } : {}),
   }))
 }
 
@@ -78,9 +80,10 @@ export async function* streamAnthropic(opts: {
   req: ChatRequest
   signal: AbortSignal
   headers?: Record<string, string>
+  quirks?: ProviderQuirks
 }): AsyncGenerator<ProviderEvent> {
-  const { baseURL, apiKey, req, signal } = opts
-  const { system, messages } = toAnthropic(req.messages)
+  const { baseURL, apiKey, req, signal, quirks } = opts
+  const { system, messages } = toAnthropic(req.messages, quirks?.noCacheControl)
   const body: Record<string, unknown> = {
     model: req.model,
     max_tokens: req.maxTokens ?? 8192,
@@ -88,14 +91,18 @@ export async function* streamAnthropic(opts: {
     stream: true,
   }
   // Send the system prompt as a cacheable block (prompt caching → ~cheaper/faster repeats).
-  if (system) body.system = [{ type: "text", text: system, cache_control: { type: "ephemeral" } }]
-  if (req.tools.length) body.tools = toTools(req.tools)
+  if (system)
+    body.system = quirks?.noCacheControl
+      ? system
+      : [{ type: "text", text: system, cache_control: { type: "ephemeral" } }]
+  if (req.tools.length) body.tools = toTools(req.tools, quirks?.noCacheControl)
   // Extended thinking. Current Anthropic models (Opus 4.6+, Sonnet 5/4.6, Fable 5)
   // require adaptive thinking + output_config.effort — the old
   // {type:"enabled",budget_tokens} form is rejected with a 400.
   // ponytail: pre-4.6 models (claude-3.x, *-4-0/4-1, opus-4-5, sonnet-4-5) still
   // take a token budget; kept as a fallback. Extend the regex if you add more.
-  if (req.effort) {
+  // MiniMax (noThinking) ignores these — its M2.x reasoning is always-on.
+  if (req.effort && !quirks?.noThinking) {
     const legacy = /claude-3|-4-0\b|-4-1\b|opus-4-5|sonnet-4-5/.test(req.model)
     if (legacy) {
       const budget = thinkingBudget(req.effort)
@@ -117,6 +124,8 @@ export async function* streamAnthropic(opts: {
         "content-type": "application/json",
         "anthropic-version": "2023-06-01",
         ...(apiKey ? { "x-api-key": apiKey } : {}),
+        // MiniMax's Anthropic-compat endpoint authenticates with a Bearer token.
+        ...(apiKey && quirks?.bearerAuth ? { authorization: `Bearer ${apiKey}` } : {}),
         ...opts.headers,
       },
       body: JSON.stringify(body),

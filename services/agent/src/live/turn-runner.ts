@@ -1,6 +1,6 @@
-import { streamProvider, type Message } from "@takt/harness";
+import { streamProvider, isReasoningModel, type Message } from "@takt/harness";
 import type { Product, Manual } from "@takt/shared";
-import { liveModelVision } from "@takt/shared";
+import { modelVision } from "@takt/shared";
 import { buildTaktTools, type TaktTool, type Emit } from "../tools.js";
 import { collectTurn } from "../turn.js";
 import { buildLivePrompt } from "../prompt.js";
@@ -47,7 +47,7 @@ export class LiveTurnRunner {
     // Only attach the camera frame if the live model can actually see (curated
     // table; unknown/custom models default to attaching). A text-only fast model
     // (e.g. Cerebras/DeepSeek) would otherwise error on an image input.
-    const canSee = liveModelVision(provider.id, model) ?? true;
+    const canSee = modelVision(provider.id, model);
     const imgs = canSee && frames.length ? frames : undefined;
     this.messages.push({ role: "user", text: userText, images: imgs });
     // Build tools with THIS turn's emit so their artifact/page_image events are
@@ -62,9 +62,9 @@ export class LiveTurnRunner {
     // per-model bias): non-reasoning models get none; reasoning models on the
     // OpenAI Responses API get "minimal"; other reasoning models get the lowest
     // effort. Detection is the standard reasoning-model heuristic.
-    const reasons = /(^|[-/])(o\d|gpt-5|gpt-6)|reason|think|deepseek-r|r1|qwq|magistral/i.test(model);
+    const reasons = isReasoningModel(model);
     const reasoning = !reasons ? {}
-      : provider.supportsResponses ? { reasoningEffort: "minimal" as const }
+      : provider.protocol === "openai" ? { reasoningEffort: "minimal" as const }
         : { effort: "low" as const };
 
     // Track the assistant text AS it streams, so a barge-in that aborts mid-
