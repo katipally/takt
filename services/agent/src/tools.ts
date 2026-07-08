@@ -8,7 +8,7 @@ import type { Product, Manual, ManualKind, SseEvent, AskAnswer } from "@takt/sha
 import { askQuestionsSchema, uiSurfaceSchema, validateSurface, surfacePartId } from "@takt/shared";
 import { lintSurface, p0, lintFeedback } from "./lint-surface.js";
 import {
-  DATA_DIR, getPageImage,
+  DATA_DIR, getPageImage, getManualsByProduct,
   listProducts, getProductBySlug, listMessages,
 } from "@takt/db";
 import {
@@ -95,7 +95,7 @@ const resolveMedia = (slug: string, body: string): string =>
 
 // Turn a PKB anchor into an actionable instruction telling the model exactly how
 // to SHOW it in an artifact (which crop_page_image call, or which URL to embed).
-function renderAnchorHint(a: Anchor, slug: string): string {
+function renderAnchorHint(a: Anchor): string {
   const r = a.ref as any;
   const cap = a.caption ? ` — ${a.caption}` : "";
   const abs = (u: string) => (u?.startsWith("/") ? `${WEB_URL()}${u}` : u);
@@ -146,11 +146,23 @@ export async function withCoordGrid(buf: Buffer): Promise<Buffer> {
   return sharp(buf).composite([{ input: svg, top: 0, left: 0 }]).png().toBuffer();
 }
 
-export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]; emit: Emit; chatId?: string; spawnBuild?: (brief: string, key?: string) => void; context?: "main" | "build"; allowedAssets?: Set<string> }): TaktTool[] {
-  const { product, emit, chatId, spawnBuild, context = "main", allowedAssets } = ctx;
+export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]; emit: Emit; chatId?: string; spawnBuild?: (brief: string, key?: string) => void; compose?: (brief: string, key?: string) => Promise<boolean>; edit?: (brief: string, key?: string, target?: string) => Promise<boolean>; context?: "main" | "build"; allowedAssets?: Set<string>; onCanvasKey?: (key: string) => void }): TaktTool[] {
+  const { product, emit, chatId, spawnBuild, compose, edit, context = "main", allowedAssets, onCanvasKey } = ctx;
   // Master mode = no single product selected → cross-product tools; the page
   // tools then require a `product` slug to say which product to read from.
   const masterMode = !product;
+  // Self-correcting page-lookup errors: when a page/manual isn't found, tell the
+  // model exactly which manual kinds exist and their page ranges so it fixes the
+  // call in ONE shot instead of guessing slugs (e.g. "ps5-quick-start-guide" when
+  // the real kind is "quick_start"). Cheap DB read, only on the error path.
+  const manualsHint = (prodId: string): string => {
+    try {
+      const ms = getManualsByProduct(prodId);
+      if (!ms.length) return "This product has no manual pages indexed.";
+      const list = ms.map((m) => `"${m.kind}" (${m.pageCount} pages)`).join(", ");
+      return `Available manuals: ${list}. Pass one of those exact kinds as \`manual\` (or omit \`manual\` to search all) and a page within its range.`;
+    } catch { return "Call list_profile to see the available manual kinds and pages."; }
+  };
   // Bound one-shot anti-slop gate, keyed per surface: a Page with P0 design
   // issues is rejected ONCE per key (fed back for self-correction), then allowed
   // through — so a stubborn model can't loop forever, and a DIFFERENT sloppy page
@@ -244,7 +256,7 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
       if (!prod) { await emit({ type: "tool_done", id, detail: "no product" }); return text("Specify which product to read from by passing its `product` slug (see list_products)."); }
       const pi = getPageImage(prod.id, (args.manual as ManualKind) ?? null, args.page);
       await emit({ type: "tool_done", id, detail: pi ? `p.${pi.pageNumber}` : "not found" });
-      if (!pi) return text(`No page ${args.page} found for ${args.manual ?? prod.name}.`);
+      if (!pi) return text(`No page ${args.page}${args.manual ? ` in manual "${args.manual}"` : ""} for ${prod.name}. ${manualsHint(prod.id)}`);
       const citationId = randomUUID();
       const url = `${WEB_URL()}/assets/${pi.pngPath}`;
       await emit({
@@ -266,7 +278,7 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
 
   const cropPageImage: TaktTool = {
     name: "crop_page_image",
-    description: "Crop a manual page to the exact region that matters and SHOW that crop — use this AFTER get_page_image so you've seen the full page and can pick the region. Give the region as fractions of the page (0=left/top, 1=right/bottom): x,y = top-left corner, w,h = width,height. The cropped image is displayed in the user's Canvas and returned so you can confirm it, and you get a verbatim URL to embed in an artifact. The returned crop has a faint 0–1 coordinate GRID overlaid FOR YOUR REFERENCE ONLY (the user sees the clean crop) — when you add <takt-figure> annotations, read each feature's x,y straight off this grid so arrows/boxes/labels land ACCURATELY on the right part. Prefer this over embedding a whole page (whole pages have tab-strips/footers/whitespace and look broken).",
+    description: "Crop a manual page to the ONE figure/panel that matters and SHOW that crop — use this AFTER get_page_image so you've seen the full page and can pick the region off its 0–1 grid. Give the region as fractions of the page: x,y = top-left corner, w,h = width,height. CROP TIGHT to a single diagram/table/panel — w and h are typically 0.25–0.7; NEVER the whole page (x:0,y:0,w:1,h:1) or anything ≥0.9 wide AND tall — a full-page crop reads as a broken screenshot (white margins get trimmed, but it still shows unrelated content). The cropped image is displayed in the Canvas and returned with a faint 0–1 grid FOR YOUR REFERENCE (the user sees it clean) — read each feature's x,y off that grid so any <takt-figure> annotations land accurately.",
     parameters: params({
       page: z.number().int().min(1).describe("Page number"),
       manual: z.string().optional()
@@ -283,7 +295,7 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
       const prod = pageProduct(args);
       if (!prod) { await emit({ type: "tool_done", id, detail: "no product" }); return text("Specify which product to read from by passing its `product` slug (see list_products)."); }
       const pi = getPageImage(prod.id, (args.manual as ManualKind) ?? null, args.page);
-      if (!pi) { await emit({ type: "tool_done", id, detail: "not found" }); return text(`No page ${args.page} found for ${args.manual ?? prod.name}.`); }
+      if (!pi) { await emit({ type: "tool_done", id, detail: "not found" }); return text(`No page ${args.page}${args.manual ? ` in manual "${args.manual}"` : ""} for ${prod.name}. ${manualsHint(prod.id)}`); }
       const src = resolve(DATA_DIR, pi.pngPath);
       // Read real pixel dims from the file — don't trust the DB column.
       let imgW = 0, imgH = 0;
@@ -300,7 +312,13 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
       try {
         if (!existsSync(dest)) {
           mkdirSync(dirname(dest), { recursive: true });
-          await sharp(src).extract({ left, top, width: cw, height: ch }).png().toFile(dest);
+          const region = sharp(src).extract({ left, top, width: cw, height: ch });
+          // Auto-trim the WHITE page margins around the cropped region so a slightly
+          // loose crop still reads as a tight figure (manual scans are white-bg). Only
+          // white is trimmed, so colored diagrams/photos are never eaten; fall back to
+          // the plain crop if this sharp build lacks the option or the region is blank.
+          try { await region.clone().trim({ background: "#ffffff", threshold: 18 }).png().toFile(dest); }
+          catch { await region.png().toFile(dest); }
         }
       } catch (e) {
         await emit({ type: "tool_done", id, detail: "crop failed" });
@@ -316,7 +334,10 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
       await emit({ type: "tool_done", id, detail: `p.${pi.pageNumber} crop` });
       let images: ToolResult["images"];
       try { const gridded = await withCoordGrid(readFileSync(dest)); images = [{ data: gridded.toString("base64"), mime: "image/png" }]; } catch { /* text-only */ }
-      const meta = `Cropped ${pi.manualTitle} p.${pi.pageNumber}. To embed this exact crop in an artifact, use this URL verbatim as the <img> src: ${url}`;
+      // Nudge tighter if the model grabbed most of the page — a multi-figure page
+      // crop reads as a screenshot. (White margins are already auto-trimmed.)
+      const loose = args.w >= 0.9 && args.h >= 0.82;
+      const meta = `Cropped ${pi.manualTitle} p.${pi.pageNumber}. To embed this exact crop in an artifact, use this URL verbatim as the <img> src: ${url}${loose ? "\nNOTE: that crop covers most of the page. If it shows more than one figure/panel, call crop_page_image again with a TIGHTER region (w,h ~0.3–0.6) around just the one that matters." : ""}`;
       return { output: meta, images };
     },
   };
@@ -397,6 +418,97 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
       if (!brief) return text("delegate_build needs a brief.");
       spawnBuild(brief, typeof args?.key === "string" ? args.key : undefined);
       return text("Build started in the background — it'll appear on the stage when ready. Keep talking to the user; don't wait for it or restate its contents.");
+    },
+  } : null;
+
+  // BUILD_CANVAS — the main artifact tool (INLINE, text chat). You've already
+  // gathered the facts + cropped the figures this turn; this hands that material to
+  // the COMPOSE model, which writes the Page and streams it onto the canvas right
+  // now. No second gather loop, so the artifact appears immediately. Only present
+  // when a compose lane is wired (agent.ts passes it); the compose model is
+  // Settings → Build model (falls back to the chat model when unset).
+  const buildCanvasTool: TaktTool | null = compose ? {
+    name: "build_canvas",
+    description: "BUILD the designed artifact on the canvas — this is how you answer almost anything substantive (a procedure, diagnosis, comparison, spec sheet, diagram, annotated figure, calculator, overview). Your PRIMARY job is the canvas artifact; chat is just a one-line pointer to it. FIRST gather what the page needs (find_entity/search_product for the facts, get_anchors + crop_page_image for the figures), THEN call build_canvas with a clear brief — a compose model turns your gathered material into the page and streams it. Drop ONE short chat line first ('Here's the setup —'), then call this. Reuse the SAME `key` to revise a prior artifact. Skip it only for a trivial one-liner or casual chat.",
+    parameters: params({
+      brief: z.string().min(1).describe("What the artifact should show + which gathered sources to use (e.g. 'annotated diagram of the fuse box from the p.42 crop with each fuse labeled; add the amperage spec table')"),
+      key: z.string().optional().describe("Reuse a prior artifact's key to publish a new version; omit for a new one"),
+    }),
+    execute: async (args) => {
+      const brief = String(args?.brief ?? "").trim();
+      if (!brief) return text("build_canvas needs a brief describing what to show.");
+      // A durable tool part so the stage shows the build skeleton until the surface
+      // lands, and the rail shows "Building the artifact…".
+      const id = randomUUID();
+      await emit({ type: "tool_start", id, tool: "build_canvas", summary: brief.slice(0, 60) });
+      const ok = await compose(brief, typeof args?.key === "string" ? args.key : undefined);
+      await emit({ type: "tool_done", id, detail: ok ? "built" : "no surface" });
+      if (!ok) return { output: "The compose step did not produce a surface this time. Do NOT call build_canvas again this turn and do NOT say it's on the canvas — just give the answer briefly in chat; the user can ask you to rebuild it.", isError: true };
+      return text("Built on the canvas. Keep your chat reply to ONE short line; don't restate the artifact's contents.");
+    },
+  } : null;
+
+  // START_CANVAS — ARTIFACT-FIRST. The agent's FIRST move on a substantive turn:
+  // put the page's title on the canvas immediately so the answer is visibly taking
+  // shape while the sources are still being gathered (no more skeleton-staring).
+  // Emits a real (tiny) Page surface with a stable key and hands that key back;
+  // build_canvas later reuses the key, so the streamed page REPLACES this shell in
+  // place. Only present when a compose lane is wired (text chat).
+  const startCanvasTool: TaktTool | null = compose ? {
+    name: "start_canvas",
+    description: "START THE ARTIFACT FIRST — call this as your VERY FIRST step for any substantive answer, before gathering anything. From the user's question, put the page's TITLE on the canvas right away so the answer is visibly forming while you work. Pass a serif `title`, an optional short `eyebrow` kicker, and an optional one-line `lead` standfirst. It returns a `key`: gather your sources next (issue the retrieval calls TOGETHER so they run in parallel), then call build_canvas with that SAME key to compose the full page into this shell. Skip only for casual chat or a true one-liner.",
+    parameters: params({
+      title: z.string().min(1).describe("The page headline — what the answer is about"),
+      eyebrow: z.string().optional().describe("A short kicker above the title, e.g. 'Maintenance' or 'Troubleshooting'"),
+      lead: z.string().optional().describe("A one-line standfirst under the title summarizing the answer"),
+    }),
+    execute: async (args) => {
+      const title = String(args?.title ?? "").trim();
+      if (!title) return text("start_canvas needs a title.");
+      const key = `${slugify(title)}-${randomUUID().slice(0, 6)}`;
+      onCanvasKey?.(key);
+      const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const eyebrow = String(args?.eyebrow ?? "").trim();
+      const lead = String(args?.lead ?? "").trim();
+      // Just the real title block — the canvas's top build-bar signals "still
+      // composing", so no placeholder line is needed here.
+      const html = `${eyebrow ? `<p class="takt-eyebrow" data-takt-id="eyebrow">${esc(eyebrow)}</p>` : ""}<h1 data-takt-id="title">${esc(title)}</h1>${lead ? `<p class="takt-lead" data-takt-id="lead">${esc(lead)}</p>` : ""}`;
+      const rid = randomUUID();
+      await emit({ type: "tool_start", id: rid, tool: "start_canvas", summary: title });
+      const surface = { id: key, key, title, root: "pg", nodes: [{ id: "pg", type: "Page", props: { html } }] };
+      const res = validateSurface(surface);
+      // Emit as PARTIAL so the canvas shows the build-frontier skeleton under the
+      // title while gather + compose run; build_canvas's final surface (same key)
+      // clears it. If the turn ends here, streaming stops and the client drops the
+      // partial flag anyway, so the skeleton never gets stuck.
+      if (res.ok) await emit({ type: "ui_surface", partId: surfacePartId(res.surface), surface: res.surface, partial: true });
+      await emit({ type: "tool_done", id: rid, detail: "title on canvas" });
+      return text(`Canvas started with key "${key}" — the title is on screen now. Next: gather the sources you need, issuing your retrieval calls TOGETHER in one turn so they run in parallel. Then call build_canvas with key:"${key}" to compose the full page. Reuse this exact key.`);
+    },
+  } : null;
+
+  // EDIT_CANVAS — a SURGICAL edit of what's already on the canvas. Recomposes from
+  // the CURRENT page HTML (no re-gather), so it's fast and keeps everything you're
+  // not changing. Use it for "make the title shorter", "drop that section", "add a
+  // warning to step 3", and especially when the user has SELECTED a block (you'll be
+  // told its data-takt-id — pass it as `target` to change only that block).
+  const editCanvasTool: TaktTool | null = edit ? {
+    name: "edit_canvas",
+    description: "Edit the artifact ALREADY on the canvas in place — use this (not build_canvas) to tweak, trim, reword, restyle, add, or remove part of the current page. It recomposes from the existing page so it's fast and leaves the rest untouched; no gathering needed. If the user selected a block, pass its data-takt-id as `target` to change only that block. Reuse the artifact's `key` (or omit to edit the latest).",
+    parameters: params({
+      brief: z.string().min(1).describe("The change to make, in plain terms (e.g. 'shorten the headline to 4 words', 'add a warning callout to the power-on step', 'remove the specs table')"),
+      target: z.string().optional().describe("The data-takt-id of the single block to change (from the user's selection). Omit to let the editor place the change."),
+      key: z.string().optional().describe("The artifact's lineage key; omit to edit the latest canvas."),
+    }),
+    execute: async (args) => {
+      const brief = String(args?.brief ?? "").trim();
+      if (!brief) return text("edit_canvas needs a brief describing the change.");
+      const id = randomUUID();
+      await emit({ type: "tool_start", id, tool: "edit_canvas", summary: brief.slice(0, 60) });
+      const ok = await edit(brief, typeof args?.key === "string" ? args.key : undefined, typeof args?.target === "string" ? args.target : undefined);
+      await emit({ type: "tool_done", id, detail: ok ? "edited" : "no canvas" });
+      if (!ok) return { output: "Couldn't edit — the canvas is empty or the edit produced nothing. Build it first with build_canvas.", isError: true };
+      return text("Updated the canvas in place. Reply with ONE short line about what changed; don't restate the whole artifact.");
     },
   } : null;
 
@@ -527,13 +639,12 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
     parameters: params({ entity: z.string().describe("Entity id from find_entity"), ...productParam }),
     execute: async (args) => {
       const g = pkbGuard(args); if ("output" in g) return g;
-      const prod = pageProduct(args)!;
       const id = randomUUID();
       await emit({ type: "tool_start", id, tool: "get_anchors", summary: String(args.entity) });
       const anchors = getAnchors(g.slug, String(args.entity));
       await emit({ type: "tool_done", id, detail: `${anchors.length} anchors` });
       if (!anchors.length) return text(`No media anchored to "${args.entity}".`);
-      const lines = anchors.map((a) => renderAnchorHint(a, prod.slug));
+      const lines = anchors.map((a) => renderAnchorHint(a));
       return text(lines.join("\n"));
     },
   };
@@ -650,7 +761,7 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
   // persisted for this chat and returns its readable text (title + body).
   const readCanvasTool: TaktTool = {
     name: "read_canvas",
-    description: "See what's on the CANVAS right now — the title and text of the visual you last built there. Call this BEFORE answering any question about the canvas ('what's on it', 'explain the title', 'what does this show'), and before revising it, so you speak about what's actually shown instead of guessing. Returns the current surface's text, or says the canvas is empty.",
+    description: "See what's on the CANVAS right now — its title, its BLOCKS (each with a data-takt-id handle you can target), and the text. Call this BEFORE answering a question about the canvas ('what's on it', 'explain this') and BEFORE editing it, so you edit the right block. Returns the block list + text, or says the canvas is empty.",
     parameters: params({}),
     execute: async () => {
       if (!chatId) return text("The canvas is empty — nothing has been built yet.");
@@ -664,16 +775,42 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
           }
         }
       } catch { /* db read best-effort */ }
-      if (!surface) return text("The canvas is empty — nothing has been built there yet. Use delegate_build to create a visual.");
+      if (!surface) return text("The canvas is empty — nothing has been built there yet.");
       const page = (surface.nodes ?? []).find((n: any) => n.id === surface.root && n.type === "Page");
       let body = "";
-      if (page?.props?.html) body = htmlToText(page.props.html);
-      else body = (surface.nodes ?? [])
+      let blockList = "";
+      if (page?.props?.html) {
+        const html = String(page.props.html);
+        body = htmlToText(html);
+        // List each addressable block (data-takt-id) with a short excerpt, so the agent
+        // can point at / edit a specific region (select_canvas / edit_canvas target).
+        const re = /data-takt-id="([^"]+)"/g; const marks: { id: string; pos: number }[] = []; let m;
+        while ((m = re.exec(html))) marks.push({ id: m[1]!, pos: m.index });
+        if (marks.length) blockList = marks.map((mk, i) => {
+          const seg = html.slice(mk.pos, i + 1 < marks.length ? marks[i + 1]!.pos : html.length);
+          const t = htmlToText(seg).replace(/\s+/g, " ").trim().slice(0, 80);
+          return `- ${mk.id}: ${t}`;
+        }).join("\n");
+      } else body = (surface.nodes ?? [])
         .map((n: any) => { const p = n?.props ?? {}; return [p.title, p.text, p.caption, p.label, p.markdown, p.content, p.value].filter((x) => typeof x === "string").join(" "); })
         .filter(Boolean).join("\n");
-      body = body.replace(/\s+/g, " ").trim().slice(0, 2500);
+      body = body.replace(/\s+/g, " ").trim().slice(0, 2200);
       const title = typeof surface.title === "string" ? surface.title : "";
-      return text(`CANVAS — what is on it right now${title ? ` (title: "${title}")` : ""}:\n${body || "(a visual with no readable text)"}`);
+      return text(`CANVAS — what is on it right now${title ? ` (title: "${title}")` : ""}:${blockList ? `\n\nBLOCKS (target these with select_canvas / edit_canvas):\n${blockList}` : ""}\n\nTEXT:\n${body || "(a visual with no readable text)"}`);
+    },
+  };
+
+  // SELECT_CANVAS — Takt points at a region itself: rings a block by data-takt-id and
+  // scrolls it into view, so "look at step 3" actually highlights step 3 for the user.
+  // (Use read_canvas first to get the ids.) Emits a highlight the canvas host applies.
+  const selectCanvasTool: TaktTool = {
+    name: "select_canvas",
+    description: "Highlight a block on the canvas so the user sees exactly what you mean — rings it and scrolls it into view. Pass the block's data-takt-id (get ids from read_canvas). Use it when you reference a specific part ('the safety step', 'this spec'), or before editing it. Pass an empty id to clear the highlight.",
+    parameters: params({ target: z.string().describe("The data-takt-id of the block to highlight (from read_canvas); empty string clears the highlight.") }),
+    execute: async (args) => {
+      const target = String(args?.target ?? "").trim();
+      await emit({ type: "canvas_highlight", id: target });
+      return text(target ? `Highlighted "${target}" on the canvas.` : "Cleared the canvas highlight.");
     },
   };
 
@@ -686,18 +823,17 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
     findEntityTool, searchProductTool, walkGraphTool, getAnchorsTool, queryProductTool, productMapTool,
     grepProfileTool, listProfileTool, readProfile,
     getPageImageTool, cropPageImage,
-    emitUi, ...(delegateBuild ? [delegateBuild] : []), readCanvasTool, updateTodos, listProductsTool, askUser, fetchUrl,
+    emitUi, ...(startCanvasTool ? [startCanvasTool] : []), ...(buildCanvasTool ? [buildCanvasTool] : []), ...(editCanvasTool ? [editCanvasTool] : []), ...(delegateBuild ? [delegateBuild] : []),
+    readCanvasTool, selectCanvasTool, updateTodos, listProductsTool, askUser, fetchUrl,
   ];
-  // ONE canvas path. The MAIN agent can only DELEGATE a visual (delegate_build →
-  // the robust background worker); it never composes a surface inline, so the
-  // fragile inline-emit path (empty canvas, no fallback, no media check) it used
-  // to pick simply doesn't exist for it. emit_ui is the WORKER's internal
-  // primitive; the worker in turn has no delegate/ask.
-  if (context === "build") return all.filter((t) => t.name !== "delegate_build" && t.name !== "ask_user");
-  // MAIN agent grounds chat facts with TEXT retrieval (find/grep/query/walk/read)
-  // and DELEGATES anything visual. It does not get the surface-building tools
-  // (emit_ui) or the media-gathering tools (get_page_image/crop/get_anchors) — those
-  // are the worker's — so a weak model can't spiral gathering figures it can't use.
-  const mainDeny = new Set(["emit_ui", "get_page_image", "crop_page_image", "get_anchors"]);
-  return all.filter((t) => !mainDeny.has(t.name));
+  // COMPOSE worker (context "build"): only writes the surface — emit_ui + the
+  // gather/media tools, never delegate/build_canvas/edit_canvas/select_canvas/ask.
+  if (context === "build") return all.filter((t) => ["start_canvas", "delegate_build", "build_canvas", "edit_canvas", "select_canvas", "ask_user"].indexOf(t.name) === -1);
+  // MAIN agent. When a compose lane is wired (text chat), the agent gathers on the
+  // cheap model then hands the artifact write to build_canvas (the compose model) —
+  // so it does NOT get emit_ui directly (one canvas path, and the strong model owns
+  // composition). Without a compose lane (LIVE voice, which passes spawnBuild
+  // instead), it keeps delegate_build + emit_ui as before.
+  if (compose) return all.filter((t) => t.name !== "emit_ui");
+  return all;
 }

@@ -1,6 +1,7 @@
 import type { ChatRequest, AskQuestion, AskAnswer, UISurface } from "@takt/shared";
 import { streamChat } from "./sse-client";
 import { api } from "./api";
+import { useUi } from "./uiStore";
 
 // A background, multi-session chat store backed by a conversation TREE. Editing a
 // user message or regenerating an answer creates a sibling branch instead of
@@ -14,7 +15,7 @@ export interface ToolPart { id: string; kind: "tool"; tool: string; summary?: st
 export interface TodoItem { text: string; done: boolean; }
 export interface TextPart { id: string; kind: "text"; text: string; }
 export interface AskPart { id: string; kind: "ask"; askId: string; questions: AskQuestion[]; answers?: AskAnswer[]; cancelled?: boolean; }
-export interface UIPart { id: string; kind: "ui"; partId: string; surface: UISurface; }
+export interface UIPart { id: string; kind: "ui"; partId: string; surface: UISurface; partial?: boolean; }
 export type Part = ReasoningPart | ToolPart | TextPart | PageImagePart | AskPart | UIPart;
 
 // The CANVAS renders ONLY artifacts (ui surfaces) — it's a polished final
@@ -152,11 +153,12 @@ function applyStreamEvent(chatId: string, assistantId: string, e: import("@takt/
       // Reuse the existing part id when replacing (re-emit / new version) so the
       // React key is stable — the CanvasFrame/UIRenderer updates in place instead
       // of remounting (no iframe reload/flash, no wiping typed interactive state).
-      if (i >= 0) { const next = p.slice(); next[i] = { id: p[i]!.id, kind: "ui", partId: e.partId, surface: e.surface }; return next; }
-      return [...p, { id: uid(), kind: "ui", partId: e.partId, surface: e.surface }];
+      if (i >= 0) { const next = p.slice(); next[i] = { id: p[i]!.id, kind: "ui", partId: e.partId, surface: e.surface, partial: e.partial }; return next; }
+      return [...p, { id: uid(), kind: "ui", partId: e.partId, surface: e.surface, partial: e.partial }];
     });
     return setStatus(withPart, assistantId, null);
   });
+  else if (e.type === "canvas_highlight") useUi.getState().highlightCanvas(e.id);
   else if (e.type === "ui_action_result") { /* client ack only — no state change */ }
   else if (e.type === "ask_user") update(chatId, (s) => {
     const withPart = patchAssistant(s, assistantId, (p) =>

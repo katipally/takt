@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { PanelRightClose, PanelRightOpen, Brain, Search, FileText, ImageIcon, Boxes, Check, Loader2, ChevronRight, AudioLines, Copy, RefreshCw } from "lucide-react";
+import { PanelRightClose, MessageSquare, Brain, Search, FileText, ImageIcon, Boxes, Check, Loader2, ChevronRight, AudioLines, Copy, RefreshCw, SquarePen } from "lucide-react";
+import { parseSelection, selectionLabel } from "@/lib/selection";
 import type { Node, Part, PageImagePart, ToolPart, ReasoningPart, TextPart } from "@/lib/chatStore";
 import { MarkdownBody } from "@/components/markdown/MarkdownBody";
 import { cn } from "@/lib/cn";
@@ -24,6 +25,8 @@ const TOOL_META: Record<string, { label: string; active: string; icon: ReactNode
   get_page_image: { label: "Opened a page", active: "Reading the page…", icon: <ImageIcon className="size-3.5" /> },
   crop_page_image: { label: "Cropped a page", active: "Cropping…", icon: <ImageIcon className="size-3.5" /> },
   emit_ui: { label: "Designed the answer", active: "Designing…", icon: <Boxes className="size-3.5" /> },
+  build_canvas: { label: "Built the artifact", active: "Building the artifact…", icon: <Boxes className="size-3.5" /> },
+  edit_canvas: { label: "Edited the canvas", active: "Editing the canvas…", icon: <Boxes className="size-3.5" /> },
   delegate_build: { label: "Built a visual", active: "Building the visual…", icon: <Boxes className="size-3.5" /> },
   update_todos: { label: "Planned the steps", active: "Planning…", icon: <FileText className="size-3.5" /> },
   list_products: { label: "Checked the catalog", active: "Checking…", icon: <FileText className="size-3.5" /> },
@@ -95,8 +98,8 @@ export function ProcessRail({
     // open; hover highlights. Label centered vertically.
     return (
       <button onClick={onToggle} title="Show chat" aria-label="Show chat"
-        className="group flex h-full w-11 shrink-0 flex-col items-center justify-center gap-3 rounded-2xl text-muted-foreground transition hover:bg-foreground/[0.05] hover:text-foreground">
-        <PanelRightOpen className="size-4 opacity-70 transition group-hover:opacity-100" />
+        className="group flex h-full w-9 shrink-0 flex-col items-center justify-center gap-3 rounded-2xl text-muted-foreground transition hover:bg-foreground/[0.05] hover:text-foreground">
+        <MessageSquare className="size-4 opacity-70 transition group-hover:opacity-100" />
         <span className="[writing-mode:vertical-rl] text-[11px] tracking-wide">Chat{streaming ? " ·" : ""}</span>
         {streaming ? <Loader2 className="size-3.5 animate-spin text-arc" /> : null}
       </button>
@@ -116,7 +119,7 @@ export function ProcessRail({
       <div ref={scrollRef} onScroll={onScroll} className="takt-scroll min-h-0 flex-1 space-y-2 overflow-y-auto px-1 py-1.5">
         {rows.map((r) => r.kind === "live"
           ? <LiveSessionCard key={r.turns[0]!.userId} turns={r.turns} live={streaming && r.index + r.turns.length === turns.length}
-              selectedUserId={selectedUserId} onSelectTurn={onSelectTurn} onOpenSource={onOpenSource} onCitation={onCitation} />
+              selectedUserId={selectedUserId} onSelectTurn={onSelectTurn} onOpenSource={onOpenSource} />
           : <TurnCard key={r.turn.userId} turn={r.turn}
               selected={selectedUserId ? r.turn.userId === selectedUserId : r.index === turns.length - 1}
               streaming={streaming && r.index === turns.length - 1} isLatest={r.index === turns.length - 1}
@@ -187,7 +190,20 @@ function TurnCard({ turn, selected, streaming, isLatest, onSelect, onOpenSource,
             : "border-border bg-foreground/[0.04] group-hover:border-arc/45 group-hover:bg-arc-soft/25",
         )}>
           {turn.live && <AudioLines className="mt-[3px] size-3 shrink-0 text-accent" aria-label="voice" />}
-          <span className="line-clamp-4 whitespace-pre-wrap text-[12.5px] font-medium leading-snug text-foreground">{turn.userText}</span>
+          {(() => {
+            const { selection: sel, body } = parseSelection(turn.userText);
+            return (
+              <span className="flex min-w-0 flex-1 flex-col gap-1">
+                {sel && (
+                  <span className="flex w-fit max-w-full items-center gap-1 rounded-full border border-accent/35 bg-accent-soft/40 px-2 py-0.5 text-[11px] text-muted-foreground">
+                    <SquarePen className="size-3 shrink-0 text-accent" />
+                    <span className="truncate">Editing “{selectionLabel(sel)}”</span>
+                  </span>
+                )}
+                <span className="line-clamp-4 whitespace-pre-wrap text-[12.5px] font-medium leading-snug text-foreground">{body}</span>
+              </span>
+            );
+          })()}
         </div>
       </div>
 
@@ -282,9 +298,9 @@ function WorkBlock({ parts, active }: { parts: Part[]; active: boolean }) {
 // A live voice call as ONE card (along with the chat): collapsed shows a "Live"
 // pill + turn count; expanded shows the you↔Takt transcript, with the agent's
 // working state inside. Clicking a turn brings its canvas artifact to the stage.
-function LiveSessionCard({ turns, live, selectedUserId, onSelectTurn, onOpenSource, onCitation }: {
+function LiveSessionCard({ turns, live, selectedUserId, onSelectTurn, onOpenSource }: {
   turns: Turn[]; live: boolean; selectedUserId: string | null;
-  onSelectTurn: (id: string) => void; onOpenSource: (s: { page: number; url: string; caption?: string }) => void; onCitation?: (page: number) => void;
+  onSelectTurn: (id: string) => void; onOpenSource: (s: { page: number; url: string; caption?: string }) => void;
 }) {
   const [open, setOpen] = useState(live);
   const expanded = open || live;
@@ -311,7 +327,7 @@ function LiveSessionCard({ turns, live, selectedUserId, onSelectTurn, onOpenSour
             <div key={t.userId}>
               <button onClick={() => onSelectTurn(t.userId)}
                 className={cn("block w-full rounded-lg px-2 py-1.5 text-left transition hover:bg-foreground/[0.04]", t.userId === selectedUserId && "bg-foreground/[0.05]")}>
-                <span className="block text-[12px] font-medium text-foreground">{t.userText}</span>
+                <span className="block text-[12px] font-medium text-foreground">{parseSelection(t.userText).body}</span>
                 {agentText(t)
                   ? <span className="mt-0.5 line-clamp-3 block text-[11.5px] text-muted-foreground">{agentText(t)}</span>
                   : isWorking(t) ? <span className="mt-0.5 block text-[11.5px]"><span className="arc-shimmer font-medium">Takt is working…</span></span> : null}

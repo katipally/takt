@@ -58,8 +58,10 @@ export async function collectTurn(gen: AsyncGenerator<ProviderEvent>, emit: Emit
       case "tool_delta": {
         const c = calls.get(ev.index);
         if (c) c.args += ev.argsDelta;
-        // Throttled progressive emit for the surface being built.
-        if (c && ev.index === buildingIndex && c.args.length - lastPartialLen > 350) {
+        // Throttled progressive emit for the surface being built. Small step so the
+        // page visibly types itself in rather than jumping in big chunks; the host
+        // just re-sets innerHTML on a partial (scripts stripped), so it's cheap.
+        if (c && ev.index === buildingIndex && c.args.length - lastPartialLen > 120) {
           lastPartialLen = c.args.length;
           const surface = streamingJsonSurface(c.args);
           if (surface) {

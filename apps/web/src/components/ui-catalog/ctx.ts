@@ -7,8 +7,13 @@ export interface RenderCtx {
   onSource?: (s: { page?: number; url?: string; title?: string; caption?: string }) => void;
   /** interactive Button/Form/Select submit — resumes the agent turn */
   onAction?: (actionId: string, value: unknown) => void | Promise<void>;
+  /** user clicked a block on the canvas — scope the next message to it (surgical edit) */
+  onSelect?: (sel: { id: string; text: string }) => void;
   /** frozen history: interactive nodes render disabled at their final state */
   readOnly?: boolean;
+  /** the surface is a mid-stream PARTIAL — renderers skip running scripts (Claude's
+   * "strip scripts during preview") so a half-written page streams in smoothly. */
+  partial?: boolean;
   /** two-way-bound surface data model (JSON-Pointer get/set); set by UIRenderer */
   data?: SurfaceData;
 }

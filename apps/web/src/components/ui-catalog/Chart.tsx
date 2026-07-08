@@ -26,7 +26,7 @@ export function Chart({ props }: { props: ChartProps }) {
   const cats = data.map((r, i) => String(xKey ? r[xKey] : (r.name ?? r.label ?? i + 1)));
   const colors = series.map((s, i) => s.color || PALETTE[i % PALETTE.length]!);
   const body = kind === "pie"
-    ? <Pie data={data} series={series} colors={colors} cats={cats} />
+    ? <Pie data={data} series={series} colors={colors} />
     : <XY kind={kind} data={data} series={series} colors={colors} cats={cats} />;
   return (
     <Figure caption={caption}>
@@ -89,7 +89,7 @@ function XY({ kind, data, series, colors, cats }: { kind: string; data: Row[]; s
 const band = (n: number, iw: number) => (iw / Math.max(1, n)) * 0.7;
 const bandX = (i: number, n: number, iw: number) => (iw / Math.max(1, n)) * i + (iw / Math.max(1, n)) * 0.15;
 
-function Pie({ data, series, colors, cats }: { data: Row[]; series: Series[]; colors: string[]; cats: string[] }) {
+function Pie({ data, series, colors }: { data: Row[]; series: Series[]; colors: string[] }) {
   const key = series[0]?.key ?? "value";
   const vals = data.map((r) => num(r[key]));
   const total = Math.max(1, vals.reduce((a, b) => a + b, 0));

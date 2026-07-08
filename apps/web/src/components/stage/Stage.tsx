@@ -20,10 +20,11 @@ function isPageSurface(p: UIPart): boolean {
 }
 
 export function Stage({
-  surfaces, building, streaming, isLatest, ctx, empty, heading, subheading, starters, onStarter, liveMode,
+  surfaces, constructing, buildStatus, streaming, isLatest, ctx, empty, heading, subheading, starters, onStarter, liveMode,
 }: {
   surfaces: UIPart[];
-  building: boolean;
+  constructing: boolean;            // this turn is building a new artifact whose surface hasn't landed yet
+  buildStatus?: string | null;      // live gather/compose status line
   streaming: boolean;
   isLatest: boolean;
   ctx: RenderCtx;
@@ -46,25 +47,34 @@ export function Stage({
   // internal padding via the design system). Legacy catalog surfaces stay in a
   // centered reading column. Empty/building/idle keep the narrow, calm layout.
   const reduce = useReducedMotion();
-  const showingSurfaces = !empty && !building && surfaces.length > 0;
+  // While this turn is building a NEW artifact whose surface hasn't landed, show the
+  // calm placeholder instead of the previous (now stale) artifact — start_canvas puts
+  // the real title up within ~1s, so this window is brief.
+  const showingSurfaces = !empty && !constructing && surfaces.length > 0;
   // Full-bleed the canvas if ANY surface is a Page; each non-Page (catalog)
   // surface then keeps its own centered reading column, so a mixed turn still
   // renders the Page edge-to-edge instead of boxing everything.
   const pageMode = showingSurfaces && surfaces.some(isPageSurface);
   const renderSurface = (p: UIPart) => (
-    <UIRenderer key={p.id} surface={p.surface} ctx={{ ...ctx, readOnly: ctx.readOnly ?? !isLatest }} animate={isLatest && streaming} />
+    <UIRenderer key={p.id} surface={p.surface} ctx={{ ...ctx, readOnly: ctx.readOnly ?? !isLatest, partial: !!p.partial && streaming }} animate={isLatest && streaming} />
   );
 
-  // One canvas state at a time; the placeholder states (empty · building · idle)
-  // CROSSFADE into each other so there's no hard cut when the flow moves from
-  // "working" to skeleton to answer. Surfaces render outside the crossfade (they
-  // own their layout + their own entrance animation) so their iframes never remount.
-  const mode: "empty" | "building" | "surfaces" | "idle" =
-    empty ? "empty" : building ? "building" : surfaces.length ? "surfaces" : "idle";
+  // One canvas state at a time: empty (first load) · surfaces (the artifact) ·
+  // placeholder (calm line while a turn builds, or idle). The non-surface states
+  // CROSSFADE so there's no hard cut. Surfaces render outside the crossfade (they
+  // own their layout + entrance animation) so their iframes never remount.
+  const mode: "empty" | "surfaces" | "placeholder" =
+    empty ? "empty" : showingSurfaces ? "surfaces" : "placeholder";
   const fade = { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 }, transition: { duration: reduce ? 0 : 0.18 } };
 
   return (
     <div ref={scrollRef} className="takt-scroll relative min-h-0 flex-1 overflow-y-auto">
+      {/* The ONE build cue: a thin accent bar rides the top of the canvas while the
+          latest turn is still composing, and vanishes when it's done. Present = still
+          building, absent = complete — no other spinner/skeleton needed. */}
+      {streaming && isLatest && (
+        <div aria-hidden className="pointer-events-none sticky inset-x-0 top-0 z-30 h-[3px] bg-accent/80 animate-pulse" />
+      )}
       {liveMode && <div aria-hidden className="pointer-events-none absolute inset-0 bg-[radial-gradient(55%_45%_at_50%_28%,var(--accent-soft,rgba(120,130,255,0.1)),transparent_70%)]" />}
       <div className={pageMode ? "relative w-full pb-48" : "relative mx-auto w-full max-w-3xl px-6 pb-48 pt-8"}>
         {mode === "surfaces" ? (
@@ -78,9 +88,7 @@ export function Stage({
             <motion.div key={mode} {...fade}>
               {mode === "empty"
                 ? <EmptyState heading={heading} subheading={subheading} starters={starters} onStarter={onStarter} />
-                : mode === "building"
-                ? <ArtifactSkeleton live={liveMode} />
-                : <ArtifactIdle streaming={streaming} live={liveMode} />}
+                : <Placeholder streaming={streaming} status={buildStatus ?? null} live={liveMode} />}
             </motion.div>
           </AnimatePresence>
         )}
@@ -89,46 +97,22 @@ export function Stage({
   );
 }
 
-// Ghost/skeleton shown while the agent is composing an artifact — mimics the
-// shape of a designed surface (title · figure · text · media grid) so the canvas
-// reads as "a polished thing is being built here," not a spinner.
-function ArtifactSkeleton({ live }: { live?: boolean }) {
-  return (
-    <div>
-      <div className="mb-4 text-[12px] font-medium"><span className="arc-shimmer">{live ? "Designing a visual…" : "Designing the answer…"}</span></div>
-      <div className="space-y-5 rounded-2xl border border-border bg-card p-5 shadow-[var(--shadow-card)]">
-        <div className="animate-pulse space-y-5">
-          <div className="h-6 w-2/5 rounded-md bg-foreground/10" />
-          <div className="h-44 w-full rounded-xl bg-foreground/[0.06]" />
-          <div className="space-y-2.5">
-            <div className="h-3 w-full rounded bg-foreground/10" />
-            <div className="h-3 w-11/12 rounded bg-foreground/10" />
-            <div className="h-3 w-3/5 rounded bg-foreground/10" />
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            <div className="h-20 rounded-lg bg-foreground/[0.06]" />
-            <div className="h-20 rounded-lg bg-foreground/[0.06]" />
-            <div className="h-20 rounded-lg bg-foreground/[0.06]" />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// Calm placeholder when the current reply carries no artifact (a purely
-// conversational answer lives in the chat). Live mode gets its own animated
-// "listening" view — the canvas is the stage for a voice call even when idle.
-function ArtifactIdle({ streaming, live }: { streaming: boolean; live?: boolean }) {
+// The one non-empty, non-surface canvas state. Artifact-first made the old
+// crops-grid skeleton redundant (start_canvas puts the real title up within ~1s,
+// and the top build-bar signals progress), so this is just: a calm status line
+// while a turn streams, or a quiet wordmark when settled. The canvas is
+// artifact-first, so it NEVER tells the user to "look in the chat". Live mode gets
+// its own animated "listening" view.
+function Placeholder({ streaming, status, live }: { streaming: boolean; status?: string | null; live?: boolean }) {
   if (live) return <LiveIdle streaming={streaming} />;
   return (
     <div className="flex min-h-[55vh] flex-col items-center justify-center text-center">
       {streaming ? (
-        <span className="arc-shimmer text-[13px] font-medium text-muted-foreground">Working…</span>
+        <span className="arc-shimmer text-[13px] font-medium text-muted-foreground">{status || "Putting your answer together…"}</span>
       ) : (
         <>
-          <div className="text-[13px] text-muted-foreground">The reply is in the chat</div>
-          <div className="mt-1 max-w-xs text-[12px] text-faint">Diagrams, cropped figures, 3D parts, video and step-by-step guides appear here when they help explain something.</div>
+          <Wordmark size="lg" className="mb-4 inline-block opacity-40" />
+          <div className="max-w-xs text-[12px] text-faint">Your answer renders here as a designed page — steps, cropped figures, 3D parts, charts and diagrams.</div>
         </>
       )}
     </div>

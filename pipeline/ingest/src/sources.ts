@@ -54,7 +54,7 @@ function sectionize(text: string, target = 3000): string[] {
 
 const YT = /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([\w-]{11})/;
 
-async function fetchYouTube(url: string, id: string): Promise<FetchedSource> {
+async function fetchYouTube(id: string): Promise<FetchedSource> {
   const page = await (await fetch(`https://www.youtube.com/watch?v=${id}`, { headers: { "user-agent": UA, "accept-language": "en" } })).text();
   const title = /"title":\s*"([^"]+)"/.exec(page)?.[1]?.replace(/\\u0026/g, "&") ?? "YouTube video";
   const track = /"captionTracks":\s*(\[[^\]]+\])/.exec(page)?.[1];
@@ -73,7 +73,7 @@ async function fetchYouTube(url: string, id: string): Promise<FetchedSource> {
 /** Fetch a URL into titled text sections. Detects YouTube vs a normal web page. */
 export async function fetchWebSource(url: string): Promise<FetchedSource> {
   const yt = YT.exec(url);
-  if (yt) return fetchYouTube(url, yt[1]!);
+  if (yt) return fetchYouTube(yt[1]!);
   const res = await fetch(url, { headers: { "user-agent": UA, "accept-language": "en" }, redirect: "follow" });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const html = await res.text();

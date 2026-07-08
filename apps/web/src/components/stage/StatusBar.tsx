@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Loader2, ChevronUp, Brain, Search, FileText, ImageIcon, Boxes, Check, Hammer } from "lucide-react";
-import type { Node, Part, ToolPart, TodoItem } from "@/lib/chatStore";
+import { Loader2, ChevronUp, Search, FileText, ImageIcon, Boxes, Check, Hammer } from "lucide-react";
+import type { Node, ToolPart, TodoItem } from "@/lib/chatStore";
 import { cn } from "@/lib/cn";
 
 const TOOL_META: Record<string, { active: string; done: string; icon: ReactNode }> = {

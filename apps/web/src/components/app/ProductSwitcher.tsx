@@ -7,7 +7,6 @@ import { AnimatePresence, motion } from "motion/react";
 import { Check, ChevronsUpDown, ChevronDown, Boxes } from "lucide-react";
 import { api } from "@/lib/api";
 import { dropdown } from "@/lib/motion";
-import { cn } from "@/lib/cn";
 
 // Fluid product switcher. `panel` = the bordered card used in the sidebar;
 // `bar` = the compact pill used in the chat header (Image #2, top-left).

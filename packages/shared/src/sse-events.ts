@@ -29,6 +29,9 @@ export const sseEventSchema = z.discriminatedUnion("type", [
   // A declarative UI surface rendered inline on the stage. `partial: true` marks
   // an in-progress stream frame (more nodes still coming); the final emit omits it.
   z.object({ type: z.literal("ui_surface"), partId: z.string(), surface: uiSurfaceSchema, partial: z.boolean().optional() }),
+  // Takt-driven canvas selection: highlight (ring + scroll-into-view) a block by its
+  // data-takt-id, or clear with an empty id. The agent uses this to point at a region.
+  z.object({ type: z.literal("canvas_highlight"), id: z.string() }),
   // Resolution of an interactive Button/Form/Select action (ack to the client).
   z.object({ type: z.literal("ui_action_result"), actionId: z.string(), ok: z.boolean().optional() }),
   z.object({ type: z.literal("title"), title: z.string() }),

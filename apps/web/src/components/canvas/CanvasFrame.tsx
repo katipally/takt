@@ -5,6 +5,7 @@ import { useTheme } from "next-themes";
 import { X } from "lucide-react";
 import { Model3D } from "@/components/ui-catalog/Model3D";
 import type { RenderCtx } from "@/components/ui-catalog/ctx";
+import { useUi } from "@/lib/uiStore";
 
 // Renders a freeform `Page` surface: the model's HTML/CSS runs in a sandboxed,
 // auto-sizing iframe (/canvas-host) with the Takt design system loaded. Island
@@ -31,6 +32,7 @@ export function CanvasFrame({ props, ctx }: { props: { html?: string; css?: stri
       else if (d.type === "height") setH(Math.min(12000, Math.max(120, d.height + 8)));
       else if (d.type === "cite") ctx.onCitation?.(Number(d.page) || 0, d.product ?? undefined);
       else if (d.type === "action") ctx.onAction?.(String(d.id ?? "action"), d.value);
+      else if (d.type === "select" && typeof d.id === "string") ctx.onSelect?.({ id: d.id, text: String(d.text ?? "").slice(0, 240) });
       // The iframe is untrusted — only act on a same-origin /assets model and an
       // http(s) link; never open a javascript:/data: url or fetch an arbitrary src.
       else if (d.type === "model" && typeof d.src === "string" && d.src.startsWith("/assets/")) setModel({ src: d.src, caption: d.caption });
@@ -41,15 +43,17 @@ export function CanvasFrame({ props, ctx }: { props: { html?: string; css?: stri
     return () => window.removeEventListener("message", onMsg);
   }, [ctx]);
 
-  // Post the full page when ready or when its html/css changes.
+  // Post the full page when ready or when its html/css changes. While the surface is
+  // a mid-stream PARTIAL, tell the host to strip <script> and skip running them (so a
+  // half-written page streams in smoothly and scripts only fire once, on the final).
   useEffect(() => {
     if (!ready) return;
     ref.current?.contentWindow?.postMessage(
-      { __takt: true, type: "render", html: props.html ?? "", css: props.css ?? "", theme: resolvedTheme },
+      { __takt: true, type: "render", html: props.html ?? "", css: props.css ?? "", theme: resolvedTheme, partial: !!ctx.partial },
       "*",
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, props.html, props.css]);
+  }, [ready, props.html, props.css, ctx.partial]);
 
   // A theme flip is a cheap class toggle in the host — don't re-render the whole
   // page (that would rebuild every island and lose annotation-drag / input state).
@@ -57,6 +61,15 @@ export function CanvasFrame({ props, ctx }: { props: { html?: string; css?: stri
     if (!ready) return;
     ref.current?.contentWindow?.postMessage({ __takt: true, type: "theme", theme: resolvedTheme }, "*");
   }, [ready, resolvedTheme]);
+
+  // Agent-driven selection (select_canvas): ring + scroll a block into view. Nonce
+  // makes re-highlighting the same block re-fire.
+  const highlight = useUi((s) => s.canvasHighlight);
+  useEffect(() => {
+    if (!ready) return;
+    ref.current?.contentWindow?.postMessage({ __takt: true, type: "highlight", id: highlight.id }, "*");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, highlight.nonce]);
 
   return (
     <>

@@ -64,11 +64,42 @@ const DESIGN_CSS = String.raw`
 *{box-sizing:border-box}
 html,body{margin:0;height:auto;background:var(--takt-bg);color:var(--takt-fg);
   font-family:var(--takt-sans);font-size:17px;line-height:1.66;-webkit-font-smoothing:antialiased;overflow-x:hidden;text-rendering:optimizeLegibility}
-.takt-page{container-type:inline-size;padding:clamp(20px,4cqi,56px);max-width:1400px;margin:0 auto;overflow-x:clip}
+/* CONTENT-GRID FLOOR — the layout floor that makes a bad composition impossible.
+   The page is a grid with three bands: a centered reading COLUMN (measure-capped),
+   a WIDE band for structural blocks, and FULL bleed for hero media. Every direct
+   child lands in the reading column by default and LEFT-ALIGNS to one shared edge
+   — so prose can never sit left-jammed in a wide void, and headings/paragraphs/
+   lists all align. Grids, tables and figures break out to the wide/full bands and
+   fill the canvas on purpose. The model doesn't need to pick a class for this. */
+.takt-page{
+  container-type:inline-size;
+  display:grid;
+  /* ALL gutter tracks have min 0 so they collapse instead of forcing overflow when
+     the canvas is narrow (a min>0 here is what clipped content on the right during
+     resize). The guaranteed side breathing room is padding-inline, which lives
+     INSIDE the content box and therefore can never overflow. */
+  grid-template-columns:
+    [full-start] minmax(0,1fr)
+    [wide-start] minmax(0,80px)
+    [content-start] min(68ch,100%) [content-end]
+    minmax(0,80px) [wide-end]
+    minmax(0,1fr) [full-end];
+  padding-inline:clamp(16px,4cqi,56px);
+  padding-block:clamp(28px,5cqi,64px);
+  max-width:1240px;margin:0 auto;overflow-x:clip;
+}
+.takt-page > *{grid-column:content;min-width:0}
+/* structural blocks fill a wider band so a two-col spread actually uses the canvas */
+.takt-page > :is(.takt-grid,table,.takt-wide,figure.takt-figure,pre){grid-column:wide}
+/* hero media + anything explicitly full bleeds edge-to-edge */
+.takt-page > :is(.takt-full,figure.takt-figure[data-variant=lead]){grid-column:full}
+/* an inset (text-wrap) figure must stay INLINE in the reading column, not become a grid item (float is ignored on grid items) */
+.takt-page > figure.takt-figure[data-variant=inset]{grid-column:content}
 img,video,model-viewer{max-width:100%;height:auto}
 img{display:block}
 /* never let a wide child force horizontal overflow */
 .takt-page *{max-width:100%}
+.takt-grid > *{min-width:0}
 .takt-page pre{overflow-x:auto}
 /* GUARANTEED vertical rhythm — top-level blocks and stacked content always get
    breathing room, so a page never renders cramped even if the model forgets
@@ -100,8 +131,10 @@ blockquote,.takt-quote{font-family:var(--takt-serif);font-size:1.3rem;line-heigh
 
 /* Layout primitives — the model composes real page structure with these. */
 .takt-grid{display:grid;gap:clamp(16px,2.4cqi,32px)}
-@container (min-width:640px){ .takt-cols-2{grid-template-columns:repeat(2,1fr)} .takt-cols-3{grid-template-columns:repeat(3,1fr)} }
-@container (min-width:900px){ .takt-cols-4{grid-template-columns:repeat(4,1fr)} .takt-split{grid-template-columns:1.4fr 1fr} }
+/* auto-fit: a grid that ends up with ONE child fills the row instead of leaving a
+   dead empty cell (the half-empty-grid look). Tracks collapse when unfilled. */
+@container (min-width:560px){ .takt-cols-2{grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr))} .takt-cols-3{grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr))} }
+@container (min-width:820px){ .takt-cols-4{grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr))} .takt-split{grid-template-columns:1.35fr 1fr} }
 /* Cards are FLAT paper: a 1px hairline + a one-shade surface offset separate
    them — no drop shadow (whitespace does the work, not elevation). */
 .takt-card{background:var(--takt-card);border:1px solid var(--takt-border);border-radius:var(--takt-radius);padding:clamp(20px,2.4cqi,30px)}
@@ -188,6 +221,28 @@ svg{max-width:100%;height:auto;color:var(--takt-fg)}
 svg text{fill:var(--takt-muted);font-family:var(--takt-sans);font-size:12px}
 svg .axis,svg line.axis{stroke:var(--takt-border)}
 .takt-err{white-space:pre-wrap;color:var(--takt-danger);font-family:var(--takt-mono);font-size:12px;padding:14px}
+/* Selectable blocks — RIGHT-click a top-level block for a "Select this area" menu
+   to scope the next message to it (surgical edit). No hover chrome by default; the
+   selected block gets an accent ring. */
+.takt-page > [data-takt-id]{border-radius:9px;transition:outline-color .12s}
+.takt-selected{outline:2px solid var(--takt-accent) !important;outline-offset:6px}
+/* right-click context menu (built in the runtime) */
+.takt-ctxmenu{position:fixed;z-index:9999;min-width:168px;background:var(--takt-card);border:1px solid var(--takt-border-strong);
+  border-radius:10px;box-shadow:var(--takt-shadow);padding:4px;font-family:var(--takt-sans)}
+.takt-ctxitem{display:flex;align-items:center;gap:.5em;width:100%;text-align:left;background:none;border:0;cursor:pointer;
+  font-size:.84rem;color:var(--takt-fg);padding:.5em .6em;border-radius:7px;line-height:1.2}
+.takt-ctxitem:hover{background:var(--takt-surface)}
+.takt-ctxitem .dot{width:.5em;height:.5em;border-radius:50%;background:var(--takt-accent);flex:0 0 auto}
+/* momentary hint ring while the menu is open, so you see what you're about to pick */
+.takt-preselect{outline:1.5px dashed color-mix(in srgb,var(--takt-accent) 55%,transparent) !important;outline-offset:6px}
+/* BUILD FRONTIER — while a page streams in, a shimmer skeleton sits just below the
+   content rendered so far, so the user sees WHERE the agent is still composing.
+   Appended only on partial frames; the final render omits it (see render()). */
+@keyframes takt-shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.takt-building{display:grid;gap:14px}
+.takt-building .sk{border-radius:8px;background:linear-gradient(100deg,var(--takt-surface) 28%,var(--takt-surface-2) 50%,var(--takt-surface) 72%);background-size:200% 100%;animation:takt-shimmer 1.4s ease-in-out infinite}
+.takt-building .sk-line{height:14px}
+.takt-building .sk-block{height:150px;border-radius:var(--takt-radius)}
 `;
 
 // ── The island runtime + postMessage bridge (inline; no external deps) ────────
@@ -385,10 +440,59 @@ const RUNTIME_JS = String.raw`
     if(a && a.getAttribute('href') && a.getAttribute('href')[0] !== '#'){ e.preventDefault(); post({ type:'link', url: a.href }); }
   });
 
-  function render(html, css){
+  // ── SELECTION (opt-in add-on) ────────────────────────────────────────────────
+  // RIGHT-click a top-level [data-takt-id] block → a small "Select this area" menu.
+  // No hover chrome otherwise; a dashed hint ring shows while the menu is open, and
+  // picking it promotes the block to the accent selection ring + scopes the next
+  // message. selectBlock() is shared so Takt can drive selection from its side too
+  // (parent posts {type:'highlight', id}).
+  var ctxMenu = null, presel = null;
+  function clearPresel(){ if(presel){ presel.classList.remove('takt-preselect'); presel = null; } }
+  function closeMenu(){ if(ctxMenu){ ctxMenu.remove(); ctxMenu = null; } clearPresel(); }
+  function selectBlock(block, fromAgent){
+    var prev = root.querySelector('.takt-selected'); if(prev) prev.classList.remove('takt-selected');
+    if(!block){ post({ type:'select', id:'', text:'' }); return; }
+    block.classList.add('takt-selected');
+    if(fromAgent && block.scrollIntoView){ try{ block.scrollIntoView({ block:'center', behavior:'smooth' }); }catch(x){ block.scrollIntoView(); } }
+    post({ type:'select', id: block.getAttribute('data-takt-id'), text: (block.innerText||'').replace(/\s+/g,' ').trim().slice(0,240) });
+  }
+  document.addEventListener('click', closeMenu);
+  window.addEventListener('keydown', function(e){ if(e.key === 'Escape') closeMenu(); });
+  root.addEventListener('contextmenu', function(e){
+    var block = e.target.closest('[data-takt-id]');
+    if(!block) return; // not on a block → leave the browser's default menu
+    e.preventDefault(); closeMenu();
+    var isSel = block.classList.contains('takt-selected');
+    block.classList.add('takt-preselect'); presel = block;
+    var m = document.createElement('div'); m.className = 'takt-ctxmenu';
+    m.addEventListener('click', function(ev){ ev.stopPropagation(); });
+    var item = document.createElement('button'); item.className = 'takt-ctxitem';
+    var dot = document.createElement('span'); dot.className = 'dot'; item.appendChild(dot);
+    item.appendChild(document.createTextNode(isSel ? 'Deselect this area' : 'Select this area'));
+    item.addEventListener('click', function(ev){ ev.stopPropagation(); clearPresel(); selectBlock(isSel ? null : block); closeMenu(); });
+    m.appendChild(item);
+    document.body.appendChild(m);
+    var mw = m.offsetWidth || 172, mh = m.offsetHeight || 40;
+    m.style.left = Math.max(6, Math.min(e.clientX, window.innerWidth - mw - 6)) + 'px';
+    m.style.top  = Math.max(6, Math.min(e.clientY, window.innerHeight - mh - 6)) + 'px';
+    ctxMenu = m;
+  });
+
+  function render(html, css, partial){
     pageCss.textContent = css || '';
-    root.innerHTML = sanitize(html);
-    try{ runScripts(root); }catch(e){}
+    // While streaming a PARTIAL page, drop any half-written <script> and DON'T run
+    // scripts — the page fills in smoothly (structure + text) and the model's JS
+    // (calculators, chart draws) runs exactly once, when the final surface lands.
+    var h = sanitize(html);
+    if(partial) h = h.replace(/<script[\s\S]*?(<\/script>|$)/gi, '');
+    root.innerHTML = h;
+    if(partial){
+      // Shimmer skeleton at the growing edge — shows the agent is still composing
+      // THIS area. Dropped on the final (non-partial) render.
+      var sk = document.createElement('div'); sk.className='takt-building'; sk.setAttribute('aria-hidden','true');
+      sk.innerHTML = '<div class="sk sk-line" style="width:36%"></div><div class="sk sk-block"></div><div class="sk sk-line" style="width:84%"></div><div class="sk sk-line" style="width:68%"></div>';
+      root.appendChild(sk);
+    } else { try{ runScripts(root); }catch(e){} }
     requestAnimationFrame(postHeight);
     setTimeout(postHeight, 250);
   }
@@ -396,7 +500,14 @@ const RUNTIME_JS = String.raw`
   window.addEventListener('message', function(e){
     var d = e.data || {}; if(!d.__takt) return;
     if(d.type === 'theme'){ applyTheme(d.theme); return; }
-    if(d.type === 'render'){ if(d.theme) applyTheme(d.theme); try{ render(d.html, d.css); }catch(err){ root.innerHTML = '<div class="takt-err">Canvas error: ' + (err && err.message ? err.message : err) + '</div>'; } }
+    // Takt-driven selection: highlight a block by data-takt-id (empty = clear).
+    if(d.type === 'highlight'){
+      var b = null;
+      if(d.id){ try{ b = root.querySelector('[data-takt-id="' + String(d.id).replace(/"/g,'\\"') + '"]'); }catch(x){} }
+      selectBlock(b, true);
+      return;
+    }
+    if(d.type === 'render'){ if(d.theme) applyTheme(d.theme); try{ render(d.html, d.css, d.partial); }catch(err){ root.innerHTML = '<div class="takt-err">Canvas error: ' + (err && err.message ? err.message : err) + '</div>'; } }
   });
   post({ type:'ready' });
 })();

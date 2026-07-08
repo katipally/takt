@@ -18,6 +18,10 @@ interface UiState {
   setSidebarWidth: (w: number) => void;
   setCanvasWidth: (w: number) => void;
   setRailWidth: (w: number) => void;
+  // Agent-driven canvas highlight (select_canvas): the id to ring, with a nonce so
+  // re-highlighting the same block still fires. Transient — not persisted.
+  canvasHighlight: { id: string; nonce: number };
+  highlightCanvas: (id: string) => void;
   voiceEnabled: boolean;
   setVoiceEnabled: (v: boolean) => void;
   liveOpen: boolean;
@@ -42,6 +46,8 @@ export const useUi = create<UiState>()(
       setSidebarWidth: (w) => set({ sidebarWidth: w }),
       setCanvasWidth: (w) => set({ canvasWidth: w }),
       setRailWidth: (w) => set({ railWidth: w }),
+      canvasHighlight: { id: "", nonce: 0 },
+      highlightCanvas: (id) => set((s) => ({ canvasHighlight: { id, nonce: s.canvasHighlight.nonce + 1 } })),
       voiceEnabled: false,
       setVoiceEnabled: (v) => set({ voiceEnabled: v }),
       liveOpen: false,
