@@ -1,28 +1,25 @@
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
+import { lookup as dnsLookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import sharp from "sharp";
 import { z, type ZodRawShape } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import type { Product, Manual, ManualKind, SseEvent, AskAnswer } from "@takt/shared";
-import { askQuestionsSchema, uiSurfaceSchema, validateSurface, surfacePartId } from "@takt/shared";
-import { lintSurface, p0, lintFeedback } from "./lint-surface.js";
+import { askQuestionsSchema } from "@takt/shared";
 import {
   DATA_DIR, getPageImage, getManualsByProduct,
   listProducts, getProductBySlug, listMessages,
 } from "@takt/db";
 import {
-  profileExists, listConcepts, readConcept, readIndex, generateIndex, grepProfile,
-  pkbExists, loadGraph, neighbors, getEntityAnchors, anchorLabel,
-  findEntity, walkGraph, getAnchors, searchProduct, queryProduct,
-  type Anchor,
+  profileExists, listConcepts, readConcept, indexExists,
+  searchProduct, findMedia, type MediaItem,
 } from "@takt/profile";
 import { awaitAnswers } from "./pending.js";
 
 export type Emit = (e: SseEvent) => Promise<void> | void;
 
-// A tool the agent loop can call directly: JSON-Schema params for the model,
-// and an execute() returning text (+ optional images fed back for vision).
 export interface TaktTool {
   name: string;
   description: string;
@@ -37,12 +34,10 @@ export interface ToolResult {
 
 const WEB_URL = () => process.env.WEB_PUBLIC_URL ?? "http://localhost:3000";
 const text = (t: string): ToolResult => ({ output: t });
-const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 64) || "artifact";
 
-// Minimal HTML → text for fetch_url: drop script/style, strip tags, unescape the
-// common entities, collapse whitespace. ponytail: naive strip, not a full
-// readability parse — enough to give the model the page's words.
-function htmlToText(html: string): string {
+// Minimal HTML → text for fetch_url / read_canvas: drop script/style, strip tags,
+// unescape common entities, collapse whitespace.
+export function htmlToText(html: string): string {
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
@@ -53,31 +48,8 @@ function htmlToText(html: string): string {
     .trim();
 }
 
-// Strip media whose `/assets` src was NOT returned by a tool this turn — kills
-// invented URLs (e.g. a hallucinated `*.glb`) that would 404. Only touches Page
-// html + a catalog node's `src`; leaves data: URIs and non-/assets srcs alone.
-function sanitizeSurfaceMedia(surface: any, allowed: Set<string>): any {
-  const assetPath = (s: string): string | null => s.match(/\/assets\/[^"'?\s)]+/)?.[0] ?? null;
-  const badTag = (tag: string): boolean => {
-    const s = tag.match(/src=["']([^"']+)["']/i)?.[1];
-    const p = s ? assetPath(s) : null;
-    return p ? !allowed.has(p) : false; // only judge /assets srcs; leave data:/others
-  };
-  const clean = (html: string): string => html
-    .replace(/<(takt-figure|takt-model|takt-video)\b[^>]*>[\s\S]*?<\/\1>/gi, (m) => (badTag(m) ? "" : m))
-    .replace(/<(?:takt-figure|takt-model|takt-video|img)\b[^>]*?\/?>/gi, (m) => (badTag(m) ? "" : m));
-  const nodes = (surface.nodes ?? []).map((n: any) => {
-    if (n?.type === "Page" && n?.props && typeof n.props.html === "string") return { ...n, props: { ...n.props, html: clean(n.props.html) } };
-    if (typeof n?.props?.src === "string") { const p = assetPath(n.props.src); if (p && !allowed.has(p)) return { ...n, props: { ...n.props, src: "" } }; }
-    return n;
-  });
-  return { ...surface, nodes };
-}
-
 // Zod shape → JSON Schema for the model. Inline refs and drop $schema so every
-// provider adapter (Anthropic input_schema / OpenAI parameters / Google) accepts it.
-// ponytail: args aren't re-validated against the schema before execute() — the
-// model follows the schema, and emit_ui re-validates its own surface anyway.
+// provider adapter accepts it.
 function params(shape: ZodRawShape): Record<string, unknown> {
   const js = zodToJsonSchema(z.object(shape), { $refStrategy: "none" }) as Record<string, unknown>;
   delete js.$schema;
@@ -87,46 +59,13 @@ function params(shape: ZodRawShape): Record<string, unknown> {
 const formatAnswer = (a: AskAnswer) =>
   a.skipped ? "(skipped — no preference)" : Array.isArray(a.answer) ? a.answer.join(", ") : a.answer;
 
-// Rewrite bundle-relative media links (media/…) to servable /assets URLs so the
-// model gets usable image/video/3D URLs it can show; absolute /assets links pass
-// through unchanged.
+// Rewrite bundle-relative media links (media/…) to servable /assets URLs.
 const resolveMedia = (slug: string, body: string): string =>
   body.replace(/\]\(media\//g, `](/assets/products/${slug}/media/`);
 
-// Turn a PKB anchor into an actionable instruction telling the model exactly how
-// to SHOW it in an artifact (which crop_page_image call, or which URL to embed).
-function renderAnchorHint(a: Anchor): string {
-  const r = a.ref as any;
-  const cap = a.caption ? ` — ${a.caption}` : "";
-  const abs = (u: string) => (u?.startsWith("/") ? `${WEB_URL()}${u}` : u);
-  switch (a.kind) {
-    case "manual_page": {
-      const bbox = Array.isArray(r.bbox) ? r.bbox : null;
-      const m = r.manualKind ? `, manual:"${r.manualKind}"` : "";
-      const crop = bbox
-        ? `call crop_page_image(page:${r.page}${m}, x:${bbox[0]}, y:${bbox[1]}, w:${bbox[2]}, h:${bbox[3]}) to embed just this figure`
-        : `call get_page_image(page:${r.page}${m}) to SEE the page, then crop_page_image to the exact region that matters — do NOT embed the whole page`;
-      return `- manual page ${r.page}${cap}: ${crop}`;
-    }
-    case "mesh_node":
-      return `- 3D part "${r.nodeName}"${cap}: embed an interactive Model3D node with src "${abs(r.meshUrl)}" — a rotatable 3D part beats a photo when the user wants to SEE the part`;
-    case "video_clip": {
-      const frag = (r.tStart || r.tEnd) ? `#t=${Math.floor(r.tStart ?? 0)}${r.tEnd ? "," + Math.floor(r.tEnd) : ""}` : "";
-      return `- video ${cap || "clip"}: embed a Video node with src "${abs(r.videoUrl)}${frag}"${frag ? " (plays just that snippet)" : ""}`;
-    }
-    case "image":
-      return `- image${cap}: embed an Image node with src "${abs(r.url)}"`;
-    case "audio":
-      return `- audio${cap}: embed an Audio node with src "${abs(r.url)}"`;
-    default:
-      return `- ${a.kind}${cap}`;
-  }
-}
-
 // Overlay a faint 0–1 coordinate grid on the image the MODEL sees (vision only),
-// so it can read a feature's position straight off the grid instead of guessing —
-// this is what makes crop regions and <takt-figure> annotations land accurately.
-// The user-facing image (the file on disk / its URL) is never touched.
+// so it can read a feature's position off the grid for accurate crops/annotations.
+// The user-facing image on disk is never touched.
 export async function withCoordGrid(buf: Buffer): Promise<Buffer> {
   const meta = await sharp(buf).metadata();
   const w = meta.width ?? 0, h = meta.height ?? 0;
@@ -146,162 +85,177 @@ export async function withCoordGrid(buf: Buffer): Promise<Buffer> {
   return sharp(buf).composite([{ input: svg, top: 0, left: 0 }]).png().toBuffer();
 }
 
-export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]; emit: Emit; chatId?: string; spawnBuild?: (brief: string, key?: string) => void; compose?: (brief: string, key?: string) => Promise<boolean>; edit?: (brief: string, key?: string, target?: string) => Promise<boolean>; context?: "main" | "build"; allowedAssets?: Set<string>; onCanvasKey?: (key: string) => void }): TaktTool[] {
-  const { product, emit, chatId, spawnBuild, compose, edit, context = "main", allowedAssets, onCanvasKey } = ctx;
-  // Master mode = no single product selected → cross-product tools; the page
-  // tools then require a `product` slug to say which product to read from.
+// Format one media-index item as an actionable instruction telling the model how
+// to SHOW it (which URL to embed, or to crop a page). Absolute-izes /assets URLs.
+function mediaHint(m: MediaItem): string {
+  const abs = (u: string) => (u.startsWith("/") ? `${WEB_URL()}${u}` : u);
+  const cap = m.caption ? ` — ${m.caption.replace(/\s+/g, " ").slice(0, 90)}` : "";
+  switch (m.kind) {
+    case "mesh": return `- 3D part "${m.nodeName ?? ""}"${m.subsystem ? ` [${m.subsystem}]` : ""}${cap}: embed <takt-model src="${abs(m.url)}" caption="…"> — a rotatable part beats a photo`;
+    case "video_clip": {
+      const frag = (m.tStart != null || m.tEnd != null) ? `#t=${Math.floor(m.tStart ?? 0)}${m.tEnd != null ? "," + Math.floor(m.tEnd) : ""}` : "";
+      return `- video${cap}: embed <takt-video src="${abs(m.url)}${frag}" caption="…">${frag ? " (plays just that clip)" : ""}`;
+    }
+    case "image": return `- image${cap}: embed <takt-figure src="${abs(m.url)}" caption="…">`;
+    case "page":
+    case "figure":
+    default:
+      return `- manual page ${m.page ?? "?"}${cap}: call crop_page_image(page:${m.page ?? 1}) to embed just the relevant figure — do NOT embed the whole page`;
+  }
+}
+
+// fetch_url SSRF guard: block loopback / private / link-local / metadata hosts.
+function isPrivateIp(ip: string): boolean {
+  if (ip === "::1" || ip.startsWith("fe80:") || ip.startsWith("fc") || ip.startsWith("fd")) return true;
+  const p = ip.split(".").map(Number);
+  if (p.length !== 4 || p.some((n) => Number.isNaN(n))) return false;
+  return p[0] === 127 || p[0] === 10 || p[0] === 0 ||
+    (p[0] === 169 && p[1] === 254) ||           // link-local + cloud metadata
+    (p[0] === 172 && p[1]! >= 16 && p[1]! <= 31) ||
+    (p[0] === 192 && p[1] === 168);
+}
+async function hostIsPrivate(hostname: string): Promise<boolean> {
+  if (isIP(hostname)) return isPrivateIp(hostname);
+  if (/^(localhost|.*\.local)$/i.test(hostname)) return true;
+  try { const { address } = await dnsLookup(hostname); return isPrivateIp(address); }
+  catch { return true; } // unresolvable → refuse
+}
+
+export function buildTaktTools(ctx: {
+  product: Product | null;
+  manuals: Manual[];
+  emit: Emit;
+  chatId?: string;
+  context?: "main" | "build";
+  // canvas callbacks (chat wires compose/edit; live wires spawnBuild)
+  startCanvas?: (title: string, eyebrow?: string, lead?: string) => Promise<string>;
+  compose?: (brief: string, canvasId?: string) => Promise<boolean>;
+  edit?: (brief: string, canvasId?: string, target?: string) => Promise<boolean>;
+  spawnBuild?: (brief: string, canvasId?: string) => void;
+}): TaktTool[] {
+  const { product, emit, chatId, context = "main", startCanvas, compose, edit, spawnBuild } = ctx;
   const masterMode = !product;
-  // Self-correcting page-lookup errors: when a page/manual isn't found, tell the
-  // model exactly which manual kinds exist and their page ranges so it fixes the
-  // call in ONE shot instead of guessing slugs (e.g. "ps5-quick-start-guide" when
-  // the real kind is "quick_start"). Cheap DB read, only on the error path.
+
   const manualsHint = (prodId: string): string => {
     try {
       const ms = getManualsByProduct(prodId);
       if (!ms.length) return "This product has no manual pages indexed.";
-      const list = ms.map((m) => `"${m.kind}" (${m.pageCount} pages)`).join(", ");
-      return `Available manuals: ${list}. Pass one of those exact kinds as \`manual\` (or omit \`manual\` to search all) and a page within its range.`;
-    } catch { return "Call list_profile to see the available manual kinds and pages."; }
+      return `Available manuals: ${ms.map((m) => `"${m.kind}" (${m.pageCount} pages)`).join(", ")}. Pass one of those exact kinds as \`manual\` (or omit to search all) and a page within its range.`;
+    } catch { return "Call list_products to see products."; }
   };
-  // Bound one-shot anti-slop gate, keyed per surface: a Page with P0 design
-  // issues is rejected ONCE per key (fed back for self-correction), then allowed
-  // through — so a stubborn model can't loop forever, and a DIFFERENT sloppy page
-  // later in the turn still gets its own correction pass.
-  const lintRejected = new Set<string>();
 
-  // Which product a page tool should read: the bound one in single-product mode,
-  // or the slug the model passed in master mode.
   const pageProduct = (args: any): Product | null =>
     product ?? (args.product ? getProductBySlug(String(args.product)) ?? null : null);
+  const productParam: ZodRawShape = masterMode ? { product: z.string().describe("Product slug (required in master mode; see list_products)") } : {};
 
-  // Which products a Profile tool should target: the bound one, or the slug the
-  // model passed, or (master, no slug) every product.
-  const targetProducts = (args: any): Product[] =>
-    product ? [product]
-      : args.product ? [getProductBySlug(String(args.product))].filter(Boolean) as Product[]
-      : listProducts();
+  const searchGuard = (args: any): { slug: string; name: string } | ToolResult => {
+    const prod = pageProduct(args);
+    if (!prod) return text("Pass a `product` slug (see list_products).");
+    if (!indexExists(prod.slug) && !profileExists(prod.slug)) return text(`No knowledge indexed for ${prod.name} yet.`);
+    return { slug: prod.slug, name: prod.name };
+  };
 
-  // FIND — grep the product's Profile markdown (Direct Corpus Interaction). Pure
-  // lexical scan, so the model must search the vocabulary the Profile uses; the
-  // description steers it to list_profile first and to try synonyms.
-  const grepProfileTool: TaktTool = {
-    name: "grep_profile",
-    description: "Search a product's Profile (its knowledge, stored as markdown) for a keyword or regex — your primary FIND tool, like grep over the product's docs. Returns matching lines grouped by concept, densest first, with line numbers. It's LEXICAL: search the words the docs actually use. Workflow: call list_profile first to learn the product's vocabulary, grep a term (try synonyms if empty), then read_profile the promising concept for full context. Cite the concept a fact came from.",
-    parameters: params({
-      query: z.string().describe("Keyword, phrase, or regex to search for (case-insensitive)"),
-      ...(masterMode ? { product: z.string().optional().describe("Restrict to one product's slug; omit to grep across ALL products") } : {}),
-    }),
+  // ── SEARCH — hybrid (semantic ∪ lexical) over the product's knowledge ──
+  const searchProductTool: TaktTool = {
+    name: "search_product",
+    description: "Search a product's knowledge — the primary way to answer a product question. Hybrid: finds passages by MEANING (a symptom in the user's words like 'prints come out stringy') AND by exact term (an error code, part number, torque value). Returns ranked snippets with their source manual page. Cite the page a fact came from.",
+    parameters: params({ query: z.string().describe("What to find — a symptom, spec, part, procedure, or exact term"), ...productParam }),
     execute: async (args) => {
+      const g = searchGuard(args); if ("output" in g) return g;
       const id = randomUUID();
-      await emit({ type: "tool_start", id, tool: "grep_profile", summary: String(args.query) });
-      const targets = targetProducts(args);
-      const blocks: string[] = [];
-      let total = 0;
-      for (const p of targets) {
-        if (!profileExists(p.slug)) continue;
-        const groups = grepProfile(p.slug, String(args.query));
-        if (!groups.length) continue;
-        const inner = groups.map((g) => {
-          total += g.count;
-          const lines = g.hits.map((h) => `  L${h.line}: ${h.text}`).join("\n");
-          const more = g.count > g.hits.length ? ` (+${g.count - g.hits.length} more)` : "";
-          return `[${g.conceptTitle} · ${g.conceptId}] ${g.count} match${g.count === 1 ? "" : "es"}${more}\n${lines}`;
-        }).join("\n\n");
-        blocks.push(targets.length > 1 ? `### ${p.name} [${p.slug}]\n${inner}` : inner);
-      }
-      await emit({ type: "tool_done", id, detail: total ? `${total} match${total === 1 ? "" : "es"}` : "no matches" });
-      if (!blocks.length) return text(`No matches for "${args.query}". Call list_profile to see the concepts and the exact vocabulary, then grep a synonym.`);
-      return text(`${blocks.join("\n\n")}\n\nRead a concept in full with read_profile(concept: "<id>"${masterMode ? ', product: "<slug>"' : ""}).`);
+      await emit({ type: "tool_start", id, tool: "search_product", summary: String(args.query) });
+      const hits = await searchProduct(g.slug, String(args.query), 8);
+      await emit({ type: "tool_done", id, detail: `${hits.length} hits` });
+      if (!hits.length) return text(`No matches for "${args.query}". Try a synonym, or read_profile a concept.`);
+      const body = hits.map((h) => `[${h.title}${h.page ? ` p.${h.page}` : ""}] ${h.text.replace(/\s+/g, " ").slice(0, 280)}`).join("\n\n");
+      return text(`${body}\n\nTo SHOW a figure/3D part/video for this, call get_media. To read a concept in full, call read_profile.`);
     },
   };
 
-  // MAP — list the Profile's concepts so the model orients (and learns vocabulary)
-  // before grepping/reading. Master mode with no slug lists the products instead.
-  const listProfileTool: TaktTool = {
-    name: "list_profile",
-    description: "List a product's Profile concepts — the MAP of what's known: each concept's id, title, type and one-line description. Call this FIRST to see what knowledge exists and learn the product's exact vocabulary before you grep_profile or read_profile. In master mode with no product, it lists the available products.",
-    parameters: params({
-      ...(masterMode ? { product: z.string().optional().describe("Product slug to map; omit to list all products") } : {}),
-    }),
+  // ── GET_MEDIA — the flat media index: the exact figure/3D/video to SHOW ──
+  const getMediaTool: TaktTool = {
+    name: "get_media",
+    description: "Find the render-ready visuals for a topic — the manual page to crop, the 3D part model, the repair-video clip — so the canvas can SHOW it. Use before building the canvas: it returns the exact /assets URLs to embed (or which crop_page_image to call). Pass what you want to show (a part name, a step, a symptom).",
+    parameters: params({ query: z.string().describe("What you want to show — a part, step, or region"), kind: z.enum(["figure", "page", "mesh", "video_clip", "image"]).optional().describe("Restrict to one media kind"), ...productParam }),
     execute: async (args) => {
+      const g = searchGuard(args); if ("output" in g) return g;
       const id = randomUUID();
+      await emit({ type: "tool_start", id, tool: "get_media", summary: String(args.query) });
+      const media = await findMedia(g.slug, String(args.query), 6, args.kind);
+      await emit({ type: "tool_done", id, detail: `${media.length} media` });
+      if (!media.length) return text(`No media for "${args.query}". Use crop_page_image on a manual page instead.`);
+      return text(`${media.map(mediaHint).join("\n")}\n\nEmbed only these exact URLs — never invent one. For a manual page, crop_page_image tight to the one figure.`);
+    },
+  };
+
+  // ── READ — one concept's full text, verbatim ──
+  const readProfile: TaktTool = {
+    name: "read_profile",
+    description: "Read one Profile concept's full text VERBATIM — a manual, a spec sheet, a procedure — when a search snippet isn't enough. Media links come back as /assets URLs you can embed.",
+    parameters: params({ concept: z.string().describe("Concept id to read (e.g. 'overview', 'prusa3d-manual-mk4s-mk39s-101-en'). Get ids from search_product results."), ...productParam }),
+    execute: async (args) => {
       const prod = pageProduct(args);
-      await emit({ type: "tool_start", id, tool: "list_profile", summary: prod ? prod.slug : "products" });
-      if (!prod) {
-        const ps = listProducts();
-        await emit({ type: "tool_done", id, detail: `${ps.length} products` });
-        return text(`Products (call list_profile with a product slug to map one):\n${ps.map((p) => `- ${p.name} [${p.slug}]`).join("\n")}`);
-      }
+      const id = randomUUID();
+      await emit({ type: "tool_start", id, tool: "read_profile", summary: args.concept ? String(args.concept) : "?" });
+      if (!prod) { await emit({ type: "tool_done", id, detail: "no product" }); return text("Pass a `product` slug (see list_products)."); }
       if (!profileExists(prod.slug)) { await emit({ type: "tool_done", id, detail: "no profile" }); return text(`No Profile for ${prod.name} yet.`); }
       const ids = listConcepts(prod.slug).map((c) => c.id);
-      await emit({ type: "tool_done", id, detail: `${ids.length} concepts` });
-      const index = readIndex(prod.slug) ?? generateIndex(prod.slug, prod.name);
-      return text(`${index}\n\nConcept ids (read with read_profile): ${ids.join(", ")}`);
+      if (!args.concept) { await emit({ type: "tool_done", id, detail: "no concept" }); return text(`Pass a concept id. Available: ${ids.join(", ")}`); }
+      const concept = readConcept(prod.slug, String(args.concept));
+      if (!concept) { await emit({ type: "tool_done", id, detail: "not found" }); return text(`No concept "${args.concept}". Available: ${ids.join(", ")}`); }
+      await emit({ type: "tool_done", id, detail: concept.id });
+      const fm = concept.frontmatter;
+      const head = `# ${fm.title ?? concept.id} (${fm.type})${fm.description ? `\n${fm.description}` : ""}`;
+      return text(`${head}\n\n${resolveMedia(prod.slug, concept.body).slice(0, 12000)}`);
     },
   };
 
+  // ── PAGE IMAGE + CROP (unchanged: they still show manual figures) ──
   const getPageImageTool: TaktTool = {
     name: "get_page_image",
-    description: "Fetch a specific manual page as an image and SHOW it to the user. Use for diagrams, schematics, control-panel layouts, duty-cycle tables, the selection chart, and weld-diagnosis pages. The page is displayed in the user's Canvas and also returned so you can read it. The returned page has a faint 0–1 coordinate grid overlaid FOR YOUR REFERENCE (the user sees it clean) — use it to pick accurate crop x,y,w,h. To put a figure in an artifact, prefer calling crop_page_image next to embed just the relevant region rather than the whole page.",
+    description: "Fetch a specific manual page as an image and SHOW it. The page is displayed as a source and returned so you can read it (with a faint 0–1 coordinate grid FOR YOUR REFERENCE — the user sees it clean). To put a figure on the canvas, prefer crop_page_image next to embed just the relevant region rather than the whole page.",
     parameters: params({
       page: z.number().int().min(1).describe("Page number"),
-      manual: z.string().optional()
-        .describe("Which manual kind to read from, e.g. 'owner' or 'quick_start' (omit to use any). Get valid kinds from list_profile."),
-      ...(masterMode ? { product: z.string().describe("Which product's page — pass its slug (required in master mode). Get slugs from list_products / grep_profile.") } : {}),
+      manual: z.string().optional().describe("Manual kind, e.g. 'owner' (omit for any)."),
+      ...(masterMode ? { product: z.string().describe("Product slug (required in master mode).") } : {}),
     }),
     execute: async (args) => {
       const id = randomUUID();
       await emit({ type: "tool_start", id, tool: "get_page_image", summary: `page ${args.page}` });
       const prod = pageProduct(args);
-      if (!prod) { await emit({ type: "tool_done", id, detail: "no product" }); return text("Specify which product to read from by passing its `product` slug (see list_products)."); }
+      if (!prod) { await emit({ type: "tool_done", id, detail: "no product" }); return text("Pass a `product` slug (see list_products)."); }
       const pi = getPageImage(prod.id, (args.manual as ManualKind) ?? null, args.page);
       await emit({ type: "tool_done", id, detail: pi ? `p.${pi.pageNumber}` : "not found" });
       if (!pi) return text(`No page ${args.page}${args.manual ? ` in manual "${args.manual}"` : ""} for ${prod.name}. ${manualsHint(prod.id)}`);
       const citationId = randomUUID();
       const url = `${WEB_URL()}/assets/${pi.pngPath}`;
-      await emit({
-        type: "page_image", citationId, url,
-        page: pi.pageNumber, manualKind: pi.manualKind, manualTitle: pi.manualTitle, caption: pi.caption,
-        productSlug: prod.slug, productName: prod.name,
-      });
+      await emit({ type: "source", citationId, url, page: pi.pageNumber, manualKind: pi.manualKind, manualTitle: pi.manualTitle, caption: pi.caption, productSlug: prod.slug, productName: prod.name });
       let images: ToolResult["images"];
-      try {
-        const gridded = await withCoordGrid(readFileSync(resolve(DATA_DIR, pi.pngPath)));
-        images = [{ data: gridded.toString("base64"), mime: "image/png" }];
-      } catch { /* fall through to text-only */ }
-      // Give the model the real URL so it can embed this exact image in an
-      // artifact (it must never invent an image URL).
-      const meta = `Showing ${pi.manualTitle} p.${pi.pageNumber}. For an artifact, prefer crop_page_image to embed just the relevant region; or use this full-page URL verbatim as the <img> src: ${url}${pi.caption ? `\nPage content:\n${pi.caption}` : ""}`;
-      return { output: meta, images };
+      try { const g = await withCoordGrid(readFileSync(resolve(DATA_DIR, pi.pngPath))); images = [{ data: g.toString("base64"), mime: "image/png" }]; } catch { /* text-only */ }
+      return { output: `Showing ${pi.manualTitle} p.${pi.pageNumber}. For the canvas, prefer crop_page_image to embed just the figure; full-page URL: ${url}${pi.caption ? `\nPage content:\n${pi.caption}` : ""}`, images };
     },
   };
 
   const cropPageImage: TaktTool = {
     name: "crop_page_image",
-    description: "Crop a manual page to the ONE figure/panel that matters and SHOW that crop — use this AFTER get_page_image so you've seen the full page and can pick the region off its 0–1 grid. Give the region as fractions of the page: x,y = top-left corner, w,h = width,height. CROP TIGHT to a single diagram/table/panel — w and h are typically 0.25–0.7; NEVER the whole page (x:0,y:0,w:1,h:1) or anything ≥0.9 wide AND tall — a full-page crop reads as a broken screenshot (white margins get trimmed, but it still shows unrelated content). The cropped image is displayed in the Canvas and returned with a faint 0–1 grid FOR YOUR REFERENCE (the user sees it clean) — read each feature's x,y off that grid so any <takt-figure> annotations land accurately.",
+    description: "Crop a manual page to the ONE figure/panel that matters and SHOW that crop — use AFTER get_page_image so you've seen the page and can read the region off its 0–1 grid. Region as fractions of the page: x,y = top-left, w,h = width,height. Crop TIGHT (w,h typically 0.25–0.7); NEVER the whole page. The crop is displayed and returned with a faint 0–1 grid for your reference.",
     parameters: params({
-      page: z.number().int().min(1).describe("Page number"),
-      manual: z.string().optional()
-        .describe("Which manual kind to read from, e.g. 'owner' or 'quick_start' (omit to use any). Get valid kinds from list_profile."),
-      x: z.number().min(0).max(1).describe("Left edge of the crop, as a fraction of page width (0-1)"),
-      y: z.number().min(0).max(1).describe("Top edge of the crop, as a fraction of page height (0-1)"),
-      w: z.number().min(0.02).max(1).describe("Crop width, as a fraction of page width (0-1)"),
-      h: z.number().min(0.02).max(1).describe("Crop height, as a fraction of page height (0-1)"),
-      ...(masterMode ? { product: z.string().describe("Which product's page — pass its slug (required in master mode).") } : {}),
+      page: z.number().int().min(1), manual: z.string().optional(),
+      x: z.number().min(0).max(1), y: z.number().min(0).max(1),
+      w: z.number().min(0.02).max(1), h: z.number().min(0.02).max(1),
+      ...(masterMode ? { product: z.string() } : {}),
     }),
     execute: async (args) => {
       const id = randomUUID();
       await emit({ type: "tool_start", id, tool: "crop_page_image", summary: `page ${args.page}` });
       const prod = pageProduct(args);
-      if (!prod) { await emit({ type: "tool_done", id, detail: "no product" }); return text("Specify which product to read from by passing its `product` slug (see list_products)."); }
+      if (!prod) { await emit({ type: "tool_done", id, detail: "no product" }); return text("Pass a `product` slug (see list_products)."); }
       const pi = getPageImage(prod.id, (args.manual as ManualKind) ?? null, args.page);
-      if (!pi) { await emit({ type: "tool_done", id, detail: "not found" }); return text(`No page ${args.page}${args.manual ? ` in manual "${args.manual}"` : ""} for ${prod.name}. ${manualsHint(prod.id)}`); }
+      if (!pi) { await emit({ type: "tool_done", id, detail: "not found" }); return text(`No page ${args.page} for ${prod.name}. ${manualsHint(prod.id)}`); }
       const src = resolve(DATA_DIR, pi.pngPath);
-      // Read real pixel dims from the file — don't trust the DB column.
       let imgW = 0, imgH = 0;
-      try { const m = await sharp(src).metadata(); imgW = m.width ?? 0; imgH = m.height ?? 0; } catch { /* missing file */ }
-      if (!imgW || !imgH) { await emit({ type: "tool_done", id, detail: "unreadable" }); return text(`Page ${args.page} image could not be read; embed the full page via get_page_image instead.`); }
-      // Fractions → pixels, clamped so the box always stays inside the page.
+      try { const m = await sharp(src).metadata(); imgW = m.width ?? 0; imgH = m.height ?? 0; } catch { /* missing */ }
+      if (!imgW || !imgH) { await emit({ type: "tool_done", id, detail: "unreadable" }); return text(`Page ${args.page} unreadable; use get_page_image instead.`); }
       const left = Math.min(Math.max(Math.round(args.x * imgW), 0), imgW - 1);
       const top = Math.min(Math.max(Math.round(args.y * imgH), 0), imgH - 1);
       const cw = Math.min(Math.max(Math.round(args.w * imgW), 1), imgW - left);
@@ -313,212 +267,107 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
         if (!existsSync(dest)) {
           mkdirSync(dirname(dest), { recursive: true });
           const region = sharp(src).extract({ left, top, width: cw, height: ch });
-          // Auto-trim the WHITE page margins around the cropped region so a slightly
-          // loose crop still reads as a tight figure (manual scans are white-bg). Only
-          // white is trimmed, so colored diagrams/photos are never eaten; fall back to
-          // the plain crop if this sharp build lacks the option or the region is blank.
           try { await region.clone().trim({ background: "#ffffff", threshold: 18 }).png().toFile(dest); }
           catch { await region.png().toFile(dest); }
         }
-      } catch (e) {
-        await emit({ type: "tool_done", id, detail: "crop failed" });
-        return text(`Could not crop page ${args.page}: ${(e as Error).message}. Embed the full page via get_page_image instead.`);
-      }
+      } catch (e) { await emit({ type: "tool_done", id, detail: "crop failed" }); return text(`Could not crop page ${args.page}: ${(e as Error).message}.`); }
       const citationId = randomUUID();
       const url = `${WEB_URL()}/assets/${cropRel}`;
-      await emit({
-        type: "page_image", citationId, url,
-        page: pi.pageNumber, manualKind: pi.manualKind, manualTitle: pi.manualTitle, caption: pi.caption,
-        productSlug: prod.slug, productName: prod.name,
-      });
+      await emit({ type: "source", citationId, url, page: pi.pageNumber, manualKind: pi.manualKind, manualTitle: pi.manualTitle, caption: pi.caption, productSlug: prod.slug, productName: prod.name });
       await emit({ type: "tool_done", id, detail: `p.${pi.pageNumber} crop` });
       let images: ToolResult["images"];
-      try { const gridded = await withCoordGrid(readFileSync(dest)); images = [{ data: gridded.toString("base64"), mime: "image/png" }]; } catch { /* text-only */ }
-      // Nudge tighter if the model grabbed most of the page — a multi-figure page
-      // crop reads as a screenshot. (White margins are already auto-trimmed.)
+      try { const g = await withCoordGrid(readFileSync(dest)); images = [{ data: g.toString("base64"), mime: "image/png" }]; } catch { /* text-only */ }
       const loose = args.w >= 0.9 && args.h >= 0.82;
-      const meta = `Cropped ${pi.manualTitle} p.${pi.pageNumber}. To embed this exact crop in an artifact, use this URL verbatim as the <img> src: ${url}${loose ? "\nNOTE: that crop covers most of the page. If it shows more than one figure/panel, call crop_page_image again with a TIGHTER region (w,h ~0.3–0.6) around just the one that matters." : ""}`;
-      return { output: meta, images };
+      return { output: `Cropped ${pi.manualTitle} p.${pi.pageNumber}. Embed this exact URL as <takt-figure src="${url}">.${loose ? " NOTE: that covers most of the page — if it shows more than one figure, crop tighter (w,h ~0.3–0.6)." : ""}`, images };
     },
   };
 
-  // DRAW — render a designed answer on the stage as a declarative UI surface
-  // The primary surface is a single `Page` node (freeform HTML + islands);
-  // smaller catalog nodes remain for simple surfaces. The vocabulary + rules live
-  // in the system prompt (generated from the same schemas). Invalid surfaces are
-  // rejected (schema + anti-slop) with precise errors so the model self-corrects
-  // before anything shows.
-  const emitUi: TaktTool = {
-    name: "emit_ui",
-    description: "Render a designed, multimodal answer on the main stage as a UI surface — reach for this when structure, media, data, or interaction beats plain prose (a diagram, chart, comparison table, image/gallery, 3D model, procedure, calculator, form). Skip it for a short factual reply — plain chat text already renders richly on the stage. A surface is a flat list of `nodes` (each `{ id, type, props, children? }`) with one `root`. For a rich answer, make `root` a single `Page` node — a full freeform HTML page that fills the canvas (see the DESIGN guide + island elements in your system prompt); use the smaller catalog components only for a simple surface. Prose still streams as normal chat text around it — use Prose nodes only inside a surface. Reuse the SAME `key` to revise a surface (new version); use a NEW `key` for a different one. If rejected, fix exactly what's listed and call emit_ui again with the same key.",
-    parameters: params(uiSurfaceSchema.shape),
-    execute: async (args) => {
-      const id = randomUUID();
-      const title = typeof args?.title === "string" && args.title ? args.title : "answer";
-      await emit({ type: "tool_start", id, tool: "emit_ui", summary: title });
-      // Auto-heal common LLM mistakes so a mostly-valid surface isn't rejected
-      // over trivial issues (weaker models — e.g. MiniMax — omit id/root, or slip
-      // in a malformed node). Saves a slow reject/retry round-trip.
-      if (args && typeof args === "object" && Array.isArray(args.nodes)) {
-        // Drop structurally-unusable nodes (no id/type) so one bad node doesn't
-        // sink the whole surface, THEN heal id/root from what remains.
-        args.nodes = args.nodes.filter((n: any) => n && typeof n === "object" && typeof n.id === "string" && typeof n.type === "string");
-      }
-      if (args && typeof args === "object" && Array.isArray(args.nodes) && args.nodes.length) {
-        if (typeof (args as any).id !== "string" || !(args as any).id) (args as any).id = id;
-        const ids = new Set(args.nodes.map((n: any) => n?.id));
-        if (!ids.has(args.root)) {
-          const childIds = new Set(args.nodes.flatMap((n: any) => (Array.isArray(n?.children) ? n.children : [])));
-          const rootNode = args.nodes.find((n: any) => n?.id && !childIds.has(n.id)) ?? args.nodes[0];
-          if (rootNode?.id) args.root = rootNode.id;
-        }
-      }
-      const res = validateSurface(args);
-      if (!res.ok) {
-        await emit({ type: "tool_done", id, detail: `needs fixing: ${res.errors.slice(0, 2).map((e) => `${e.path} ${e.message}`).join("; ")}`.slice(0, 160) });
-        // isError so the build worker knows it did NOT emit (its `emitted` guard is
-        // `!res.isError`); otherwise a rejected surface reads as success, the worker
-        // stops, and the guaranteed fallback never fires → empty canvas.
-        return { output: `UI surface rejected — fix these and call emit_ui again with the SAME key:\n- ${res.errors.map((e) => `${e.path}: ${e.message}`).join("\n- ")}`, isError: true };
-      }
-      const partId = surfacePartId(res.surface);
-      // Media allow-list: strip any /assets src the tools didn't actually return
-      // this build (invented URLs → 404). Active when the caller passes the set
-      // (the build worker does — see subagent.ts).
-      const surface = allowedAssets ? sanitizeSurfaceMedia(res.surface, allowedAssets) : res.surface;
-      // Anti-slop design gate (Page surfaces only). Reject P0 issues ONCE per key
-      // so the model revises before anything shows; then let it through.
-      const lint = lintSurface(surface);
-      const hard = p0(lint);
-      if (hard.length && !lintRejected.has(partId)) {
-        lintRejected.add(partId);
-        await emit({ type: "tool_done", id, detail: `design fixes: ${hard.map((f) => f.rule).join(", ")}`.slice(0, 160) });
-        return { output: lintFeedback(hard), isError: true }; // isError → worker retries (see above)
-      }
-      await emit({ type: "ui_surface", partId, surface: { ...surface, id: surface.id || partId } });
-      await emit({ type: "tool_done", id, detail: "rendered" });
-      const advisories = lint.filter((f) => f.level !== "P0");
-      const note = advisories.length ? ` (next time: ${advisories.slice(0, 2).map((f) => f.rule).join(", ")})` : "";
-      return text(`Rendered "${title}" on the stage.${note} Give a one-line takeaway in chat if useful; don't repeat the surface's contents.`);
-    },
-  };
-
-  // DELEGATE — hand a visual off to a background BUILD worker so you can keep
-  // talking. The worker gathers sources and composes the surface on its own; it
-  // appears on the stage when ready. Only present when a build lane is available.
-  const delegateBuild: TaktTool | null = spawnBuild ? {
-    name: "delegate_build",
-    description: "Put a designed visual answer on the CANVAS — a diagram, chart, annotated figure, comparison, procedure, spec sheet, or calculator. This is THE (only) way to show something on the canvas. A background worker gathers the real sources itself (crops the figure, pulls the 3D part, tables the specs) and composes the page — so you do NOT gather figures or design anything yourself. Call it with a clear brief, tell the user in ONE short line you're putting it together, and keep talking; it lands on the stage when ready. Reuse the SAME `key` to revise a prior visual.",
-    parameters: params({
-      brief: z.string().min(1).describe("What to build, with enough detail for the worker to gather sources and design it (e.g. 'annotated diagram of the fuse box from p.42 with each fuse labeled')"),
-      key: z.string().optional().describe("Reuse a prior visual's key to publish a new version; omit for a new one"),
-    }),
-    execute: async (args) => {
-      const brief = String(args?.brief ?? "").trim();
-      if (!brief) return text("delegate_build needs a brief.");
-      spawnBuild(brief, typeof args?.key === "string" ? args.key : undefined);
-      return text("Build started in the background — it'll appear on the stage when ready. Keep talking to the user; don't wait for it or restate its contents.");
-    },
-  } : null;
-
-  // BUILD_CANVAS — the main artifact tool (INLINE, text chat). You've already
-  // gathered the facts + cropped the figures this turn; this hands that material to
-  // the COMPOSE model, which writes the Page and streams it onto the canvas right
-  // now. No second gather loop, so the artifact appears immediately. Only present
-  // when a compose lane is wired (agent.ts passes it); the compose model is
-  // Settings → Build model (falls back to the chat model when unset).
-  const buildCanvasTool: TaktTool | null = compose ? {
-    name: "build_canvas",
-    description: "BUILD the designed artifact on the canvas — this is how you answer almost anything substantive (a procedure, diagnosis, comparison, spec sheet, diagram, annotated figure, calculator, overview). Your PRIMARY job is the canvas artifact; chat is just a one-line pointer to it. FIRST gather what the page needs (find_entity/search_product for the facts, get_anchors + crop_page_image for the figures), THEN call build_canvas with a clear brief — a compose model turns your gathered material into the page and streams it. Drop ONE short chat line first ('Here's the setup —'), then call this. Reuse the SAME `key` to revise a prior artifact. Skip it only for a trivial one-liner or casual chat.",
-    parameters: params({
-      brief: z.string().min(1).describe("What the artifact should show + which gathered sources to use (e.g. 'annotated diagram of the fuse box from the p.42 crop with each fuse labeled; add the amperage spec table')"),
-      key: z.string().optional().describe("Reuse a prior artifact's key to publish a new version; omit for a new one"),
-    }),
-    execute: async (args) => {
-      const brief = String(args?.brief ?? "").trim();
-      if (!brief) return text("build_canvas needs a brief describing what to show.");
-      // A durable tool part so the stage shows the build skeleton until the surface
-      // lands, and the rail shows "Building the artifact…".
-      const id = randomUUID();
-      await emit({ type: "tool_start", id, tool: "build_canvas", summary: brief.slice(0, 60) });
-      const ok = await compose(brief, typeof args?.key === "string" ? args.key : undefined);
-      await emit({ type: "tool_done", id, detail: ok ? "built" : "no surface" });
-      if (!ok) return { output: "The compose step did not produce a surface this time. Do NOT call build_canvas again this turn and do NOT say it's on the canvas — just give the answer briefly in chat; the user can ask you to rebuild it.", isError: true };
-      return text("Built on the canvas. Keep your chat reply to ONE short line; don't restate the artifact's contents.");
-    },
-  } : null;
-
-  // START_CANVAS — ARTIFACT-FIRST. The agent's FIRST move on a substantive turn:
-  // put the page's title on the canvas immediately so the answer is visibly taking
-  // shape while the sources are still being gathered (no more skeleton-staring).
-  // Emits a real (tiny) Page surface with a stable key and hands that key back;
-  // build_canvas later reuses the key, so the streamed page REPLACES this shell in
-  // place. Only present when a compose lane is wired (text chat).
-  const startCanvasTool: TaktTool | null = compose ? {
+  // ── CANVAS: start (title shell), build, edit, read, select ──
+  const startCanvasTool: TaktTool | null = (startCanvas) ? {
     name: "start_canvas",
-    description: "START THE ARTIFACT FIRST — call this as your VERY FIRST step for any substantive answer, before gathering anything. From the user's question, put the page's TITLE on the canvas right away so the answer is visibly forming while you work. Pass a serif `title`, an optional short `eyebrow` kicker, and an optional one-line `lead` standfirst. It returns a `key`: gather your sources next (issue the retrieval calls TOGETHER so they run in parallel), then call build_canvas with that SAME key to compose the full page into this shell. Skip only for casual chat or a true one-liner.",
-    parameters: params({
-      title: z.string().min(1).describe("The page headline — what the answer is about"),
-      eyebrow: z.string().optional().describe("A short kicker above the title, e.g. 'Maintenance' or 'Troubleshooting'"),
-      lead: z.string().optional().describe("A one-line standfirst under the title summarizing the answer"),
-    }),
+    description: "Put the answer's TITLE on the canvas immediately, before you gather — the user watches the page take shape instead of a spinner. Give a title, plus a short eyebrow kicker and a one-line lead. Returns a canvasId; pass it to build_canvas so the finished page fills this same shell.",
+    parameters: params({ title: z.string(), eyebrow: z.string().optional(), lead: z.string().optional() }),
     execute: async (args) => {
-      const title = String(args?.title ?? "").trim();
-      if (!title) return text("start_canvas needs a title.");
-      const key = `${slugify(title)}-${randomUUID().slice(0, 6)}`;
-      onCanvasKey?.(key);
-      const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-      const eyebrow = String(args?.eyebrow ?? "").trim();
-      const lead = String(args?.lead ?? "").trim();
-      // Just the real title block — the canvas's top build-bar signals "still
-      // composing", so no placeholder line is needed here.
-      const html = `${eyebrow ? `<p class="takt-eyebrow" data-takt-id="eyebrow">${esc(eyebrow)}</p>` : ""}<h1 data-takt-id="title">${esc(title)}</h1>${lead ? `<p class="takt-lead" data-takt-id="lead">${esc(lead)}</p>` : ""}`;
-      const rid = randomUUID();
-      await emit({ type: "tool_start", id: rid, tool: "start_canvas", summary: title });
-      const surface = { id: key, key, title, root: "pg", nodes: [{ id: "pg", type: "Page", props: { html } }] };
-      const res = validateSurface(surface);
-      // Emit as PARTIAL so the canvas shows the build-frontier skeleton under the
-      // title while gather + compose run; build_canvas's final surface (same key)
-      // clears it. If the turn ends here, streaming stops and the client drops the
-      // partial flag anyway, so the skeleton never gets stuck.
-      if (res.ok) await emit({ type: "ui_surface", partId: surfacePartId(res.surface), surface: res.surface, partial: true });
-      await emit({ type: "tool_done", id: rid, detail: "title on canvas" });
-      return text(`Canvas started with key "${key}" — the title is on screen now. Next: gather the sources you need, issuing your retrieval calls TOGETHER in one turn so they run in parallel. Then call build_canvas with key:"${key}" to compose the full page. Reuse this exact key.`);
+      const canvasId = await startCanvas(String(args.title ?? "Answer"), args.eyebrow ? String(args.eyebrow) : undefined, args.lead ? String(args.lead) : undefined);
+      return text(`Canvas started (canvasId "${canvasId}"). Gather what the page needs, then call build_canvas with this same canvasId.`);
     },
   } : null;
 
-  // EDIT_CANVAS — a SURGICAL edit of what's already on the canvas. Recomposes from
-  // the CURRENT page HTML (no re-gather), so it's fast and keeps everything you're
-  // not changing. Use it for "make the title shorter", "drop that section", "add a
-  // warning to step 3", and especially when the user has SELECTED a block (you'll be
-  // told its data-takt-id — pass it as `target` to change only that block).
+  const buildCanvasTool: TaktTool | null = (compose || spawnBuild) ? {
+    name: "build_canvas",
+    description: "Compose the full answer as a designed page on the canvas from what you've gathered this turn. Give a brief naming what to show and which gathered facts/media to use. Pass the canvasId from start_canvas so it fills that shell. A composer streams the page in live.",
+    parameters: params({ brief: z.string().describe("What to show and which gathered sources to use"), canvasId: z.string().optional() }),
+    execute: async (args) => {
+      const brief = String(args?.brief ?? "").trim();
+      if (!brief) return { output: "build_canvas needs a brief.", isError: true };
+      const canvasId = typeof args?.canvasId === "string" ? args.canvasId : undefined;
+      const id = randomUUID();
+      await emit({ type: "tool_start", id, tool: "build_canvas", summary: brief.slice(0, 60), lane: spawnBuild ? "build" : "main" });
+      if (spawnBuild) { spawnBuild(brief, canvasId); await emit({ type: "tool_done", id, detail: "building" }); return text("Building the canvas in the background — keep talking; it appears on screen shortly."); }
+      const ok = await compose!(brief, canvasId);
+      await emit({ type: "tool_done", id, detail: ok ? "built" : "failed" });
+      return ok ? text("Built on the canvas. Reply with ONE short line pointing at it; don't restate the page.") : { output: "The canvas build produced nothing.", isError: true };
+    },
+  } : null;
+
   const editCanvasTool: TaktTool | null = edit ? {
     name: "edit_canvas",
-    description: "Edit the artifact ALREADY on the canvas in place — use this (not build_canvas) to tweak, trim, reword, restyle, add, or remove part of the current page. It recomposes from the existing page so it's fast and leaves the rest untouched; no gathering needed. If the user selected a block, pass its data-takt-id as `target` to change only that block. Reuse the artifact's `key` (or omit to edit the latest).",
-    parameters: params({
-      brief: z.string().min(1).describe("The change to make, in plain terms (e.g. 'shorten the headline to 4 words', 'add a warning callout to the power-on step', 'remove the specs table')"),
-      target: z.string().optional().describe("The data-takt-id of the single block to change (from the user's selection). Omit to let the editor place the change."),
-      key: z.string().optional().describe("The artifact's lineage key; omit to edit the latest canvas."),
-    }),
+    description: "Change what's already on the canvas — tweak, trim, reword, restyle, add/remove a part — WITHOUT rebuilding from scratch. Recomposes from the current page (no re-gathering). If the user selected a block, pass its data-takt-id as `target` to change only that block.",
+    parameters: params({ brief: z.string().describe("The change to make"), target: z.string().optional().describe("Only change the block with this data-takt-id"), canvasId: z.string().optional() }),
     execute: async (args) => {
       const brief = String(args?.brief ?? "").trim();
-      if (!brief) return text("edit_canvas needs a brief describing the change.");
+      if (!brief) return { output: "edit_canvas needs a brief.", isError: true };
       const id = randomUUID();
       await emit({ type: "tool_start", id, tool: "edit_canvas", summary: brief.slice(0, 60) });
-      const ok = await edit(brief, typeof args?.key === "string" ? args.key : undefined, typeof args?.target === "string" ? args.target : undefined);
+      const ok = await edit(brief, typeof args?.canvasId === "string" ? args.canvasId : undefined, typeof args?.target === "string" ? args.target : undefined);
       await emit({ type: "tool_done", id, detail: ok ? "edited" : "no canvas" });
-      if (!ok) return { output: "Couldn't edit — the canvas is empty or the edit produced nothing. Build it first with build_canvas.", isError: true };
-      return text("Updated the canvas in place. Reply with ONE short line about what changed; don't restate the whole artifact.");
+      return ok ? text("Updated the canvas in place. One short line about what changed.") : { output: "Couldn't edit — the canvas is empty. Build it first.", isError: true };
     },
   } : null;
 
-  // TODOS — publish/update a short working checklist shown in the status bar.
+  const readCanvasTool: TaktTool = {
+    name: "read_canvas",
+    description: "See what's on the CANVAS right now — its title, its BLOCKS (each with a data-takt-id handle) and text. Call BEFORE answering a question about the canvas or editing it, so you target the right block.",
+    parameters: params({}),
+    execute: async () => {
+      if (!chatId) return text("The canvas is empty — nothing built yet.");
+      let block: { title?: string; html: string } | null = null;
+      try {
+        const msgs = listMessages(chatId);
+        outer: for (let i = msgs.length - 1; i >= 0; i--) {
+          const blocks = msgs[i]!.content as any[];
+          for (let j = blocks.length - 1; j >= 0; j--) {
+            if (blocks[j]?.type === "canvas" && blocks[j]?.html) { block = { title: blocks[j].title, html: String(blocks[j].html) }; break outer; }
+          }
+        }
+      } catch { /* db best-effort */ }
+      if (!block) return text("The canvas is empty — nothing built there yet.");
+      const re = /data-takt-id="([^"]+)"/g; const marks: { id: string; pos: number }[] = []; let m;
+      while ((m = re.exec(block.html))) marks.push({ id: m[1]!, pos: m.index });
+      const blockList = marks.map((mk, i) => {
+        const seg = block!.html.slice(mk.pos, i + 1 < marks.length ? marks[i + 1]!.pos : block!.html.length);
+        return `- ${mk.id}: ${htmlToText(seg).slice(0, 80)}`;
+      }).join("\n");
+      const body = htmlToText(block.html).slice(0, 2200);
+      return text(`CANVAS${block.title ? ` (title: "${block.title}")` : ""}:${blockList ? `\n\nBLOCKS (target with select_canvas / edit_canvas):\n${blockList}` : ""}\n\nTEXT:\n${body || "(a visual with no readable text)"}`);
+    },
+  };
+
+  const selectCanvasTool: TaktTool = {
+    name: "select_canvas",
+    description: "Highlight a block on the canvas so the user sees exactly what you mean — rings it and scrolls it into view. Pass the block's data-takt-id (from read_canvas). Empty string clears the highlight.",
+    parameters: params({ target: z.string().describe("data-takt-id to highlight; empty clears") }),
+    execute: async (args) => {
+      const target = String(args?.target ?? "").trim();
+      await emit({ type: "canvas_highlight", target });
+      return text(target ? `Highlighted "${target}".` : "Cleared the highlight.");
+    },
+  };
+
   const updateTodos: TaktTool = {
     name: "update_todos",
-    description: "Publish or update a short checklist of what you're doing this turn, shown to the user in the status bar. Use it for a multi-step task (3+ steps) so they can see progress; mark items done as you go. Skip it for simple answers.",
-    parameters: params({
-      items: z.array(z.object({ text: z.string(), done: z.boolean() })).min(1).max(8).describe("The checklist, in order; set done:true for completed steps"),
-    }),
+    description: "Publish/update a short checklist (3+ steps) shown in the status bar; mark items done as you go. Skip for simple answers.",
+    parameters: params({ items: z.array(z.object({ text: z.string(), done: z.boolean() })).min(1).max(8) }),
     execute: async (args) => {
       const items = Array.isArray(args?.items) ? args.items.map((i: any) => ({ text: String(i.text ?? ""), done: !!i.done })).filter((i: any) => i.text) : [];
       await emit({ type: "todos", items });
@@ -526,192 +375,17 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
     },
   };
 
-  // READ — the full text of one Profile concept, verbatim. The third leg of the
-  // list → grep → read loop; call it on a concept grep_profile / list_profile
-  // surfaced. Media links come back as /assets URLs the model can show.
-  const readProfile: TaktTool = {
-    name: "read_profile",
-    description: "Read one Profile concept's full text VERBATIM. Use it after list_profile (to find concept ids) or grep_profile (to find the concept a match is in) to pull the complete context — specs, safety, a procedure, a part. Follow any [links](other.md) in the text by calling read_profile on that concept. Media in the text is given as /assets URLs you can show or embed.",
-    parameters: params({
-      concept: z.string().describe("Concept id to read (e.g. 'overview', 'specs'). Get ids from list_profile / grep_profile."),
-      ...(masterMode ? { product: z.string().describe("Which product's Profile — pass its slug (required in master mode).") } : {}),
-    }),
-    execute: async (args) => {
-      const id = randomUUID();
-      const prod = pageProduct(args);
-      await emit({ type: "tool_start", id, tool: "read_profile", summary: args.concept ? String(args.concept) : "?" });
-      if (!prod) { await emit({ type: "tool_done", id, detail: "no product" }); return text("Specify which product by passing its `product` slug (see list_products)."); }
-      if (!profileExists(prod.slug)) { await emit({ type: "tool_done", id, detail: "no profile" }); return text(`No Profile for ${prod.name} yet.`); }
-
-      const conceptIds = listConcepts(prod.slug).map((c) => c.id);
-      if (!args.concept) { await emit({ type: "tool_done", id, detail: "no concept" }); return text(`Pass a concept id. Available: ${conceptIds.join(", ")} (or call list_profile).`); }
-      const concept = readConcept(prod.slug, String(args.concept));
-      if (!concept) { await emit({ type: "tool_done", id, detail: "not found" }); return text(`No concept "${args.concept}". Available: ${conceptIds.join(", ")}`); }
-      await emit({ type: "tool_done", id, detail: concept.id });
-      const fm = concept.frontmatter;
-      const head = `# ${fm.title ?? concept.id} (${fm.type})${fm.description ? `\n${fm.description}` : ""}`;
-      return text(`${head}\n\n${resolveMedia(prod.slug, concept.body)}`);
-    },
-  };
-
-  // ── PKB hybrid retrieval ─────────────────────────────────────────────────
-  // These read the compiled knowledge graph (.pkb/) and only activate once a
-  // product has one; grep_profile/read_profile remain the fallback over raw
-  // markdown. Together they cover the query shapes lexical grep alone misses.
-  const pkbGuard = (args: any): { slug: string } | ToolResult => {
-    const prod = pageProduct(args);
-    if (!prod) return text("Pass a `product` slug (see list_products).");
-    if (!pkbExists(prod.slug)) return text(`No knowledge graph for ${prod.name} yet — use grep_profile / list_profile over its docs instead.`);
-    return { slug: prod.slug };
-  };
-  const productParam: ZodRawShape = masterMode ? { product: z.string().describe("Product slug (required in master mode; see list_products)") } : {};
-
-  // SEARCH — semantic, for fuzzy natural-language symptoms.
-  const searchProductTool: TaktTool = {
-    name: "search_product",
-    description: "Semantic search over a product's knowledge — for FUZZY, natural-language questions and symptoms in the user's own words ('it grinds when the bed moves', 'prints come out stringy'). Finds passages by MEANING, not exact words — the complement to grep_profile (which is literal, best for exact error codes / part numbers). Returns ranked snippets with their source page.",
-    parameters: params({ query: z.string().describe("A natural-language description of the problem or question"), ...productParam }),
-    execute: async (args) => {
-      const g = pkbGuard(args); if ("output" in g) return g;
-      const id = randomUUID();
-      await emit({ type: "tool_start", id, tool: "search_product", summary: String(args.query) });
-      const hits = await searchProduct(g.slug, String(args.query), 8);
-      await emit({ type: "tool_done", id, detail: `${hits.length} hits` });
-      if (!hits.length) return text(`No semantic matches for "${args.query}". Try grep_profile for exact terms or find_entity for a part/fault.`);
-      const body = hits.map((h) => `[${h.chunk.title}${h.chunk.page ? ` p.${h.chunk.page}` : ""}] ${h.chunk.text.replace(/\s+/g, " ").slice(0, 220)}`).join("\n\n");
-      return text(`${body}\n\nFor how these things connect (cause/fix/parts), call find_entity.`);
-    },
-  };
-
-  // FIND ENTITY — dual-level graph lookup: the workhorse for grounded answers.
-  const findEntityTool: TaktTool = {
-    name: "find_entity",
-    description: "Look things up in the product's knowledge GRAPH — parts, faults/error codes, procedures, specs — and see how they connect. Best when the answer is a RELATIONSHIP: a fault's cause and fix, a part's subassembly, a procedure's steps. Returns matching entities with their neighbours and the manual pages / 3D parts / videos anchored to each. Then call get_anchors to pull a figure to show, or walk_graph to go deeper. This is how you build a grounded, multimodal answer.",
-    parameters: params({ query: z.string().describe("What to find — a part, fault, error code, symptom, procedure, or spec"), ...productParam }),
-    execute: async (args) => {
-      const g0 = pkbGuard(args); if ("output" in g0) return g0;
-      const id = randomUUID();
-      await emit({ type: "tool_start", id, tool: "find_entity", summary: String(args.query) });
-      const graph = loadGraph(g0.slug);
-      const ents = await findEntity(g0.slug, [String(args.query)], [String(args.query)]);
-      await emit({ type: "tool_done", id, detail: `${ents.length} entities` });
-      if (!ents.length) return text(`No graph entities for "${args.query}". Try search_product (fuzzy) or grep_profile (literal).`);
-      const blocks = ents.slice(0, 8).map((e) => {
-        const nb = neighbors(graph, e.id, { depth: 1 }).edges
-          .map((ed) => `${ed.type} ${ed.src === e.id ? "→ " + (graph.entities.find((x) => x.id === ed.dst)?.name ?? ed.dst) : "← " + (graph.entities.find((x) => x.id === ed.src)?.name ?? ed.src)}`)
-          .slice(0, 6);
-        const anc = getEntityAnchors(graph, e.id).map(anchorLabel);
-        return [
-          `• ${e.name} [${e.type}] (${e.confidence})  id=${e.id}`,
-          e.description ? `  ${e.description.replace(/\s+/g, " ").slice(0, 200)}` : "",
-          nb.length ? `  links: ${nb.join("; ")}` : "",
-          anc.length ? `  media: ${anc.join("; ")}` : "",
-        ].filter(Boolean).join("\n");
-      }).join("\n\n");
-      return text(`${blocks}\n\nNext: get_anchors(entity:"<id>") to pull a figure/3D/video to embed, or walk_graph(entity:"<id>") for the full neighbourhood.`);
-    },
-  };
-
-  // WALK — expand the full neighbourhood of an entity.
-  const walkGraphTool: TaktTool = {
-    name: "walk_graph",
-    description: "Expand everything the product graph knows around one entity — its parts, causes, fixes, related procedures — to a few hops. Use after find_entity to gather the full neighbourhood of a fault or part before composing the answer. Pass the entity id from find_entity.",
-    parameters: params({
-      entity: z.string().describe("Entity id from find_entity"),
-      depth: z.number().int().min(1).max(3).optional().describe("Hops to expand (default 2)"),
-      edgeTypes: z.array(z.string()).optional().describe("Restrict to these link types, e.g. ['fixes','next_step']"),
-      ...productParam,
-    }),
-    execute: async (args) => {
-      const g = pkbGuard(args); if ("output" in g) return g;
-      const id = randomUUID();
-      await emit({ type: "tool_start", id, tool: "walk_graph", summary: String(args.entity) });
-      const out = walkGraph(g.slug, String(args.entity), { depth: args.depth ?? 2, edgeTypes: args.edgeTypes });
-      await emit({ type: "tool_done", id, detail: out ? "expanded" : "empty" });
-      return text(out || `No entity "${args.entity}" in the graph. Call find_entity first.`);
-    },
-  };
-
-  // ANCHORS — render-ready media for an entity.
-  const getAnchorsTool: TaktTool = {
-    name: "get_anchors",
-    description: "Get the render-ready media anchored to an entity — the exact manual page + region, the 3D model part, the video clip — so you can SHOW it. Use after find_entity when you're about to build an artifact: it tells you exactly which crop_page_image call to make, or the 3D/video URL to embed. Pass the entity id.",
-    parameters: params({ entity: z.string().describe("Entity id from find_entity"), ...productParam }),
-    execute: async (args) => {
-      const g = pkbGuard(args); if ("output" in g) return g;
-      const id = randomUUID();
-      await emit({ type: "tool_start", id, tool: "get_anchors", summary: String(args.entity) });
-      const anchors = getAnchors(g.slug, String(args.entity));
-      await emit({ type: "tool_done", id, detail: `${anchors.length} anchors` });
-      if (!anchors.length) return text(`No media anchored to "${args.entity}".`);
-      const lines = anchors.map((a) => renderAnchorHint(a));
-      return text(lines.join("\n"));
-    },
-  };
-
-  // QUERY — one-shot fused context (graph + sources), cited.
-  const queryProductTool: TaktTool = {
-    name: "query_product",
-    description: "Ask the product knowledge base a question and get back ONE fused, cited context block — the relevant graph relationships AND the source passages together. Use this when you just want the facts to answer with and don't need to hand-pick tools. For building a rich multimodal artifact where you choose the figures, prefer find_entity + get_anchors instead.",
-    parameters: params({ question: z.string().describe("The question to ground"), ...productParam }),
-    execute: async (args) => {
-      const g = pkbGuard(args); if ("output" in g) return g;
-      const id = randomUUID();
-      await emit({ type: "tool_start", id, tool: "query_product", summary: String(args.question) });
-      const r = await queryProduct(g.slug, String(args.question));
-      await emit({ type: "tool_done", id, detail: `${r.entities.length} entities, ${r.chunks.length} sources` });
-      return text(r.context);
-    },
-  };
-
-  // MAP — render the whole product graph as an interactive map surface.
-  const productMapTool: TaktTool = {
-    name: "product_map",
-    description: "Render the product's whole knowledge graph as an interactive map on the stage — parts, faults, procedures and specs and how they connect, which the user can click to explore. Use when the user wants an overview of the product or asks to 'explore' it. Builds and shows the surface itself; just tell the user in one line that the map is up.",
-    parameters: params({ ...productParam }),
-    execute: async (args) => {
-      const g0 = pkbGuard(args); if ("output" in g0) return g0;
-      const prod = pageProduct(args)!;
-      const id = randomUUID();
-      await emit({ type: "tool_start", id, tool: "product_map", summary: prod.slug });
-      const graph = loadGraph(g0.slug);
-      const deg = new Map<string, number>();
-      for (const e of graph.edges) { deg.set(e.src, (deg.get(e.src) ?? 0) + 1); deg.set(e.dst, (deg.get(e.dst) ?? 0) + 1); }
-      const top = [...graph.entities].sort((a, b) => (deg.get(b.id) ?? 0) - (deg.get(a.id) ?? 0)).slice(0, 120);
-      const keep = new Set(top.map((e) => e.id));
-      const nodes = top.map((e) => ({
-        id: e.id, label: e.name, type: String(e.type),
-        detail: [e.description?.slice(0, 140), ...getEntityAnchors(graph, e.id).map(anchorLabel)].filter(Boolean).join("\n") || undefined,
-      }));
-      const edges = graph.edges.filter((e) => keep.has(e.src) && keep.has(e.dst)).map((e) => ({ source: e.src, target: e.dst, type: String(e.type) }));
-      if (!nodes.length) { await emit({ type: "tool_done", id, detail: "empty graph" }); return text("The product graph is empty — nothing to map yet."); }
-      const surface = { id: "product-map", key: "product-map", title: `${prod.name} — product map`, root: "map", nodes: [{ id: "map", type: "Graph", props: { nodes, edges, caption: `${nodes.length} components · click to explore` } }] };
-      const res = validateSurface(surface);
-      if (!res.ok) { await emit({ type: "tool_done", id, detail: "invalid" }); return text(`Could not build the map: ${res.errors.map((e) => e.message).join("; ")}`); }
-      await emit({ type: "ui_surface", partId: "product-map", surface: res.surface });
-      await emit({ type: "tool_done", id, detail: `${nodes.length} nodes` });
-      return text(`Product map is on the stage (${nodes.length} components, ${edges.length} links). Tell the user they can click any node to explore its pages, 3D parts, and related faults.`);
-    },
-  };
-
   const listProductsTool: TaktTool = {
     name: "list_products",
     description: "List every product Takt has indexed data for (name, manufacturer, slug).",
     parameters: params({}),
-    execute: async () => {
-      const products = listProducts();
-      return text(products.map((p) => `- ${p.name}${p.manufacturer ? ` (${p.manufacturer})` : ""} [${p.slug}]`).join("\n"));
-    },
+    execute: async () => text(listProducts().map((p) => `- ${p.name}${p.manufacturer ? ` (${p.manufacturer})` : ""} [${p.slug}]`).join("\n") || "(no products indexed)"),
   };
 
-  // General-agent capability: read a web page's text. Zero-key. Available in both
-  // single-product and master mode so Takt can pull in outside context on request.
   const fetchUrl: TaktTool = {
     name: "fetch_url",
-    description: "Fetch a web page and return its readable text. Use when the user asks about a specific URL or wants information from a page. Returns plain text (scripts/markup stripped).",
-    parameters: params({
-      url: z.string().describe("The absolute http(s) URL to fetch"),
-    }),
+    description: "Fetch a public web page and return its readable text. Use when the user asks about a specific URL. Returns plain text (scripts/markup stripped).",
+    parameters: params({ url: z.string().describe("The absolute http(s) URL to fetch") }),
     execute: async (args) => {
       const id = randomUUID();
       const raw = String(args.url ?? "").trim();
@@ -719,121 +393,41 @@ export function buildTaktTools(ctx: { product: Product | null; manuals: Manual[]
       let url: URL;
       try { url = new URL(raw); } catch { await emit({ type: "tool_done", id, detail: "bad url" }); return text(`"${raw}" is not a valid URL.`); }
       if (url.protocol !== "http:" && url.protocol !== "https:") { await emit({ type: "tool_done", id, detail: "blocked" }); return text("Only http(s) URLs are allowed."); }
+      if (await hostIsPrivate(url.hostname)) { await emit({ type: "tool_done", id, detail: "blocked" }); return text("That host is not allowed (private/loopback/metadata address)."); }
       try {
-        const res = await fetch(url, { signal: AbortSignal.timeout(15_000), headers: { "user-agent": "TaktBot/1.0" } });
+        const res = await fetch(url, { signal: AbortSignal.timeout(15_000), redirect: "manual", headers: { "user-agent": "TaktBot/1.0" } });
+        if (res.status >= 300 && res.status < 400) { await emit({ type: "tool_done", id, detail: "redirect" }); return text("The URL redirected; pass the final URL directly."); }
         if (!res.ok) { await emit({ type: "tool_done", id, detail: `HTTP ${res.status}` }); return text(`Fetch failed: HTTP ${res.status}.`); }
-        const html = await res.text();
-        const body = htmlToText(html).slice(0, 20_000);
+        const body = htmlToText(await res.text()).slice(0, 20_000);
         await emit({ type: "tool_done", id, detail: `${body.length} chars` });
-        return text(body || "(no readable text found on the page)");
-      } catch (e: any) {
-        await emit({ type: "tool_done", id, detail: "error" });
-        return text(`Could not fetch the page: ${String(e?.message ?? e)}`);
-      }
+        return text(body || "(no readable text found)");
+      } catch (e: any) { await emit({ type: "tool_done", id, detail: "error" }); return text(`Could not fetch: ${String(e?.message ?? e)}`); }
     },
   };
 
   const askUser: TaktTool = {
     name: "ask_user",
-    description: "Ask the user 1-4 clarifying questions BEFORE answering, when the request is ambiguous or a choice would change the answer (e.g. which model/variant, which use case, which constraint). The questions appear in an interactive panel. For each question give a short `header`, the `question`, and `options` (each with a `label` and optional `description`). Set `multiSelect: true` when several can apply. To explain a question or an option visually, attach a `render`: `{ kind: 'ascii', content }` for a quick text/SVG sketch, or `{ kind: 'react', content }` — a single self-contained React component named `App` (no imports; `React` is global; style with Tailwind; draw with inline SVG) — for an interactive diagram. Keep questions tight; don't ask what the manual or the user already answered.",
+    description: "Ask the user 1-4 clarifying questions BEFORE answering, when the request is ambiguous or a choice would change the answer. Questions appear in an interactive panel. For each: a short `header`, the `question`, and `options` (each `label` + optional `description`). Set `multiSelect: true` when several apply. Attach a `render: { kind: 'ascii', content }` only when a quick text/SVG sketch helps them choose. Don't ask what the sources or the user already answered.",
     parameters: params({ questions: askQuestionsSchema }),
     execute: async (args) => {
       const askId = randomUUID();
-      const questions = args.questions.map((q: any, i: number) => ({ ...q, id: q.id ?? `q${i}` }));
+      const parsed = askQuestionsSchema.safeParse(args?.questions);
+      if (!parsed.success) return { output: "Malformed questions — provide an array of {header, question, options:[{label}]}.", isError: true };
+      const questions = parsed.data.map((q: any, i: number) => ({ ...q, id: q.id ?? `q${i}` }));
       await emit({ type: "ask_user", askId, questions });
       const payload = await awaitAnswers(askId);
-      // Echo the chosen answers back so they persist onto the ask_user block and
-      // the inline panel updates from "awaiting" to the recap.
       await emit({ type: "ask_answer", askId, answers: payload.answers, cancelled: payload.cancelled });
-      if (payload.cancelled || !payload.answers?.length) {
-        return text("The user dismissed the questions without answering. Proceed with reasonable best-effort defaults and clearly state the assumptions you made.");
-      }
-      const body = payload.answers
-        .map((a) => `Q: ${a.question}\nA: ${formatAnswer(a)}`)
-        .join("\n\n");
-      return text(`The user answered your clarifying questions:\n\n${body}\n\nUse these answers to give a precise, grounded response.`);
+      if (payload.cancelled || !payload.answers?.length) return text("The user dismissed the questions. Proceed with best-effort defaults and state your assumptions.");
+      return text(`The user answered:\n\n${payload.answers.map((a) => `Q: ${a.question}\nA: ${formatAnswer(a)}`).join("\n\n")}\n\nUse these to answer.`);
     },
   };
 
-  // See what's currently ON the canvas — the agent DELEGATES the build and never
-  // sees the result, so without this it can't answer "what's on the canvas",
-  // "explain the title", or decide how to revise it. Reads the latest ui surface
-  // persisted for this chat and returns its readable text (title + body).
-  const readCanvasTool: TaktTool = {
-    name: "read_canvas",
-    description: "See what's on the CANVAS right now — its title, its BLOCKS (each with a data-takt-id handle you can target), and the text. Call this BEFORE answering a question about the canvas ('what's on it', 'explain this') and BEFORE editing it, so you edit the right block. Returns the block list + text, or says the canvas is empty.",
-    parameters: params({}),
-    execute: async () => {
-      if (!chatId) return text("The canvas is empty — nothing has been built yet.");
-      let surface: any = null;
-      try {
-        const msgs = listMessages(chatId);
-        outer: for (let i = msgs.length - 1; i >= 0; i--) {
-          const blocks = msgs[i]!.content as any[];
-          for (let j = blocks.length - 1; j >= 0; j--) {
-            if (blocks[j]?.type === "ui" && blocks[j]?.surface) { surface = blocks[j].surface; break outer; }
-          }
-        }
-      } catch { /* db read best-effort */ }
-      if (!surface) return text("The canvas is empty — nothing has been built there yet.");
-      const page = (surface.nodes ?? []).find((n: any) => n.id === surface.root && n.type === "Page");
-      let body = "";
-      let blockList = "";
-      if (page?.props?.html) {
-        const html = String(page.props.html);
-        body = htmlToText(html);
-        // List each addressable block (data-takt-id) with a short excerpt, so the agent
-        // can point at / edit a specific region (select_canvas / edit_canvas target).
-        const re = /data-takt-id="([^"]+)"/g; const marks: { id: string; pos: number }[] = []; let m;
-        while ((m = re.exec(html))) marks.push({ id: m[1]!, pos: m.index });
-        if (marks.length) blockList = marks.map((mk, i) => {
-          const seg = html.slice(mk.pos, i + 1 < marks.length ? marks[i + 1]!.pos : html.length);
-          const t = htmlToText(seg).replace(/\s+/g, " ").trim().slice(0, 80);
-          return `- ${mk.id}: ${t}`;
-        }).join("\n");
-      } else body = (surface.nodes ?? [])
-        .map((n: any) => { const p = n?.props ?? {}; return [p.title, p.text, p.caption, p.label, p.markdown, p.content, p.value].filter((x) => typeof x === "string").join(" "); })
-        .filter(Boolean).join("\n");
-      body = body.replace(/\s+/g, " ").trim().slice(0, 2200);
-      const title = typeof surface.title === "string" ? surface.title : "";
-      return text(`CANVAS — what is on it right now${title ? ` (title: "${title}")` : ""}:${blockList ? `\n\nBLOCKS (target these with select_canvas / edit_canvas):\n${blockList}` : ""}\n\nTEXT:\n${body || "(a visual with no readable text)"}`);
-    },
-  };
-
-  // SELECT_CANVAS — Takt points at a region itself: rings a block by data-takt-id and
-  // scrolls it into view, so "look at step 3" actually highlights step 3 for the user.
-  // (Use read_canvas first to get the ids.) Emits a highlight the canvas host applies.
-  const selectCanvasTool: TaktTool = {
-    name: "select_canvas",
-    description: "Highlight a block on the canvas so the user sees exactly what you mean — rings it and scrolls it into view. Pass the block's data-takt-id (get ids from read_canvas). Use it when you reference a specific part ('the safety step', 'this spec'), or before editing it. Pass an empty id to clear the highlight.",
-    parameters: params({ target: z.string().describe("The data-takt-id of the block to highlight (from read_canvas); empty string clears the highlight.") }),
-    execute: async (args) => {
-      const target = String(args?.target ?? "").trim();
-      await emit({ type: "canvas_highlight", id: target });
-      return text(target ? `Highlighted "${target}" on the canvas.` : "Cleared the canvas highlight.");
-    },
-  };
-
-  // Retrieval is Direct Corpus Interaction over the Profile markdown — list (map)
-  // → grep (find) → read (full concept). Works the same in single-product and
-  // master mode. get_page_image/crop show pages; list_products + fetch_url both modes.
-  const all = [
-    // Graph/semantic retrieval first — the primary way to answer a product
-    // question; legacy grep/list/read follow as exact-term / browse fallbacks.
-    findEntityTool, searchProductTool, walkGraphTool, getAnchorsTool, queryProductTool, productMapTool,
-    grepProfileTool, listProfileTool, readProfile,
-    getPageImageTool, cropPageImage,
-    emitUi, ...(startCanvasTool ? [startCanvasTool] : []), ...(buildCanvasTool ? [buildCanvasTool] : []), ...(editCanvasTool ? [editCanvasTool] : []), ...(delegateBuild ? [delegateBuild] : []),
-    readCanvasTool, selectCanvasTool, updateTodos, listProductsTool, askUser, fetchUrl,
+  const gather = [searchProductTool, getMediaTool, readProfile, getPageImageTool, cropPageImage, listProductsTool, fetchUrl];
+  const canvas = [
+    ...(startCanvasTool ? [startCanvasTool] : []),
+    ...(buildCanvasTool ? [buildCanvasTool] : []),
+    ...(editCanvasTool ? [editCanvasTool] : []),
+    readCanvasTool, selectCanvasTool,
   ];
-  // COMPOSE worker (context "build"): only writes the surface — emit_ui + the
-  // gather/media tools, never delegate/build_canvas/edit_canvas/select_canvas/ask.
-  if (context === "build") return all.filter((t) => ["start_canvas", "delegate_build", "build_canvas", "edit_canvas", "select_canvas", "ask_user"].indexOf(t.name) === -1);
-  // MAIN agent. When a compose lane is wired (text chat), the agent gathers on the
-  // cheap model then hands the artifact write to build_canvas (the compose model) —
-  // so it does NOT get emit_ui directly (one canvas path, and the strong model owns
-  // composition). Without a compose lane (LIVE voice, which passes spawnBuild
-  // instead), it keeps delegate_build + emit_ui as before.
-  if (compose) return all.filter((t) => t.name !== "emit_ui");
-  return all;
+  return [...gather, ...canvas, updateTodos, askUser];
 }

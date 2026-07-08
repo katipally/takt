@@ -2,12 +2,13 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
-import type { ChatRequest, MessageBlock, SseEvent } from "@takt/shared";
+import type { ChatRequest, SseEvent } from "@takt/shared";
 import { askAnswerPayloadSchema } from "@takt/shared";
 import { getProductBySlug, createChat, listChats, listMasterChats, addMessage, renameChat, loadEnv } from "@takt/db";
 import { ingestProduct, countPdfPages } from "@takt/ingest";
 import { extname } from "node:path";
 import { catalogModels } from "@takt/harness";
+import { makeBlockEmit } from "./block-emit.js";
 import { ensureSeedProviders, resolveCaption } from "./providers.js";
 
 // Per-1M-token prices for a caption model, from the models.dev catalog (cached).
@@ -55,43 +56,10 @@ app.post("/chat", async (c) => {
   if (req.chatId) createChat(product?.id ?? null, req.chatId);
 
   return streamSSE(c, async (stream) => {
-    // Accumulate the assistant turn AS AN ORDERED block list so reasoning, tool
-    // rows, text, sources, and artifacts all replay in order on reload.
-    const blocks: MessageBlock[] = [];
-    const appendText = (kind: "text" | "reasoning", t: string) => {
-      const last = blocks[blocks.length - 1];
-      if (last && last.type === kind) last.text += t;
-      else blocks.push({ type: kind, text: t });
-    };
-    let writeChain: Promise<void> = Promise.resolve();
-    const emit = async (e: SseEvent) => {
-      if (e.type === "text_delta") appendText("text", e.text);
-      else if (e.type === "reasoning_delta") appendText("reasoning", e.text);
-      else if (e.type === "tool_start") blocks.push({ type: "tool", id: e.id, tool: e.tool, summary: e.summary, status: "done" });
-      else if (e.type === "tool_done") {
-        // Match by tool-use id so concurrent tools attach to the right row.
-        const t = blocks.find((b) => b.type === "tool" && b.id === e.id);
-        if (t && t.type === "tool") t.detail = e.detail;
-      } else if (e.type === "page_image")
-        blocks.push({ type: "page_image", citationId: e.citationId, url: e.url, page: e.page, manualKind: e.manualKind as any, manualTitle: e.manualTitle ?? null, caption: e.caption ?? null, productSlug: e.productSlug ?? null, productName: e.productName ?? null });
-      else if (e.type === "ui_surface") {
-        // Replace a surface with the same partId (re-emit / new version), else append.
-        const prev = blocks.find((b) => b.type === "ui" && b.partId === e.partId);
-        if (prev && prev.type === "ui") prev.surface = e.surface;
-        else blocks.push({ type: "ui", partId: e.partId, surface: e.surface });
-      }
-      else if (e.type === "ask_user")
-        blocks.push({ type: "ask_user", askId: e.askId, questions: e.questions });
-      else if (e.type === "ask_answer") {
-        const a = blocks.find((b) => b.type === "ask_user" && b.askId === e.askId);
-        if (a && a.type === "ask_user") { a.answers = e.answers; a.cancelled = e.cancelled; }
-      }
-      // Serialize writes: the main agent and a background build subagent both call
-      // emit() concurrently — unserialized writeSSE would interleave mid-frame and
-      // corrupt the JSON, so the client drops the event. Chain them.
-      writeChain = writeChain.then(() => stream.writeSSE({ data: JSON.stringify(e) }));
-      await writeChain;
-    };
+    // Accumulate the assistant turn as an ordered block list (so reasoning, tool
+    // rows, text, sources, and the canvas replay in order on reload) AND forward
+    // each event, serializing writes so concurrent emitters can't interleave.
+    const { emit, blocks } = makeBlockEmit((e: SseEvent) => stream.writeSSE({ data: JSON.stringify(e) }));
 
     try {
       if (req.chatId) addMessage(req.chatId, "user", [{ type: "text", text: lastUser }]);

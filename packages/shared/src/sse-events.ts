@@ -1,10 +1,13 @@
 import { z } from "zod";
 import { askQuestionSchema, askAnswerSchema } from "./ask-spec";
-import { uiSurfaceSchema } from "./ui-spec";
 
 // The wire protocol between the agent service and the browser. One JSON object
 // per SSE `data:` line. The agent emits these; the web `/api/chat` route is a
 // dumb byte-pass-through proxy; the chat-stream hook decodes them.
+//
+// The canvas is streamed as raw HTML: `canvas_start` opens it, `canvas_delta`
+// carries decoded HTML chunks that the client morphdom-diffs in live, and
+// `canvas_end` delivers the authoritative sanitized+linted full page.
 
 export const sseEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text_delta"), text: z.string() }),
@@ -13,27 +16,29 @@ export const sseEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("tool_done"), id: z.string(), detail: z.string().optional() }),
   // The agent's working checklist, shown (and updated) in the status bar.
   z.object({ type: z.literal("todos"), items: z.array(z.object({ text: z.string(), done: z.boolean() })) }),
+  // A manual page/crop shown as a citation source (opens in the source modal).
   z.object({
-    type: z.literal("page_image"),
+    type: z.literal("source"),
     citationId: z.string(),
     url: z.string(),
     page: z.number(),
     manualKind: z.string(),
     manualTitle: z.string().optional(),
     caption: z.string().nullable().optional(),
-    // Which product this page belongs to — set so a cross-product citation opens
-    // the right product's page. Omitted/null in single-product mode.
     productSlug: z.string().nullable().optional(),
     productName: z.string().nullable().optional(),
   }),
-  // A declarative UI surface rendered inline on the stage. `partial: true` marks
-  // an in-progress stream frame (more nodes still coming); the final emit omits it.
-  z.object({ type: z.literal("ui_surface"), partId: z.string(), surface: uiSurfaceSchema, partial: z.boolean().optional() }),
-  // Takt-driven canvas selection: highlight (ring + scroll-into-view) a block by its
-  // data-takt-id, or clear with an empty id. The agent uses this to point at a region.
-  z.object({ type: z.literal("canvas_highlight"), id: z.string() }),
-  // Resolution of an interactive Button/Form/Select action (ack to the client).
-  z.object({ type: z.literal("ui_action_result"), actionId: z.string(), ok: z.boolean().optional() }),
+  // ── canvas (streamed HTML) ──
+  // canvas_start opens a canvas (title shell); canvas_delta carries decoded HTML
+  // as it streams (client morphdom-diffs it in); canvas_end is the authoritative
+  // sanitized + linted full page under the same canvasId.
+  z.object({ type: z.literal("canvas_start"), canvasId: z.string(), title: z.string().optional() }),
+  z.object({ type: z.literal("canvas_delta"), canvasId: z.string(), html: z.string() }),
+  z.object({ type: z.literal("canvas_end"), canvasId: z.string(), html: z.string(), title: z.string().optional() }),
+  // Highlight (ring + scroll-into-view) a block by its data-takt-id; empty clears.
+  z.object({ type: z.literal("canvas_highlight"), target: z.string() }),
+  // Resolution of an interactive canvas action (ack to the client).
+  z.object({ type: z.literal("action_result"), actionId: z.string(), ok: z.boolean().optional() }),
   z.object({ type: z.literal("title"), title: z.string() }),
   z.object({ type: z.literal("ask_user"), askId: z.string(), questions: z.array(askQuestionSchema) }),
   z.object({ type: z.literal("ask_answer"), askId: z.string(), answers: z.array(askAnswerSchema).optional(), cancelled: z.boolean().optional() }),

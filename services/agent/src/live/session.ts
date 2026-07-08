@@ -6,8 +6,10 @@ import type { Product, Manual, SseEvent, MessageBlock, LiveServerMsg } from "@ta
 import { LIVE_TAG, liveClientMsgSchema } from "@takt/shared";
 import { createChat, addMessage, listMessages, updateMessage, DATA_DIR } from "@takt/db";
 import type { Message } from "@takt/harness";
+import { randomUUID as uuid } from "node:crypto";
 import type { Emit, TaktTool } from "../tools.js";
-import { runBuildSubagent } from "../subagent.js";
+import { foldBlock } from "../block-emit.js";
+import { runCanvasWorker } from "../canvas-worker.js";
 import { LiveTurnRunner } from "./turn-runner.js";
 
 type Frame = { data: string; mime: string };
@@ -152,10 +154,13 @@ export class LiveSession {
     // finishes AFTER that re-saves the row so its late-landing surface isn't lost
     // on reload (blocks was already serialized before the surface arrived).
     let messageId: string | null = null;
-    const spawnBuild = (brief: string, key?: string) => {
+    const spawnBuild = (brief: string, canvasId?: string) => {
       const frame = this.cameraOn && this.lastFrame ? this.persistFrame(this.lastFrame) : undefined;
-      void runBuildSubagent({
-        brief, key, product: this.product, manuals: this.manuals, context: [], frame,
+      // Session-stable signal (never aborts on barge-in) so a delegated canvas
+      // still lands while the spoken turn is interrupted.
+      void runCanvasWorker({
+        mode: "build", canvasId: canvasId ?? uuid().slice(0, 8), brief, question: brief,
+        product: this.product, frame,
         emit: this.blockEmit(blocks, new AbortController().signal), signal: new AbortController().signal,
       }).then(() => {
         if (messageId && this.chatId) { try { updateMessage(messageId, blocks); } catch { /* */ } }
@@ -180,25 +185,12 @@ export class LiveSession {
     }
   }
 
-  /** An Emit that both forwards SSE to the client and records ordered blocks. */
+  /** An Emit that both forwards SSE to the client and records ordered blocks.
+   *  The signal gate drops late events after a barge-in aborts the spoken turn. */
   private blockEmit(blocks: MessageBlock[], signal: AbortSignal): Emit {
-    const appendText = (kind: "text" | "reasoning", t: string) => {
-      const last = blocks[blocks.length - 1];
-      if (last && last.type === kind) last.text += t;
-      else blocks.push({ type: kind, text: t });
-    };
     return async (e: SseEvent) => {
       if (signal.aborted || this.closed) return; // barge-in → drop late events
-      if (e.type === "text_delta") appendText("text", e.text);
-      else if (e.type === "reasoning_delta") appendText("reasoning", e.text);
-      else if (e.type === "tool_start") blocks.push({ type: "tool", id: e.id, tool: e.tool, summary: e.summary, status: "done" });
-      else if (e.type === "tool_done") { const t = blocks.find((b) => b.type === "tool" && b.id === e.id); if (t && t.type === "tool") t.detail = e.detail; }
-      else if (e.type === "page_image") blocks.push({ type: "page_image", citationId: e.citationId, url: e.url, page: e.page, manualKind: e.manualKind as any, manualTitle: e.manualTitle ?? null, caption: e.caption ?? null, productSlug: e.productSlug ?? null, productName: e.productName ?? null });
-      else if (e.type === "ui_surface") {
-        const prev = blocks.find((b) => b.type === "ui" && b.partId === e.partId);
-        if (prev && prev.type === "ui") prev.surface = e.surface;
-        else blocks.push({ type: "ui", partId: e.partId, surface: e.surface });
-      }
+      foldBlock(blocks, e);
       this.send({ t: "sse", event: e });
     };
   }

@@ -1,11 +1,10 @@
 // Domain types shared across the web app, agent service, and ingest pipeline.
 
 import type { AskQuestion, AskAnswer } from "./ask-spec";
-import type { UISurface } from "./ui-spec";
 
 export type ManualKind = "owner" | "quick_start" | "selection_chart" | "other";
 // A provider id from the harness registry (BUILTIN_PROVIDERS): "anthropic",
-// "openai", "google", "openrouter", "ollama", … — no longer Anthropic-only.
+// "openai", "minimax".
 export type ProviderKind = string;
 export type MessageRole = "user" | "assistant" | "tool";
 
@@ -81,8 +80,8 @@ export type MessageBlock =
   | { type: "text"; text: string }
   | { type: "reasoning"; text: string }
   | { type: "tool"; id?: string; tool: string; summary?: string; detail?: string; status: "running" | "done" }
-  | { type: "page_image"; citationId: string; url: string; page: number; manualKind: ManualKind; manualTitle?: string | null; caption: string | null; productSlug?: string | null; productName?: string | null }
-  | { type: "ui"; partId: string; surface: UISurface }
+  | { type: "source"; citationId: string; url: string; page: number; manualKind: ManualKind; manualTitle?: string | null; caption: string | null; productSlug?: string | null; productName?: string | null }
+  | { type: "canvas"; canvasId: string; title?: string; html: string }
   | { type: "ask_user"; askId: string; questions: AskQuestion[]; answers?: AskAnswer[]; cancelled?: boolean };
 
 /** Request body the web app POSTs to /api/chat (and the agent service).
