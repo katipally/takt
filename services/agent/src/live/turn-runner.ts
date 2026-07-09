@@ -3,6 +3,7 @@ import type { Product, Manual } from "@takt/shared";
 import { modelVision } from "@takt/shared";
 import { buildTaktTools, type TaktTool, type Emit } from "../tools.js";
 import { collectTurn } from "../turn.js";
+import { safeParseArgs } from "../turn-loop.js";
 import { buildLivePrompt } from "../prompt.js";
 import { resolveLive } from "../providers.js";
 
@@ -121,10 +122,4 @@ export class LiveTurnRunner {
       await emit({ type: "error", message: msg });
     }
   }
-}
-
-function safeParseArgs(s: string): any {
-  const t = (s ?? "").trim();
-  if (!t) return {};
-  try { return JSON.parse(t); } catch { return {}; }
 }

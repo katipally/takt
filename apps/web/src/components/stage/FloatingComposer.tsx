@@ -13,8 +13,6 @@ export function FloatingComposer({ above, ...props }: {
   onSend: (text: string, attachments?: Attachment[]) => void;
   onStop: () => void;
   isStreaming: boolean;
-  voiceEnabled: boolean;
-  setVoiceEnabled: (v: boolean) => void;
   onOpenLive: () => void;
 }) {
   return (

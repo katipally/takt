@@ -1,36 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { PanelRightClose, MessageSquare, Brain, Search, FileText, ImageIcon, Boxes, Check, Loader2, ChevronRight, AudioLines, Copy, RefreshCw, SquarePen } from "lucide-react";
+import { PanelRightClose, MessageSquare, Brain, ImageIcon, Boxes, Check, Loader2, ChevronRight, AudioLines, Copy, RefreshCw, SquarePen } from "lucide-react";
 import { parseSelection, selectionLabel } from "@/lib/selection";
-import type { Node, Part, PageImagePart, ToolPart, ReasoningPart, TextPart } from "@/lib/chatStore";
+import type { Node, Part, SourcePart, ToolPart, ReasoningPart, TextPart } from "@/lib/chatStore";
+import { toolMeta } from "@/lib/toolMeta";
 import { MarkdownBody } from "@/components/markdown/MarkdownBody";
 import { cn } from "@/lib/cn";
 
 // [p.NN] → clickable citation chip wired to the source modal.
 const linkifyCites = (t: string) => t.replace(/\[p\.\s*(\d+)\]/g, (_m, n) => `[p.${n}](takt:cite:${n})`);
-
-// `active` shows while the tool runs (gerund + shimmer), `label` once it's done —
-// together they read as staged progress: searching → reading → building.
-const TOOL_META: Record<string, { label: string; active: string; icon: ReactNode }> = {
-  find_entity: { label: "Found it in the graph", active: "Looking it up…", icon: <Search className="size-3.5" /> },
-  search_product: { label: "Searched the product", active: "Searching…", icon: <Search className="size-3.5" /> },
-  query_product: { label: "Pulled the facts", active: "Gathering facts…", icon: <FileText className="size-3.5" /> },
-  walk_graph: { label: "Explored connections", active: "Exploring…", icon: <Boxes className="size-3.5" /> },
-  get_anchors: { label: "Gathered the media", active: "Gathering figures…", icon: <ImageIcon className="size-3.5" /> },
-  product_map: { label: "Mapped the product", active: "Mapping…", icon: <Boxes className="size-3.5" /> },
-  list_profile: { label: "Mapped the product", active: "Listing knowledge…", icon: <FileText className="size-3.5" /> },
-  grep_profile: { label: "Searched the docs", active: "Searching…", icon: <Search className="size-3.5" /> },
-  read_profile: { label: "Read the docs", active: "Reading…", icon: <FileText className="size-3.5" /> },
-  get_page_image: { label: "Opened a page", active: "Reading the page…", icon: <ImageIcon className="size-3.5" /> },
-  crop_page_image: { label: "Cropped a page", active: "Cropping…", icon: <ImageIcon className="size-3.5" /> },
-  emit_ui: { label: "Designed the answer", active: "Designing…", icon: <Boxes className="size-3.5" /> },
-  build_canvas: { label: "Built the artifact", active: "Building the artifact…", icon: <Boxes className="size-3.5" /> },
-  edit_canvas: { label: "Edited the canvas", active: "Editing the canvas…", icon: <Boxes className="size-3.5" /> },
-  delegate_build: { label: "Built a visual", active: "Building the visual…", icon: <Boxes className="size-3.5" /> },
-  update_todos: { label: "Planned the steps", active: "Planning…", icon: <FileText className="size-3.5" /> },
-  list_products: { label: "Checked the catalog", active: "Checking…", icon: <FileText className="size-3.5" /> },
-};
 
 interface Turn { userId: string; userText: string; assistant?: Extract<Node, { role: "assistant" }>; live?: boolean; }
 
@@ -141,13 +120,13 @@ function TurnCard({ turn, selected, streaming, isLatest, onSelect, onOpenSource,
 }) {
   const [copied, setCopied] = useState(false);
   const parts = turn.assistant?.parts ?? [];
-  const sources = parts.filter((p): p is PageImagePart => p.kind === "page_image");
+  const sources = parts.filter((p): p is SourcePart => p.kind === "source");
   const replyText = parts.filter((p): p is TextPart => p.kind === "text").map((p) => p.text).join("");
-  const hasArtifact = parts.some((p) => p.kind === "ui");
+  const hasArtifact = parts.some((p) => p.kind === "canvas");
   const showThinking = streaming && parts.every((p) => p.kind !== "text" && p.kind !== "reasoning" && p.kind !== "tool");
 
-  // Build the ordered segments (work | text). page_image/ui/ask don't segment —
-  // sources render as chips below; ui is the canvas; ask is a modal.
+  // Build the ordered segments (work | text). source/canvas/ask don't segment —
+  // sources render as chips below; canvas is the stage; ask is a modal.
   type Segment = { kind: "work"; parts: Part[] } | { kind: "text"; part: TextPart };
   const segments: Segment[] = [];
   for (const part of parts) {
@@ -274,7 +253,7 @@ function WorkBlock({ parts, active }: { parts: Part[]; active: boolean }) {
       <button onClick={() => setOpen((v) => !v)} className="flex w-full items-center gap-2 px-2.5 py-1.5 text-[11.5px] text-muted-foreground transition hover:text-foreground">
         {active ? <Loader2 className="size-3.5 shrink-0 animate-spin text-arc" /> : <Brain className="size-3.5 shrink-0 text-faint" />}
         {active ? (
-          <span className="arc-shimmer font-medium">{running ? (TOOL_META[running.tool]?.active ?? "Working…") : "Thinking…"}</span>
+          <span className="arc-shimmer font-medium">{running ? toolMeta(running.tool).active : "Thinking…"}</span>
         ) : (
           <>
             <span className="font-medium text-foreground/80">Worked it out</span>
@@ -304,7 +283,7 @@ function LiveSessionCard({ turns, live, selectedUserId, onSelectTurn, onOpenSour
 }) {
   const [open, setOpen] = useState(live);
   const expanded = open || live;
-  const artifactCount = turns.reduce((n, t) => n + (t.assistant?.parts.filter((p) => p.kind === "ui").length ?? 0), 0);
+  const artifactCount = turns.reduce((n, t) => n + (t.assistant?.parts.filter((p) => p.kind === "canvas").length ?? 0), 0);
   const anySelected = turns.some((t) => t.userId === selectedUserId);
   const agentText = (t: Turn) => (t.assistant?.parts.filter((p): p is TextPart => p.kind === "text").map((p) => p.text).join(" ") ?? "").trim();
   const isWorking = (t: Turn) => !!t.assistant?.streaming || (t.assistant?.parts.some((p) => p.kind === "tool" && p.status === "running") ?? false);
@@ -331,11 +310,11 @@ function LiveSessionCard({ turns, live, selectedUserId, onSelectTurn, onOpenSour
                 {agentText(t)
                   ? <span className="mt-0.5 line-clamp-3 block text-[11.5px] text-muted-foreground">{agentText(t)}</span>
                   : isWorking(t) ? <span className="mt-0.5 block text-[11.5px]"><span className="arc-shimmer font-medium">Takt is working…</span></span> : null}
-                {t.assistant?.parts.some((p) => p.kind === "ui") && <span className="mt-1 inline-flex items-center gap-1 rounded bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent"><Boxes className="size-2.5" /> canvas</span>}
+                {t.assistant?.parts.some((p) => p.kind === "canvas") && <span className="mt-1 inline-flex items-center gap-1 rounded bg-accent-soft px-1.5 py-0.5 text-[10px] text-accent"><Boxes className="size-2.5" /> canvas</span>}
               </button>
               {/* sources pulled during this live turn */}
               {(() => {
-                const src = t.assistant?.parts.filter((p): p is PageImagePart => p.kind === "page_image") ?? [];
+                const src = t.assistant?.parts.filter((p): p is SourcePart => p.kind === "source") ?? [];
                 if (!src.length) return null;
                 return (
                   <div className="mt-1 flex flex-wrap gap-1.5 px-2">
@@ -357,12 +336,13 @@ function LiveSessionCard({ turns, live, selectedUserId, onSelectTurn, onOpenSour
 }
 
 function ToolRow({ part }: { part: ToolPart }) {
-  const meta = TOOL_META[part.tool] ?? { label: part.tool, active: part.tool, icon: <Search className="size-3.5" /> };
+  const meta = toolMeta(part.tool);
+  const Icon = meta.icon;
   const running = part.status === "running";
   return (
     <div className="flex items-center gap-2 rounded-md px-1.5 py-1 text-[11.5px] text-muted-foreground">
-      <span className={cn("text-faint", running && "text-arc")}>{meta.icon}</span>
-      <span className={cn(running ? "arc-shimmer font-medium" : "text-foreground/80")}>{running ? meta.active : meta.label}</span>
+      <span className={cn("text-faint", running && "text-arc")}><Icon className="size-3.5" /></span>
+      <span className={cn(running ? "arc-shimmer font-medium" : "text-foreground/80")}>{running ? meta.active : meta.done}</span>
       {part.summary && <span className="truncate text-faint">· {part.summary}</span>}
       <span className="ml-auto flex items-center gap-1.5">
         {part.detail && !running && <span className="text-faint">{part.detail}</span>}

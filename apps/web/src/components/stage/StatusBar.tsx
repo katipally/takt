@@ -1,21 +1,11 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Loader2, ChevronUp, Search, FileText, ImageIcon, Boxes, Check, Hammer } from "lucide-react";
+import { Loader2, ChevronUp, Check, Hammer } from "lucide-react";
 import type { Node, ToolPart, TodoItem } from "@/lib/chatStore";
+import { toolMeta } from "@/lib/toolMeta";
 import { cn } from "@/lib/cn";
-
-const TOOL_META: Record<string, { active: string; done: string; icon: ReactNode }> = {
-  list_profile: { active: "Listing knowledge…", done: "Mapped the product", icon: <FileText className="size-3.5" /> },
-  grep_profile: { active: "Searching the docs…", done: "Searched the docs", icon: <Search className="size-3.5" /> },
-  read_profile: { active: "Reading the docs…", done: "Read the docs", icon: <FileText className="size-3.5" /> },
-  get_page_image: { active: "Opening a page…", done: "Opened a page", icon: <ImageIcon className="size-3.5" /> },
-  crop_page_image: { active: "Cropping a page…", done: "Cropped a page", icon: <ImageIcon className="size-3.5" /> },
-  emit_ui: { active: "Designing…", done: "Designed the answer", icon: <Boxes className="size-3.5" /> },
-  delegate_build: { active: "Handing off a visual…", done: "Delegated the visual", icon: <Hammer className="size-3.5" /> },
-  update_todos: { active: "Planning…", done: "Updated the plan", icon: <Check className="size-3.5" /> },
-};
 
 // The floating "what's happening now" strip above the composer. Collapsed = one
 // live line; click to expand a capped step log + the agent's todo checklist.
@@ -25,7 +15,7 @@ export function StatusBar({ node, streaming, todos }: { node?: Extract<Node, { r
   const parts = node?.parts ?? [];
   const tools = parts.filter((p): p is ToolPart => p.kind === "tool");
   const running = tools.find((t) => t.status === "running");
-  const building = running?.lane === "build" || tools.some((t) => t.tool === "delegate_build");
+  const building = running?.lane === "build" || tools.some((t) => t.tool === "build_canvas");
   const hasWork = parts.some((p) => p.kind === "reasoning" || p.kind === "tool");
 
   // Only show while the turn is active (or a build is still finishing).
@@ -34,7 +24,7 @@ export function StatusBar({ node, streaming, todos }: { node?: Extract<Node, { r
   if (!visible) return null;
 
   const line = node?.status
-    ?? (running ? (TOOL_META[running.tool]?.active ?? "Working…") : building ? "Building a visual…" : "Thinking…");
+    ?? (running ? toolMeta(running.tool).active : building ? "Building the canvas…" : "Thinking…");
 
   return (
     <div className="pointer-events-auto mx-auto w-full max-w-3xl px-5">
@@ -77,11 +67,12 @@ export function StatusBar({ node, streaming, todos }: { node?: Extract<Node, { r
 }
 
 function ToolRow({ part }: { part: ToolPart }) {
-  const meta = TOOL_META[part.tool] ?? { active: part.tool, done: part.tool, icon: <Search className="size-3.5" /> };
+  const meta = toolMeta(part.tool);
+  const Icon = meta.icon;
   const running = part.status === "running";
   return (
     <div className="flex items-center gap-2 rounded-md px-1 py-0.5 text-[11.5px] text-muted-foreground">
-      {part.lane === "build" ? <Hammer className={cn("size-3.5", running ? "text-arc" : "text-faint")} /> : <span className={cn("text-faint", running && "text-arc")}>{meta.icon}</span>}
+      {part.lane === "build" ? <Hammer className={cn("size-3.5", running ? "text-arc" : "text-faint")} /> : <span className={cn("text-faint", running && "text-arc")}><Icon className="size-3.5" /></span>}
       <span className={cn(running ? "arc-shimmer font-medium" : "text-foreground/80")}>{running ? meta.active : meta.done}</span>
       {part.lane === "build" && <span className="rounded bg-arc-soft px-1 text-[10px] text-arc">build</span>}
       {part.summary && <span className="truncate text-faint">· {part.summary}</span>}

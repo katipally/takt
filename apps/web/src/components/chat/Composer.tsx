@@ -2,20 +2,18 @@
 
 import { useEffect, useRef, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
-import { ArrowUp, Square, Mic, Volume2, VolumeX, Plus, X, AudioLines } from "lucide-react";
+import { ArrowUp, Square, Mic, Plus, X, AudioLines } from "lucide-react";
 import type { Attachment } from "@/lib/chatStore";
 import { cn } from "@/lib/cn";
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random() + Date.now()));
 
 export function Composer({
-  onSend, onStop, isStreaming, voiceEnabled, setVoiceEnabled, onOpenLive,
+  onSend, onStop, isStreaming, onOpenLive,
 }: {
   onSend: (text: string, attachments?: Attachment[]) => void;
   onStop: () => void;
   isStreaming: boolean;
-  voiceEnabled: boolean;
-  setVoiceEnabled: (v: boolean) => void;
   onOpenLive: () => void;
 }) {
   const reduce = useReducedMotion();
@@ -106,10 +104,6 @@ export function Composer({
             <button onClick={onOpenLive} title="Live conversation" aria-label="Start a live voice conversation"
               className="grid size-8 place-items-center rounded-full text-muted-foreground transition hover:bg-foreground/10 hover:text-accent">
               <AudioLines className="size-4" />
-            </button>
-            <button onClick={() => setVoiceEnabled(!voiceEnabled)} title={voiceEnabled ? "Spoken replies on" : "Spoken replies off"} aria-label={voiceEnabled ? "Turn spoken replies off" : "Turn spoken replies on"} aria-pressed={voiceEnabled}
-              className={cn("grid size-8 place-items-center rounded-full text-muted-foreground transition hover:bg-foreground/10", voiceEnabled && "text-accent")}>
-              {voiceEnabled ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
             </button>
             <button onClick={toggleMic} title="Speak your question" aria-label="Speak your question" aria-pressed={listening}
               className={cn("grid size-8 place-items-center rounded-full text-muted-foreground transition hover:bg-foreground/10", listening && "bg-arc-soft text-arc animate-pulse-dot")}>

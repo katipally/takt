@@ -3,31 +3,25 @@
 import { useEffect, useRef } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { AudioLines } from "lucide-react";
-import { UIRenderer } from "@/components/ui-catalog/UIRenderer";
-import type { RenderCtx } from "@/components/ui-catalog/ctx";
-import type { UIPart } from "@/lib/chatStore";
+import { Canvas } from "@/components/canvas/Canvas";
+import type { CanvasPart } from "@/lib/chatStore";
 import { Wordmark } from "@/components/brand/Wordmark";
 
-// The canvas is a pure ARTIFACT surface — a polished, final generative-UI panel
-// (like a document/preview). It shows ONLY the generated UI surfaces; it never
-// shows the conversation, the AI's commentary, the user's prompt, or a title —
-// all of that lives in the chat/activity. While the agent composes an artifact
-// the canvas shows a ghost skeleton; between artifacts it holds the last one, or
-// a calm idle state.
-// A surface is a full-bleed freeform Page when its root node is a `Page`.
-function isPageSurface(p: UIPart): boolean {
-  return p.surface.nodes.find((n) => n.id === p.surface.root)?.type === "Page";
-}
+// The stage is a pure ARTIFACT surface — it shows the SINGLE most-recent canvas
+// (the streamed HTML page), rendered directly in the app document via morphdom.
+// A new canvas replaces the previous one (like an artifact panel), so the Canvas
+// stays mounted (stable key by canvasId) and morphdom diffs updates in place. It
+// never shows the conversation; prose/reasoning/tools/sources live in the rail.
 
 export function Stage({
-  surfaces, constructing, buildStatus, streaming, isLatest, ctx, empty, heading, subheading, starters, onStarter, liveMode,
+  canvas, chatId, productSlug, constructing, buildStatus, streaming, empty, heading, subheading, starters, onStarter, liveMode,
 }: {
-  surfaces: UIPart[];
-  constructing: boolean;            // this turn is building a new artifact whose surface hasn't landed yet
+  canvas?: CanvasPart;
+  chatId: string;
+  productSlug: string | null;
+  constructing: boolean;            // this turn is building a new canvas that hasn't landed yet
   buildStatus?: string | null;      // live gather/compose status line
   streaming: boolean;
-  isLatest: boolean;
-  ctx: RenderCtx;
   empty: boolean;
   heading?: string;
   subheading?: string;
@@ -36,54 +30,36 @@ export function Stage({
   liveMode?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Stick to bottom while an artifact streams in.
+  // Stick to bottom while a canvas streams in.
   useEffect(() => {
     if (!streaming) return;
     const el = scrollRef.current;
     if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 240) el.scrollTop = el.scrollHeight;
   });
 
-  // A freeform `Page` surface owns the WHOLE canvas (full-bleed, its own layout +
-  // internal padding via the design system). Legacy catalog surfaces stay in a
-  // centered reading column. Empty/building/idle keep the narrow, calm layout.
   const reduce = useReducedMotion();
-  // While this turn is building a NEW artifact whose surface hasn't landed, show the
-  // calm placeholder instead of the previous (now stale) artifact — start_canvas puts
-  // the real title up within ~1s, so this window is brief.
-  const showingSurfaces = !empty && !constructing && surfaces.length > 0;
-  // Full-bleed the canvas if ANY surface is a Page; each non-Page (catalog)
-  // surface then keeps its own centered reading column, so a mixed turn still
-  // renders the Page edge-to-edge instead of boxing everything.
-  const pageMode = showingSurfaces && surfaces.some(isPageSurface);
-  const renderSurface = (p: UIPart) => (
-    <UIRenderer key={p.id} surface={p.surface} ctx={{ ...ctx, readOnly: ctx.readOnly ?? !isLatest, partial: !!p.partial && streaming }} animate={isLatest && streaming} />
-  );
-
-  // One canvas state at a time: empty (first load) · surfaces (the artifact) ·
-  // placeholder (calm line while a turn builds, or idle). The non-surface states
-  // CROSSFADE so there's no hard cut. Surfaces render outside the crossfade (they
-  // own their layout + entrance animation) so their iframes never remount.
-  const mode: "empty" | "surfaces" | "placeholder" =
-    empty ? "empty" : showingSurfaces ? "surfaces" : "placeholder";
+  const showingCanvas = !empty && !constructing && !!canvas;
+  const mode: "empty" | "canvas" | "placeholder" =
+    empty ? "empty" : showingCanvas ? "canvas" : "placeholder";
   const fade = { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 }, transition: { duration: reduce ? 0 : 0.18 } };
 
   return (
     <div ref={scrollRef} className="takt-scroll relative min-h-0 flex-1 overflow-y-auto">
-      {/* The ONE build cue: a thin accent bar rides the top of the canvas while the
-          latest turn is still composing, and vanishes when it's done. Present = still
-          building, absent = complete — no other spinner/skeleton needed. */}
-      {streaming && isLatest && (
+      {/* The ONE build cue: a thin accent bar rides the top while the latest turn
+          is still composing, then vanishes. */}
+      {streaming && (
         <div aria-hidden className="pointer-events-none sticky inset-x-0 top-0 z-30 h-[3px] bg-accent/80 animate-pulse" />
       )}
       {liveMode && <div aria-hidden className="pointer-events-none absolute inset-0 bg-[radial-gradient(55%_45%_at_50%_28%,var(--accent-soft,rgba(120,130,255,0.1)),transparent_70%)]" />}
-      <div className={pageMode ? "relative w-full pb-48" : "relative mx-auto w-full max-w-3xl px-6 pb-48 pt-8"}>
-        {mode === "surfaces" ? (
-          <div className={pageMode ? "space-y-8" : "space-y-6"}>
-            {surfaces.map((p) => pageMode && !isPageSurface(p)
-              ? <div key={p.id} className="mx-auto w-full max-w-3xl px-6">{renderSurface(p)}</div>
-              : renderSurface(p))}
-          </div>
-        ) : (
+      {/* The canvas owns the WHOLE stage (full-bleed; .takt-page provides its own
+          padding + layout). It renders OUTSIDE the crossfade so morphdom never
+          remounts. Empty/building/idle keep the calm centered layout. */}
+      {mode === "canvas" && canvas ? (
+        <div className="relative w-full pb-48">
+          <Canvas key={canvas.canvasId} part={canvas} chatId={chatId} productSlug={productSlug} streaming={streaming} />
+        </div>
+      ) : (
+        <div className="relative mx-auto w-full max-w-3xl px-6 pb-48 pt-8">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div key={mode} {...fade}>
               {mode === "empty"
@@ -91,18 +67,14 @@ export function Stage({
                 : <Placeholder streaming={streaming} status={buildStatus ?? null} live={liveMode} />}
             </motion.div>
           </AnimatePresence>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
 
-// The one non-empty, non-surface canvas state. Artifact-first made the old
-// crops-grid skeleton redundant (start_canvas puts the real title up within ~1s,
-// and the top build-bar signals progress), so this is just: a calm status line
-// while a turn streams, or a quiet wordmark when settled. The canvas is
-// artifact-first, so it NEVER tells the user to "look in the chat". Live mode gets
-// its own animated "listening" view.
+// The one non-empty, non-canvas state: a calm status line while a turn streams, or
+// a quiet wordmark when settled. Live mode gets its own animated "listening" view.
 function Placeholder({ streaming, status, live }: { streaming: boolean; status?: string | null; live?: boolean }) {
   if (live) return <LiveIdle streaming={streaming} />;
   return (
@@ -119,8 +91,7 @@ function Placeholder({ streaming, status, live }: { streaming: boolean; status?:
   );
 }
 
-// Live-call empty/idle canvas: a breathing "listening" orb with pulsing rings so
-// the stage feels alive during a voice call before any visual is built.
+// Live-call empty/idle canvas: a breathing "listening" orb.
 function LiveIdle({ streaming }: { streaming: boolean }) {
   return (
     <div className="flex min-h-[55vh] flex-col items-center justify-center text-center">

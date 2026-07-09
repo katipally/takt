@@ -18,24 +18,13 @@ import { AskModal } from "@/components/chat/AskModal";
 import { SettingsModal } from "@/components/settings/SettingsModal";
 import { Wordmark } from "@/components/brand/Wordmark";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
-import type { RenderCtx } from "@/components/ui-catalog/ctx";
-import type { UIPart } from "@/lib/chatStore";
+import type { CanvasPart } from "@/lib/chatStore";
 import { useWorkbench } from "@/hooks/useWorkbench";
 import { useUi } from "@/lib/uiStore";
 import { useLiveStore } from "@/lib/live/liveStore";
 import { STARTERS } from "@/lib/starters";
 import { quick } from "@/lib/motion";
 import { cn } from "@/lib/cn";
-
-// Turn an interactive submit into a readable follow-up message.
-function formatAction(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (value && typeof value === "object") {
-    const pairs = Object.entries(value as Record<string, unknown>).filter(([, v]) => v !== "" && v != null);
-    if (pairs.length) return pairs.map(([k, v]) => `${k}: ${v}`).join(", ");
-  }
-  return String(value);
-}
 
 export function Workbench({ slug, productName, starters }: { slug: string | null; productName?: string; starters?: string[] }) {
   const wb = useWorkbench(slug);
@@ -102,40 +91,35 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
   }, [wb.messages]);
   const latest = turns[turns.length - 1];
   const view = (viewUserId ? turns.find((t) => t.userId === viewUserId) : null) ?? latest;
-  const isLatest = !view || view === latest;
 
-  // The canvas shows ONLY artifacts. This turn's own surfaces (partials included):
-  const viewSurfaces: UIPart[] = view?.assistant?.parts.filter((p): p is UIPart => p.kind === "ui") ?? [];
-  // Is this turn building a NEW artifact whose surface hasn't landed yet? True while
-  // streaming, no surface for THIS turn, and a build signal is present — the
-  // build_canvas/delegate tool is pending, or a crop has already been fetched. Drives
-  // the calm placeholder (vs. showing the previous, now-stale artifact) until the
-  // start_canvas title shell appears.
-  const buildPending = (view?.assistant?.parts ?? []).some((p) => p.kind === "tool" && (p.tool === "build_canvas" || p.tool === "delegate_build" || p.lane === "build"));
-  const hasBuildCrops = (view?.assistant?.parts ?? []).some((p) => p.kind === "page_image");
-  const constructing = !!view?.assistant?.streaming && viewSurfaces.length === 0 && (buildPending || hasBuildCrops);
+  // The stage shows ONLY the latest canvas. This turn's own canvas (partials
+  // included) — the last canvas part of the viewed turn:
+  const viewCanvas: CanvasPart | undefined = [...(view?.assistant?.parts ?? [])].reverse().find((p): p is CanvasPart => p.kind === "canvas");
+  // Is this turn building a NEW canvas that hasn't landed yet? True while streaming,
+  // no canvas for THIS turn, and a build signal is present — a canvas tool is pending
+  // or a source crop has arrived. Drives the calm placeholder (vs. showing the
+  // previous, stale canvas) until the start_canvas shell appears.
+  const buildPending = (view?.assistant?.parts ?? []).some((p) => p.kind === "tool" && (p.tool === "start_canvas" || p.tool === "build_canvas" || p.tool === "edit_canvas" || p.lane === "build"));
+  const hasBuildCrops = (view?.assistant?.parts ?? []).some((p) => p.kind === "source");
+  const constructing = !!view?.assistant?.streaming && !viewCanvas && (buildPending || hasBuildCrops);
   const buildStatus = view?.assistant?.status ?? null;
-  // Hold the most recent artifact when this turn produced none (so a plain chat
-  // follow-up doesn't blank the canvas); the placeholder overrides it while building.
-  const canvasSurfaces: UIPart[] = viewSurfaces.length ? viewSurfaces : (() => {
+  // Hold the most recent canvas when this turn produced none (so a plain chat
+  // follow-up doesn't blank the stage); the placeholder overrides it while building.
+  const canvas: CanvasPart | undefined = viewCanvas ?? (() => {
     for (let i = turns.length - 1; i >= 0; i--) {
-      const s = turns[i]!.assistant?.parts.filter((p): p is UIPart => p.kind === "ui");
-      if (s?.length) return s;
+      const c = [...(turns[i]!.assistant?.parts ?? [])].reverse().find((p): p is CanvasPart => p.kind === "canvas");
+      if (c) return c;
     }
-    return [];
+    return undefined;
   })();
 
-  const ctx: RenderCtx = {
-    onCitation: (page, slug) => wb.openCitation(page, undefined, slug),
-    onSource: (s) => { if (s.url) wb.openSource({ url: s.url, page: s.page ?? 0, manualKind: "other" }); else if (s.page) wb.openCitation(s.page); },
-    // A Button/Form/Select submit continues the conversation with the chosen
-    // values. The agent commonly re-emits the surface with the same key, so it
-    // reads as an in-place update. ponytail: a follow-up turn (works across every
-    // provider) rather than mid-turn blocking; only the LATEST answer is armed.
-    onAction: (_actionId, value) => send(formatAction(value)),
-    // Clicking a block on the canvas selects it (empty id = cleared).
-    onSelect: (sel) => setSelection(sel.id ? sel : null),
-  };
+  // Canvas block selection (right-click → "Select this area") bubbles to document
+  // as a `takt:select` CustomEvent — scope the composer's next message to it.
+  useEffect(() => {
+    const onSelect = (e: Event) => { const d = (e as CustomEvent).detail as { id: string; text: string }; setSelection(d.id ? d : null); };
+    document.addEventListener("takt:select", onSelect);
+    return () => document.removeEventListener("takt:select", onSelect);
+  }, []);
 
   // Deep-links: ?chat=<id> loads a conversation; ?q=<text> opens a fresh chat.
   const didInit = useRef(false);
@@ -220,12 +204,12 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
             voice bar once the call is live (shared layoutId="takt-dock"). */}
         <Stage
           empty={empty && !liveOpen}
-          surfaces={canvasSurfaces}
+          canvas={canvas}
+          chatId={wb.chatId}
+          productSlug={slug}
           constructing={constructing}
           buildStatus={buildStatus}
           streaming={!!view?.assistant?.streaming}
-          isLatest={isLatest}
-          ctx={ctx}
           heading={heading}
           subheading={isMaster
             ? "Ask across all your products at once — or anything else. Answers cite the product and page they come from."
@@ -237,7 +221,7 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
         {/* Composer shows until the call goes live; it morphs into the voice bar. */}
         {!liveActive && (
           <FloatingComposer onSend={sendFromComposer} onStop={wb.stop} isStreaming={wb.isStreaming}
-            voiceEnabled={wb.voiceEnabled} setVoiceEnabled={wb.setVoiceEnabled} onOpenLive={() => setLiveOpen(true)}
+            onOpenLive={() => setLiveOpen(true)}
             above={!wb.ask && !liveOpen ? (
               <div className="flex flex-col gap-1.5">
                 {selection && (

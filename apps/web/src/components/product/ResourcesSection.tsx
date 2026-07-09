@@ -5,8 +5,8 @@ import { useQuery } from "@tanstack/react-query";
 import { motion } from "motion/react";
 import Link from "next/link";
 import { Boxes, FileText, Image as ImageIcon, Film, Network, ScrollText } from "lucide-react";
-import { Graph, type GraphProps } from "@/components/ui-catalog/Graph";
-import { Model3D } from "@/components/ui-catalog/Model3D";
+import { Graph, type GraphProps } from "@/components/product/Graph";
+import { Model3D } from "@/components/product/Model3D";
 
 // The product's resources + the explorable "virtual product", revealed as you
 // scroll past the questions on the landing. Everything is read-only and fed by

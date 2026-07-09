@@ -41,23 +41,6 @@ const STATIC = {
   th: (p: MdProps) => el("th", "border-b border-border bg-foreground/5 px-2.5 py-1.5 text-left text-chat font-semibold", p),
   td: (p: MdProps) => el("td", "border-b border-border px-2.5 py-1.5 align-top text-chat", p),
 } as const;
-// Editorial variant — the canvas "answer" reads like an article/guide, not a
-// chat bubble: bigger reading type, generous leading, real section headings,
-// pull-quote blockquotes. The first paragraph is treated as a lede via the
-// wrapper class in MarkdownBody.
-const EDITORIAL = {
-  h1: (p: MdProps) => el("h1", "mb-3 mt-9 font-serif text-[26px] font-semibold leading-[1.2] tracking-tight", p),
-  h2: (p: MdProps) => el("h2", "mb-3 mt-9 text-[20px] font-semibold leading-tight tracking-tight text-foreground", p),
-  h3: (p: MdProps) => el("h3", "mb-2 mt-6 text-[16px] font-semibold", p),
-  h4: (p: MdProps) => el("h4", "mb-1.5 mt-5 text-[12px] font-semibold uppercase tracking-[0.12em] text-muted-foreground", p),
-  p: (p: MdProps) => el("p", "mb-4 mt-0 text-[15px] leading-[1.75] text-foreground/90", p),
-  ul: (p: MdProps) => el("ul", "my-4 list-disc pl-6 text-[15px] leading-[1.7] marker:text-arc [&>li+li]:mt-2", p),
-  ol: (p: MdProps) => el("ol", "my-4 list-decimal pl-6 text-[15px] leading-[1.7] marker:font-medium marker:text-arc [&>li+li]:mt-2", p),
-  li: (p: MdProps) => el("li", "pl-1 text-[15px] leading-[1.7]", p),
-  blockquote: (p: MdProps) => el("blockquote", "my-6 border-l-2 border-arc pl-5 text-[17px] italic leading-relaxed text-foreground/80", p),
-  hr: () => <hr className="my-8 border-border" />,
-  table: STATIC.table, th: STATIC.th, td: STATIC.td,
-} as const;
 
 // strong/em/a default-render inline unless overridden (a is set per-render below).
 
@@ -104,14 +87,11 @@ function code(props: MdProps & { className?: string; children?: ReactNode }) {
 }
 
 export const MarkdownBody = memo(function MarkdownBody({
-  content, className = "", renderLink, variant = "chat",
-}: { content: string; className?: string; renderLink?: RenderLink; variant?: "chat" | "editorial" }) {
-  const editorial = variant === "editorial";
-  const components = useMemo(() => ({ ...(editorial ? EDITORIAL : STATIC), a: anchorFactory(renderLink), code }), [renderLink, editorial]);
-  // Editorial: lift the first paragraph into a lede (larger, fuller-contrast).
-  const lede = editorial ? "[&>p:first-of-type]:text-[17px] [&>p:first-of-type]:leading-[1.75] [&>p:first-of-type]:text-foreground" : "";
+  content, className = "", renderLink,
+}: { content: string; className?: string; renderLink?: RenderLink }) {
+  const components = useMemo(() => ({ ...STATIC, a: anchorFactory(renderLink), code }), [renderLink]);
   return (
-    <div className={`text-foreground break-words [&_li>p]:my-0 ${editorial ? "" : "text-chat"} ${lede} ${className}`}>
+    <div className={`text-foreground break-words [&_li>p]:my-0 text-chat ${className}`}>
       <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={urlTransform} components={components as never}>
         {content}
       </ReactMarkdown>
