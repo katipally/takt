@@ -142,9 +142,9 @@ export function useLiveSession(chatId: string, productSlug: string | null) {
           if (e.type === "done") {
             engine.current?.endAgentTurn();
             // Finish the spoken turn but KEEP assistantId pointing at it: a
-            // delegate_build surface is produced by a background worker that
-            // emits its ui_surface seconds AFTER this `done`, and it must still
-            // land on the canvas. assistantId rolls forward on the next user
+            // background canvas worker (build_canvas) emits its canvas_end
+            // seconds AFTER this `done`, and it must still land on the canvas.
+            // assistantId rolls forward on the next user
             // turn (handleUserText) and is finalized on teardown. (Previously it
             // was nulled here, so live-built visuals were silently dropped.)
             if (assistantId.current) chatStore.liveFinish(chatId, assistantId.current);

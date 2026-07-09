@@ -15,9 +15,9 @@ import { resolveLive } from "../providers.js";
 const MAX_STEPS = 6;
 
 // Tools that don't belong in a spoken call: ask_user blocks the turn forever on a
-// UI that isn't there. emit_ui IS allowed in live — a designed surface can land on
-// the stage while Takt talks. Everything else (search, page images, look, fetch)
-// stays.
+// UI that isn't there. build_canvas IS allowed in live — a designed page can land
+// on the canvas while Takt talks. Everything else (search, page images, look,
+// fetch) stays.
 const LIVE_TOOL_DENY = new Set(["ask_user"]);
 
 // A per-call LLM driver that keeps a growing Message[] across turns (unlike the

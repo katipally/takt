@@ -5,8 +5,8 @@ import { z } from "zod";
 // clarifying questions mid-answer; the browser renders them in the Ask modal.
 
 // A small visual that explains a question or an option — plain text / ASCII / SVG
-// shown verbatim. (Rich react/html renders were retired with the old artifact
-// pipeline; a designed answer is the stage's job via emit_ui.)
+// shown verbatim. (Rich renders aren't needed here; a designed answer is the
+// canvas's job via build_canvas.)
 export const askRenderSchema = z.object({
   kind: z.enum(["ascii"]),
   content: z.string().min(1).max(60_000),

@@ -101,7 +101,7 @@ export function resolveLive(): ResolvedChat {
   };
 }
 
-// Which provider + model powers the BUILD subagent (delegate_build). Its own
+// Which provider + model powers the canvas worker (build_canvas). Its own
 // settings so builds can run a STRONGER model than the fast talker. Falls back to
 // the chat provider+model when unset ("same as chat").
 export function resolveBuild(): ResolvedChat {
