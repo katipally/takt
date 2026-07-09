@@ -1,5 +1,4 @@
 import { listConcepts } from "./store";
-import { grepProfile } from "./search";
 import { loadChunks, saveChunks, loadMedia } from "./index-store";
 import { buildVectors, semanticSearch } from "./embed";
 import type { Chunk, MediaItem } from "./types";
@@ -58,28 +57,34 @@ export async function buildIndex(slug: string): Promise<{ chunks: number; embedd
   return { chunks: chunks.length, embedded };
 }
 
-/** Hybrid text search: semantic top-k over chunks fused with lexical grep hits
- *  (grep wins ties — exact matches like error codes matter). */
+const STOP = new Set(["the", "and", "for", "with", "you", "your", "what", "how", "should", "use", "this", "that", "from", "are", "can", "does", "when", "which", "where", "why", "into", "out", "get", "got", "need"]);
+
+/** Hybrid text search over chunks: semantic similarity fused with query-TERM
+ *  coverage (how many of the query's words a chunk contains). The term coverage is
+ *  what makes a natural question like "PLA nozzle temperature" surface the material
+ *  page even when the exact phrase never appears — the old whole-phrase grep matched
+ *  nothing on multi-word queries, so weak semantic ranking leaked generic answers. */
 export async function searchProduct(slug: string, query: string, k = 8): Promise<SearchHit[]> {
   const chunks = loadChunks(slug);
-  const byId = new Map(chunks.map((c) => [c.id, c]));
-  const scored = new Map<string, SearchHit>();
+  const terms = [...new Set((query.toLowerCase().match(/[a-z0-9°.#/-]+/gi) ?? []).map((t) => t.toLowerCase()).filter((t) => t.length >= 3 && !STOP.has(t)))];
 
-  const sem = await semanticSearch(slug, query, k * 2, "chunk");
-  if (sem) for (const { id, score } of sem) {
-    const c = byId.get(id);
-    if (c) scored.set(id, { conceptId: c.conceptId, title: c.title, page: c.page, text: c.text.slice(0, 700), score });
-  }
+  const sem = await semanticSearch(slug, query, chunks.length, "chunk"); // score every chunk
+  const semScore = new Map(sem?.map((s) => [s.id, s.score]) ?? []);
 
-  // lexical grep boost — cheap exactness signal, and the fallback when no vectors
-  for (const g of grepProfile(slug, query, { maxConcepts: k })) {
-    const key = `grep:${g.conceptId}`;
-    if (!scored.has(key)) {
-      scored.set(key, { conceptId: g.conceptId, title: g.conceptTitle, text: g.hits[0]?.text ?? "", score: 0.5 + Math.min(0.4, g.count * 0.05) });
-    }
-  }
+  const scored = chunks.map((c) => {
+    const hay = `${c.title}\n${c.text}`.toLowerCase();
+    const hits = terms.filter((t) => hay.includes(t)).length;
+    const cover = terms.length ? hits / terms.length : 0;              // 0..1 query-term coverage
+    // Coverage DOMINATES (a chunk that contains all the query words is what the
+    // user means); semantic breaks ties and carries queries with no lexical hit.
+    const s = cover * 1.0 + (semScore.get(c.id) ?? 0) * 0.45;
+    return { c, s, cover };
+  }).filter((x) => x.cover > 0 || x.s > 0.18);
 
-  return [...scored.values()].sort((a, b) => b.score - a.score).slice(0, k);
+  return scored
+    .sort((a, b) => b.s - a.s)
+    .slice(0, k)
+    .map(({ c, s }) => ({ conceptId: c.conceptId, title: c.title, page: c.page, text: c.text.slice(0, 700), score: s }));
 }
 
 /** Find render-ready visuals for a query: semantic over media captions, with a
