@@ -291,7 +291,7 @@ export function buildTaktTools(ctx: {
       if (!brief) return { output: "build_canvas needs a brief.", isError: true };
       const id = randomUUID();
       await emit({ type: "tool_start", id, tool: "build_canvas", summary: brief.slice(0, 60), lane: spawnBuild ? "build" : "main" });
-      if (spawnBuild) { spawnBuild(brief); await emit({ type: "tool_done", id, detail: "building" }); return text("Building the canvas in the background — keep talking; it appears on screen shortly."); }
+      if (spawnBuild) { spawnBuild(brief); await emit({ type: "tool_done", id, detail: "building" }); return text("Canvas is now building on screen (takes ~20–30s). Do NOT end the turn silently — reply with ONE short spoken sentence to the user right now telling them it's coming up (e.g. \"okay, it's drawing now — one sec\"). Then stop."); }
       const ok = await compose!(brief);
       await emit({ type: "tool_done", id, detail: ok ? "built" : "failed" });
       return ok ? text("Built on the canvas. Reply with ONE short line pointing at it; don't restate the page.") : { output: "The canvas build produced nothing.", isError: true };
