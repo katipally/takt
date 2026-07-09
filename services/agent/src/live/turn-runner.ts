@@ -41,20 +41,31 @@ export class LiveTurnRunner {
     this.messages.splice(1, this.messages.length - 1, ...history);
   }
 
-  async runTurn(userText: string, frames: { data: string; mime: string }[], emit: Emit, signal: AbortSignal, spawnBuild?: (brief: string, key?: string) => void): Promise<void> {
+  async runTurn(userText: string, frames: { data: string; mime: string }[], emit: Emit, signal: AbortSignal, spawnBuild?: (brief: string, ctx?: { facts?: string; figures?: string[] }) => void): Promise<void> {
     const { provider, model, apiKey } = resolveLive();
     if (!model) { await emit({ type: "error", message: "No model selected. Open Settings → Models and pick a model." }); return; }
     if (!apiKey && !provider.keyless) { await emit({ type: "error", message: `No API key for ${provider.name}. Add one in Settings → Models.` }); return; }
     // Only attach the camera frame if the live model can actually see (curated
     // table; unknown/custom models default to attaching). A text-only fast model
-    // (e.g. Cerebras/DeepSeek) would otherwise error on an image input.
+    // would otherwise error on an image input.
     const canSee = modelVision(provider.id, model);
     const imgs = canSee && frames.length ? frames : undefined;
     this.messages.push({ role: "user", text: userText, images: imgs });
-    // Build tools with THIS turn's emit so their artifact/page_image events are
-    // dropped by the same epoch guard when a barge-in interrupts the turn. Drop
-    // the tools that can't work in a spoken call.
-    const tools = [...buildTaktTools({ product: this.product, manuals: this.manuals, emit, chatId: this.chatId, spawnBuild, context: "main" }), ...this.extraTools]
+
+    // Ground the live build like chat: accumulate the facts + /assets URLs this
+    // turn gathered (search_product, crop_page_image, get_media) and hand them to
+    // the canvas worker via spawnBuild, so a spoken "let me draw that" produces
+    // the SAME grounded, multimodal canvas as a typed question.
+    const retrieved: string[] = [];
+    const assets = new Set<string>();
+    const wrappedSpawn = spawnBuild
+      ? (brief: string) => spawnBuild(brief, { facts: retrieved.join("\n---\n").slice(0, 6000), figures: [...assets].filter((u) => !u.includes("/assets/pages/")) })
+      : undefined;
+
+    // Build tools with THIS turn's emit so their source/canvas events are dropped
+    // by the same epoch guard when a barge-in interrupts. Drop tools that can't
+    // work in a spoken call.
+    const tools = [...buildTaktTools({ product: this.product, manuals: this.manuals, emit, chatId: this.chatId, spawnBuild: wrappedSpawn, context: "main" }), ...this.extraTools]
       .filter((t) => !LIVE_TOOL_DENY.has(t.name));
     const toolDefs = tools.map(({ name, description, parameters }) => ({ name, description, parameters }));
 
@@ -99,6 +110,10 @@ export class LiveTurnRunner {
           let res;
           try { res = await tool.execute(safeParseArgs(tc.arguments)); }
           catch (e: any) { res = { output: `Error: ${String(e?.message ?? e)}`, isError: true as const }; }
+          if (!res.isError && res.output) {
+            for (const m of res.output.matchAll(/\/assets\/[^\s"'?)]+/g)) assets.add(m[0]);
+            retrieved.push(res.output);
+          }
           this.messages.push({ role: "tool", callId: tc.id, name: tc.name, result: res.output, images: res.images, isError: res.isError });
         }
       }

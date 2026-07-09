@@ -154,12 +154,14 @@ export class LiveSession {
     // finishes AFTER that re-saves the row so its late-landing surface isn't lost
     // on reload (blocks was already serialized before the surface arrived).
     let messageId: string | null = null;
-    const spawnBuild = (brief: string, canvasId?: string) => {
+    const spawnBuild = (brief: string, ctx?: { facts?: string; figures?: string[] }) => {
       const frame = this.cameraOn && this.lastFrame ? this.persistFrame(this.lastFrame) : undefined;
       // Session-stable signal (never aborts on barge-in) so a delegated canvas
-      // still lands while the spoken turn is interrupted.
+      // still lands while the spoken turn is interrupted. Facts + figures gathered
+      // in the live turn are threaded in so the canvas is grounded like chat's.
       void runCanvasWorker({
-        mode: "build", canvasId: canvasId ?? uuid().slice(0, 8), brief, question: brief,
+        mode: "build", canvasId: uuid().slice(0, 8), brief, question: brief,
+        facts: ctx?.facts, figures: ctx?.figures,
         product: this.product, frame,
         emit: this.blockEmit(blocks, new AbortController().signal), signal: new AbortController().signal,
       }).then(() => {
