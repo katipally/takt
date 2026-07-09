@@ -1,20 +1,36 @@
 import type { NextConfig } from "next";
 import { join } from "node:path";
 
-// Strict CSP for the app. The canvas now renders model-authored HTML DIRECTLY in
-// the app document (no iframe), so scripts/styles run in-origin — `connect-src
-// 'self'` is the real exfiltration fence for those scripts, `object-src`/`frame-src`
-// none block plugin/iframe escapes. `'unsafe-inline'` is required for the canvas's
-// inline <script>/<style> and the app's inline styles.
+// CSP for the app. The canvas renders model-authored HTML DIRECTLY in the app
+// document (no iframe), so its scripts run in-origin — connect-src is the main
+// exfiltration fence, object-src/frame-src none block plugin/iframe escapes.
+//
+// Live voice runs on-device AI models (Whisper / Kokoro / smart-turn) via
+// transformers.js + onnxruntime-web: the weights download from the Hugging Face
+// hub, the ort runtime instantiates WebAssembly (needs 'wasm-unsafe-eval') and
+// spins up blob: workers/modules. So connect-src must allow the model hosts and
+// blob:, and script/worker-src must allow blob:.
+// ponytail: this widens the canvas-script exfiltration surface to the HF/jsdelivr
+// hosts (not arbitrary). Acceptable pre-launch; to fully re-fence, proxy model
+// downloads through a same-origin /api route with a host allowlist.
+const MODEL_HOSTS = "https://huggingface.co https://*.huggingface.co https://*.hf.co https://cdn.jsdelivr.net";
+// Live voice connects to the agent over a WebSocket (direct, not via the Next
+// proxy). Allow its origin in connect-src, derived from env (dev: ws://localhost:8787).
+const LIVE_WS = (() => {
+  const raw = process.env.NEXT_PUBLIC_LIVE_WS_URL || `ws://localhost:${process.env.AGENT_PORT || 8787}`;
+  try { return new URL(raw).origin; } catch { return "ws://localhost:8787"; }
+})();
 const CSP = [
   "default-src 'self'",
   "img-src 'self' data: blob:",
   "media-src 'self' blob:",
-  "connect-src 'self'",
+  `connect-src 'self' blob: data: ${LIVE_WS} ${MODEL_HOSTS}`,
+  "worker-src 'self' blob:",
   "object-src 'none'",
   "frame-src 'none'",
   "style-src 'self' 'unsafe-inline'",
-  "script-src 'self' 'unsafe-inline'",
+  // onnxruntime-web + vad-web load their wasm-loader scripts from jsdelivr.
+  "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net",
 ].join("; ");
 
 const config: NextConfig = {
