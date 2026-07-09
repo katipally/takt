@@ -237,15 +237,18 @@ summary:focus-visible,
     [content-start] min(68ch,100%) [content-end]
     minmax(0,80px) [wide-end]
     minmax(0,1fr) [full-end];
-  padding-inline:clamp(16px,4cqi,56px);
+  padding-inline:clamp(18px,4cqi,72px);
   padding-block:clamp(28px,5cqi,64px);
-  max-width:1240px;margin:0 auto;overflow-x:clip;
+  max-width:1600px;margin:0 auto;overflow-x:clip;
   color:var(--takt-fg);font-family:var(--takt-sans);font-size:17px;line-height:1.66;
   -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
 }
 .takt-page *{box-sizing:border-box;max-width:100%}
 .takt-page > *{grid-column:content;min-width:0}
-.takt-page > :is(.takt-grid,table,.takt-wide,figure.takt-figure,pre){grid-column:wide}
+/* Multi-column spreads + tables/figures BREAK OUT to fill the canvas like a
+   poster; prose stays in the readable center column. */
+.takt-page > :is(table,.takt-wide,figure.takt-figure,pre){grid-column:wide}
+.takt-page > .takt-grid{grid-column:full}
 .takt-page > :is(.takt-full,figure.takt-figure[data-variant=lead]){grid-column:full}
 .takt-page > figure.takt-figure[data-variant=inset]{grid-column:content}
 .takt-page img,.takt-page video,.takt-page model-viewer{max-width:100%;height:auto}

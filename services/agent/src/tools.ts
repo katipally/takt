@@ -128,12 +128,11 @@ export function buildTaktTools(ctx: {
   chatId?: string;
   context?: "main" | "build";
   // canvas callbacks (chat wires compose/edit; live wires spawnBuild)
-  startCanvas?: (title: string, eyebrow?: string, lead?: string) => Promise<string>;
   compose?: (brief: string, canvasId?: string) => Promise<boolean>;
   edit?: (brief: string, canvasId?: string, target?: string) => Promise<boolean>;
   spawnBuild?: (brief: string, canvasId?: string) => void;
 }): TaktTool[] {
-  const { product, emit, chatId, context = "main", startCanvas, compose, edit, spawnBuild } = ctx;
+  const { product, emit, chatId, context = "main", compose, edit, spawnBuild } = ctx;
   const masterMode = !product;
 
   const manualsHint = (prodId: string): string => {
@@ -282,29 +281,18 @@ export function buildTaktTools(ctx: {
     },
   };
 
-  // ── CANVAS: start (title shell), build, edit, read, select ──
-  const startCanvasTool: TaktTool | null = (startCanvas) ? {
-    name: "start_canvas",
-    description: "Put the answer's TITLE on the canvas immediately, before you gather — the user watches the page take shape instead of a spinner. Give a title, plus a short eyebrow kicker and a one-line lead. Returns a canvasId; pass it to build_canvas so the finished page fills this same shell.",
-    parameters: params({ title: z.string(), eyebrow: z.string().optional(), lead: z.string().optional() }),
-    execute: async (args) => {
-      const canvasId = await startCanvas(String(args.title ?? "Answer"), args.eyebrow ? String(args.eyebrow) : undefined, args.lead ? String(args.lead) : undefined);
-      return text(`Canvas started (canvasId "${canvasId}"). Gather what the page needs, then call build_canvas with this same canvasId.`);
-    },
-  } : null;
-
+  // ── CANVAS: build, edit, read, select ──
   const buildCanvasTool: TaktTool | null = (compose || spawnBuild) ? {
     name: "build_canvas",
-    description: "Compose the full answer as a designed page on the canvas from what you've gathered this turn. Give a brief naming what to show and which gathered facts/media to use. Pass the canvasId from start_canvas so it fills that shell. A composer streams the page in live.",
-    parameters: params({ brief: z.string().describe("What to show and which gathered sources to use"), canvasId: z.string().optional() }),
+    description: "Compose the full answer as a designed page on the canvas from what you've gathered this turn. The page (title included) streams in and PAINTS itself live, so call this the moment you've gathered enough — don't wait. Give a brief naming what to show and which gathered facts/media to use.",
+    parameters: params({ brief: z.string().describe("What to show and which gathered sources to use") }),
     execute: async (args) => {
       const brief = String(args?.brief ?? "").trim();
       if (!brief) return { output: "build_canvas needs a brief.", isError: true };
-      const canvasId = typeof args?.canvasId === "string" ? args.canvasId : undefined;
       const id = randomUUID();
       await emit({ type: "tool_start", id, tool: "build_canvas", summary: brief.slice(0, 60), lane: spawnBuild ? "build" : "main" });
-      if (spawnBuild) { spawnBuild(brief, canvasId); await emit({ type: "tool_done", id, detail: "building" }); return text("Building the canvas in the background — keep talking; it appears on screen shortly."); }
-      const ok = await compose!(brief, canvasId);
+      if (spawnBuild) { spawnBuild(brief); await emit({ type: "tool_done", id, detail: "building" }); return text("Building the canvas in the background — keep talking; it appears on screen shortly."); }
+      const ok = await compose!(brief);
       await emit({ type: "tool_done", id, detail: ok ? "built" : "failed" });
       return ok ? text("Built on the canvas. Reply with ONE short line pointing at it; don't restate the page.") : { output: "The canvas build produced nothing.", isError: true };
     },
@@ -424,7 +412,6 @@ export function buildTaktTools(ctx: {
 
   const gather = [searchProductTool, getMediaTool, readProfile, getPageImageTool, cropPageImage, listProductsTool, fetchUrl];
   const canvas = [
-    ...(startCanvasTool ? [startCanvasTool] : []),
     ...(buildCanvasTool ? [buildCanvasTool] : []),
     ...(editCanvasTool ? [editCanvasTool] : []),
     readCanvasTool, selectCanvasTool,

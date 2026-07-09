@@ -97,9 +97,9 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
   const viewCanvas: CanvasPart | undefined = [...(view?.assistant?.parts ?? [])].reverse().find((p): p is CanvasPart => p.kind === "canvas");
   // Is this turn building a NEW canvas that hasn't landed yet? True while streaming,
   // no canvas for THIS turn, and a build signal is present — a canvas tool is pending
-  // or a source crop has arrived. Drives the calm placeholder (vs. showing the
-  // previous, stale canvas) until the start_canvas shell appears.
-  const buildPending = (view?.assistant?.parts ?? []).some((p) => p.kind === "tool" && (p.tool === "start_canvas" || p.tool === "build_canvas" || p.tool === "edit_canvas" || p.lane === "build"));
+  // or a source crop has arrived. Drives the loading skeleton (vs. showing the
+  // previous, stale canvas) until the first canvas_delta paints in.
+  const buildPending = (view?.assistant?.parts ?? []).some((p) => p.kind === "tool" && (p.tool === "build_canvas" || p.tool === "edit_canvas" || p.lane === "build"));
   const hasBuildCrops = (view?.assistant?.parts ?? []).some((p) => p.kind === "source");
   const constructing = !!view?.assistant?.streaming && !viewCanvas && (buildPending || hasBuildCrops);
   const buildStatus = view?.assistant?.status ?? null;

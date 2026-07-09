@@ -38,9 +38,11 @@ export function Stage({
   });
 
   const reduce = useReducedMotion();
-  const showingCanvas = !empty && !constructing && !!canvas;
-  const mode: "empty" | "canvas" | "placeholder" =
-    empty ? "empty" : showingCanvas ? "canvas" : "placeholder";
+  // constructing = a build is running but its first paint hasn't landed → a
+  // full-bleed skeleton (NOT the centered text) so gather → paint is one
+  // continuous motion, never a title-then-blank jump.
+  const mode: "empty" | "canvas" | "building" | "placeholder" =
+    empty ? "empty" : constructing ? "building" : canvas ? "canvas" : "placeholder";
   const fade = { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 }, transition: { duration: reduce ? 0 : 0.18 } };
 
   return (
@@ -53,11 +55,13 @@ export function Stage({
       {liveMode && <div aria-hidden className="pointer-events-none absolute inset-0 bg-[radial-gradient(55%_45%_at_50%_28%,var(--accent-soft,rgba(120,130,255,0.1)),transparent_70%)]" />}
       {/* The canvas owns the WHOLE stage (full-bleed; .takt-page provides its own
           padding + layout). It renders OUTSIDE the crossfade so morphdom never
-          remounts. Empty/building/idle keep the calm centered layout. */}
+          remounts. */}
       {mode === "canvas" && canvas ? (
         <div className="relative w-full pb-48">
           <Canvas key={canvas.canvasId} part={canvas} chatId={chatId} productSlug={productSlug} streaming={streaming} />
         </div>
+      ) : mode === "building" ? (
+        <div className="relative w-full pb-48"><CanvasSkeleton status={buildStatus ?? null} /></div>
       ) : (
         <div className="relative mx-auto w-full max-w-3xl px-6 pb-48 pt-8">
           <AnimatePresence mode="wait" initial={false}>
@@ -69,6 +73,28 @@ export function Stage({
           </AnimatePresence>
         </div>
       )}
+    </div>
+  );
+}
+
+// Full-bleed loading skeleton shaped like a poster page (eyebrow, headline, lead,
+// a lead visual, a two-column body) using the same .takt-page grid + shimmer as
+// the real canvas — so when the first canvas_delta paints, it's a seamless
+// continuation, never a jump from a centered spinner.
+function CanvasSkeleton({ status }: { status?: string | null }) {
+  return (
+    <div className="takt-page takt-building" aria-hidden>
+      <div className="sk sk-line" style={{ width: "22%", height: 12 }} />
+      <div className="sk sk-line" style={{ width: "70%", height: 44 }} />
+      <div className="sk sk-line" style={{ width: "52%", height: 20 }} />
+      <div className="sk sk-block" style={{ height: 260 }} />
+      <div className="takt-grid takt-cols-2" style={{ display: "grid" }}>
+        <div className="sk sk-block" style={{ height: 150 }} />
+        <div className="sk sk-block" style={{ height: 150 }} />
+      </div>
+      <div className="sk sk-line" style={{ width: "84%" }} />
+      <div className="sk sk-line" style={{ width: "68%" }} />
+      {status && <div className="arc-shimmer text-[12px] font-medium text-muted-foreground" style={{ marginTop: 8 }}>{status}</div>}
     </div>
   );
 }

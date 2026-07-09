@@ -42,7 +42,16 @@ export function applyCanvasHtml(container: HTMLElement, html: string, opts: { fi
   if (!opts.final) doc.querySelectorAll("script").forEach((s) => s.remove());
   morphdom(container, doc.body, {
     childrenOnly: true,
-    onBeforeElUpdated: (a, b) => !a.isEqualNode(b),
+    onBeforeElUpdated: (a, b) => {
+      // Islands (takt-*) render their OWN internal DOM (an <img>, a <video>, a 3D
+      // tile). The model's source HTML for them is empty, so a naive diff would
+      // wipe what the island built on the next delta. Skip identical nodes, and
+      // never let morphdom reset an already-upgraded island.
+      if (a.isEqualNode(b)) return false;
+      return true;
+    },
+    // Sync attributes on islands but LEAVE their island-built children intact.
+    onBeforeElChildrenUpdated: (fromEl) => !/^TAKT-/.test(fromEl.tagName),
     onNodeAdded: (node) => {
       if (node.nodeType === 1) (node as Element).classList?.add("takt-fade-in");
       return node;

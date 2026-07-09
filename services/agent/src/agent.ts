@@ -75,11 +75,6 @@ function currentCanvas(chatId?: string): { canvasId: string; html: string } | nu
   return null;
 }
 
-// A minimal title-shell page so start_canvas shows something instantly.
-function shellHtml(title: string, eyebrow?: string, lead?: string): string {
-  return `${eyebrow ? `<p class="takt-eyebrow" data-takt-id="eyebrow">${eyebrow}</p>` : ""}<h1 data-takt-id="title">${title}</h1>${lead ? `<p class="takt-lead" data-takt-id="lead">${lead}</p>` : ""}`;
-}
-
 // Drive one chat turn: gather on the chat model, compose the canvas on the build
 // model (streamed HTML). We own the message list, tool dispatch, and SSE mapping.
 export async function runAgent(req: ChatRequest, emit: Emit, signal?: AbortSignal): Promise<void> {
@@ -107,26 +102,17 @@ export async function runAgent(req: ChatRequest, emit: Emit, signal?: AbortSigna
   const retrieved: string[] = [];
   const allowedAssets = new Set<string>();
   const gatheredImages: { data: string; mime: string }[] = [];
-  let currentCanvasId: string | undefined;
   let composedThisTurn = false;
   const question = [...req.messages].reverse().find((m) => m.role === "user")?.text ?? "";
 
-  // start_canvas: mint an id, show the title shell instantly.
-  const startCanvas = async (title: string, eyebrow?: string, lead?: string): Promise<string> => {
-    const canvasId = randomUUID().slice(0, 8);
-    currentCanvasId = canvasId;
-    await emit({ type: "canvas_start", canvasId, title });
-    await emit({ type: "canvas_end", canvasId, html: shellHtml(title, eyebrow, lead), title });
-    return canvasId;
-  };
-
-  // build_canvas: compose the full page from what was gathered this turn.
+  // build_canvas: compose the full page (title included) and stream it directly —
+  // no title shell to wipe. The worker opens the canvas and paints it in place.
   const compose = async (brief: string, canvasId?: string): Promise<boolean> => {
     if (ac.signal.aborted) return false;
     const figures = [...allowedAssets].filter((u) => !u.includes("/assets/pages/")); // embeddable crops/meshes/video
     const ok = await runCanvasWorker({
       mode: "build",
-      canvasId: canvasId ?? currentCanvasId ?? randomUUID().slice(0, 8),
+      canvasId: canvasId ?? randomUUID().slice(0, 8),
       brief, question,
       facts: retrieved.join("\n---\n").slice(0, 8000),
       figures,
@@ -149,7 +135,7 @@ export async function runAgent(req: ChatRequest, emit: Emit, signal?: AbortSigna
     return ok;
   };
 
-  const tools = buildTaktTools({ product, manuals, emit, chatId: req.chatId, context: "main", startCanvas, compose, edit });
+  const tools = buildTaktTools({ product, manuals, emit, chatId: req.chatId, context: "main", compose, edit });
   const cost = await modelCost(provider, model);
 
   try {
