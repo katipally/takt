@@ -65,6 +65,17 @@ export function Canvas({ part, chatId, productSlug, streaming }: {
   return (
     <>
       <div ref={ref} className="takt-page" />
+      {/* Build frontier — a shimmer skeleton at the growing edge while the page
+          streams, so the user SEES it's still composing (not a frozen title).
+          Sits outside the morphdom container so it animates smoothly. */}
+      {streaming && (
+        <div className="takt-building mx-auto w-full max-w-[68ch] px-[clamp(16px,4cqi,56px)] pb-12" aria-hidden>
+          <div className="sk sk-line" style={{ width: "38%" }} />
+          <div className="sk sk-block" />
+          <div className="sk sk-line" style={{ width: "86%" }} />
+          <div className="sk sk-line" style={{ width: "64%" }} />
+        </div>
+      )}
       {lightbox && <Lightbox {...lightbox} onClose={() => setLightbox(null)} />}
       {model && <ModelModal {...model} onClose={() => setModel(null)} />}
     </>

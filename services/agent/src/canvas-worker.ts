@@ -121,8 +121,15 @@ ${CANVAS_GUIDE}`;
         lastLen = html.length;
         await o.emit({ type: "canvas_delta", canvasId: o.canvasId, html });
       };
+      // NO reasoning on compose. Thinking here is a pre-write PAUSE — the model
+      // deliberates silently, then dumps the whole page at once (the user stares
+      // at the title, then the artifact appears in a burst). Minimal reasoning
+      // makes the create_canvas args start streaming immediately, so the page
+      // visibly PAINTS itself token-by-token. (reasoningEffort → OpenAI; effort
+      // stays off so Anthropic/MiniMax send no thinking params either.)
+      void effort;
       const turn = await collectTurn(
-        streamProvider(provider, apiKey ?? undefined, { model, messages, tools: [CREATE_CANVAS_TOOL], effort: o.mode === "build" ? effort : undefined, maxTokens: 16000 }, o.signal),
+        streamProvider(provider, apiKey ?? undefined, { model, messages, tools: [CREATE_CANVAS_TOOL], reasoningEffort: "minimal", maxTokens: 16000 }, o.signal),
         // swallow the worker's prose/reasoning — only the canvas reaches the user
         (e: SseEvent) => { if (e.type !== "text_delta" && e.type !== "reasoning_delta") return o.emit(e); },
         onArgDelta,
