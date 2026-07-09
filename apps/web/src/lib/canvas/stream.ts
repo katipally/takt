@@ -10,7 +10,7 @@ import DOMPurify from "dompurify";
 // draws) runs exactly once. The app CSP (connect-src 'self') is the exfiltration
 // fence for those scripts.
 
-const CUSTOM_TAGS = ["takt-cite", "takt-figure", "takt-video", "takt-model", "takt-action"];
+const CUSTOM_TAGS = ["takt-cite", "takt-figure", "takt-video", "takt-model", "takt-action", "takt-mermaid"];
 // Non-standard attributes on the islands DOMPurify would otherwise strip.
 // (data-* / class / style / src / id / href are allowed by default.)
 const EXTRA_ATTR = ["legend", "annos", "caption", "variant", "page", "product", "fignum", "value", "label", "poster", "alt", "target", "rel"];
@@ -50,8 +50,11 @@ export function applyCanvasHtml(container: HTMLElement, html: string, opts: { fi
       if (a.isEqualNode(b)) return false;
       return true;
     },
-    // Sync attributes on islands but LEAVE their island-built children intact.
-    onBeforeElChildrenUpdated: (fromEl) => !/^TAKT-/.test(fromEl.tagName),
+    // Once an island has built its own DOM (img / video / rendered mermaid SVG),
+    // leave its children alone — the model's source for it is empty, so a diff
+    // would wipe what the island rendered. Islands that haven't rendered yet
+    // (a mermaid still streaming its source text) DO get their children updated.
+    onBeforeElChildrenUpdated: (fromEl) => !(fromEl as unknown as { __islandRendered?: boolean }).__islandRendered,
     onNodeAdded: (node) => {
       if (node.nodeType === 1) (node as Element).classList?.add("takt-fade-in");
       return node;

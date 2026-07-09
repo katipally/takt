@@ -69,41 +69,9 @@ const CONVERSATION = `A few turns done right — these show the SHAPE, never reu
   Good: "25 on, 5 off is the classic — bump to 50/10 if you keep losing momentum."
   Bad:  "While I'm focused on your PlayStation 5, I can share that 25 minutes…"`;
 
-// The canvas composer's guide — how to write ONE designed HTML page. Streaming
-// first (style → HTML → script last), no gradients/shadows/blur, two font weights,
-// var(--takt-*) for all color, island custom elements for grounded media, SVG
-// craft rules. Lives ONLY in the (static, cached) canvas-worker system prompt.
-export const CANVAS_GUIDE = `You write ONE self-contained HTML fragment (no <html>/<head>/<body>) that FILLS THE WHOLE CANVAS like a designed poster or newspaper spread. STREAM IT IN ORDER: any <style> first, then the HTML, then a <script> LAST (so it never runs against half-built DOM). The design system (fonts, colors, base classes, the full-width page grid) is ALREADY loaded — don't redeclare colors or fonts; compose structure.
-
-FILL THE CANVAS — this is a wide surface, not a phone column. The layout floor already routes plain prose to a readable center column and BREAKS OUT grids/tables/figures to the full width. So USE the width:
-  • OPEN with a VISUAL. Lead with a full-bleed hero: a cropped manual figure \`<takt-figure variant="lead" …>\`, the 3D part \`<takt-model>\`, or a video clip — whatever a get_media/crop_page_image call returned this turn. A poster leads with an image, not three paragraphs. Only fall back to an eyebrow+headline lead when there is genuinely no visual.
-  • BODY in COLUMNS: put the real content in \`<div class="takt-grid takt-split">\` (or takt-cols-2/3) so it spans the full canvas — steps on one side, the key figure/3D on the other; causes as a row of cards; specs as a wide \`<table>\`. Never stack everything in one skinny column in the middle of a wide page.
-  • MULTIMODAL by default: a good answer SHOWS — at least one figure/3D/video plus structured text (steps, stats, table). Pull every relevant visual (a figure per key step, the 3D part when get_media returns a mesh, the repair clip). Text alone is a failure on this canvas.
-
-LOOK — editorial and high-craft:
-  • STRUCTURE: a short \`.takt-eyebrow\` kicker → a serif \`<h1>\` → a \`.takt-lead\` standfirst → sections with \`<h2>\`. Real hierarchy (big vs small, dense vs airy), never one flat size. Headlines are light-weight serif, never bold.
-  • RESPONSIVE: use the design-system classes + rem/%/the fluid \`.takt-grid\` (it reflows to one column when the canvas is narrow, automatically). NO hard-coded pixel widths/heights, absolute positioning, or fixed layout font-sizes. Use the accent color at most twice. Generous whitespace; vary the rhythm (a dense section beside an airy one reads designed).
-  • BLOCKS: \`.takt-card\` / \`.takt-panel\` group; \`.takt-callout\` (add \`data-tone="warn|danger|ok|tip"\`) for a warning/tip; \`.takt-stat\` (\`<div class="takt-stat"><span class="n">215 °C</span><span class="l">Nozzle</span></div>\`) for a key number; \`<blockquote>\` for a pulled line; \`<table>\` for specs.
-  • NO gradients, drop shadows, or blur — they flash during live DOM updates and read as slop. Cards are FLAT.
-
-GROUNDED MEDIA are ISLANDS (never a plain <img> for a manual figure):
-  • \`<takt-figure src="/assets/…" caption="… [p.14]"></takt-figure>\` — captioned image that bleeds into the column. Add \`variant="lead"\` for a wide hero, \`variant="inset"\` for a small figure body text wraps around. Clicking zooms it (automatic).
-  • \`<takt-model src="/assets/*.glb" caption="…"></takt-model>\` — a rotatable 3D part (clicking rotates).
-  • \`<takt-video src="/assets/…#t=start,end" caption="…"></takt-video>\` — plays just that clip.
-  • \`<takt-cite page="42" product="slug"></takt-cite>\` — a clickable "p.42" chip right after the claim; use a real page number.
-  • LABEL a figure with printed callout numbers via \`legend='[{"n":1,"label":"Idler lock","detail":"flip to open"},…]'\` (always accurate — you're naming numbers already on the image). If the figure has NO numbers, draw your own with \`annos\` (single-quoted JSON; coords are 0–1 fractions read off the grid the crop overlays): kinds box(x,y,w,h,label,tone) / arrow(x1,y1,x2,y2,label) / label(x,y,text). 2–4 marks max.
-  • Only ever use a real /assets URL a tool returned — never invent one, never a number.
-
-CHARTS / DIAGRAMS — don't draw what you can SHOW: if the manual pictures it, crop it into a \`<takt-figure>\`. DRAW an inline \`<svg>\` only to synthesize what the manual doesn't picture (a path A→B, a decision tree, a curve):
-  • \`<svg width="100%" viewBox="0 0 680 H">\` — 680 wide; compute H from the lowest element + 40; content between x=40 and x=640. Background TRANSPARENT (never a solid/black <rect> — reads as a broken box).
-  • COLOR from tokens only: text \`fill="var(--takt-fg)"\`, muted \`var(--takt-muted)"\`, primary \`var(--takt-accent)"\`, 2nd \`var(--takt-arc)"\`, borders \`var(--takt-border)"\`. Two colors max. Never hardcode hexes.
-  • Every connector <path>/<line> needs \`fill="none"\` (SVG fills black by default → blobs); one reused \`<marker id="arrow">\`; route arrows around boxes; text centered, two sizes (14/12). Max 4–5 nodes.
-
-LIVE / INTERACTIVE (calculator, configurator, toggle): plain \`<input>\`/\`<select>\`/\`<button>\` PLUS a \`<script>\` (LAST) that reads them, computes, and updates the DOM — it runs in the page, no round-trip. Compute a sensible default on load so nothing shows a bare "—".
-
-AVOID the slop tells (a design check rejects them): no indigo/violet/purple accent or purple→blue gradient (don't set accent colors at all); no emoji as icons/bullets; no filler words (seamless, leverage, robust, delve); no invented numbers; no drop shadows or colored left-borders. Every page needs real structure (grid/cards/steps/table) AND at least one grounded visual — never a wall of text.
-
-Give EACH top-level block a stable \`data-takt-id\` so the user can select and edit it later. Aim for a designed manual spread that fills the page — mostly visual + structured, with tight cited prose.`;
+// The canvas composer's design guidance now lives in the on-demand catalog
+// (services/agent/src/design-catalog.ts), loaded per-answer by the worker's
+// read_design tool — so the base prompt stays lean and the catalog can grow.
 
 /** Product-aware OR master system prompt for text chat. */
 export function buildSystemPrompt(product?: Product | null, manuals: Manual[] = []): string {

@@ -130,11 +130,15 @@ function buildLegend(items: any[]): HTMLElement {
   return ul;
 }
 
+// An island that BUILDS its replacement DOM synchronously on connect. We mark it
+// __islandRendered so morphdom (onBeforeElChildrenUpdated) leaves its internal DOM
+// alone on later stream frames — otherwise it'd re-inject the model's empty source
+// and wipe the built <img>/<video>/tile.
 function build(tag: string, fn: (el: HTMLElement) => void) {
   if (customElements.get(tag)) return;
   customElements.define(tag, class extends HTMLElement {
     private __b = false;
-    connectedCallback() { if (this.__b) return; this.__b = true; fn(this); }
+    connectedCallback() { if (this.__b) return; this.__b = true; fn(this); (this as any).__islandRendered = true; }
   });
 }
 
@@ -204,6 +208,44 @@ function defineIslands() {
     el.textContent = ""; el.appendChild(b);
     b.addEventListener("click", () => emit(el, "takt:action", { id: el.getAttribute("id") || "action", value: el.getAttribute("value") || label }));
   });
+
+  // takt-mermaid renders LATE — unlike the other islands its source is its streamed
+  // TEXT (mermaid syntax), which morphdom updates until the stream settles. So it
+  // observes its own text, debounces, and renders once the diagram is complete;
+  // only then does it mark __islandRendered (freezing the rendered SVG).
+  if (!customElements.get("takt-mermaid")) {
+    customElements.define("takt-mermaid", class extends HTMLElement {
+      private __done = false;
+      private __timer: ReturnType<typeof setTimeout> | null = null;
+      private __obs: MutationObserver | null = null;
+      connectedCallback() {
+        this.classList.add("takt-mermaid");
+        const schedule = () => { if (this.__timer) clearTimeout(this.__timer); this.__timer = setTimeout(() => void this.paint(), 320); };
+        this.__obs = new MutationObserver(schedule);
+        this.__obs.observe(this, { childList: true, characterData: true, subtree: true });
+        schedule();
+      }
+      disconnectedCallback() { this.__obs?.disconnect(); if (this.__timer) clearTimeout(this.__timer); }
+      async paint() {
+        if (this.__done) return;
+        const src = (this.textContent || "").trim();
+        if (src.length < 10 || !/\n/.test(src)) return; // wait for a complete-looking diagram
+        try {
+          const mermaid = (await import("mermaid")).default;
+          const dark = document.documentElement.classList.contains("dark");
+          mermaid.initialize({ startOnLoad: false, theme: dark ? "dark" : "neutral", securityLevel: "strict", fontFamily: "ui-sans-serif, system-ui, sans-serif" });
+          const id = "tm-" + Math.random().toString(36).slice(2);
+          const { svg } = await mermaid.render(id, src);
+          this.__done = true;
+          (this as any).__islandRendered = true;
+          this.__obs?.disconnect();
+          this.innerHTML = svg;
+        } catch {
+          // partial/invalid syntax — leave the source text; a later mutation retries
+        }
+      }
+    });
+  }
 }
 
 // ── selection: right-click a top-level [data-takt-id] block → "Select this area"

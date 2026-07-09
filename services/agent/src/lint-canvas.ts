@@ -18,8 +18,8 @@ const TRUST_GRADIENT = /linear-gradient[^;{}]{0,120}(#(6366f1|8b5cf6|a855f7|7c3a
 const AI_VOCAB = /\b(seamless(ly)?|leverage|delve|synerg\w*|cutting-edge|game-chang\w*|in today'?s (world|fast-paced|digital)|unlock (the|your) potential)\b/i;
 // emoji feature-icons/bullets — pictograph blocks only, so ✓ and → don't count.
 const EMOJI = /[\u{2600}-\u{26FF}\u{1F300}-\u{1FAFF}]/gu;
-const STRUCTURE = /<(table|ol|ul|svg|h2|h3|takt-figure|takt-model|takt-video)\b|class="[^"]*\btakt-(grid|card|panel|stat|callout|split|cols-)/i;
-const VISUAL = /<(svg|table|takt-figure|takt-model|takt-video|img)\b/i;
+const STRUCTURE = /<(table|ol|ul|svg|h2|h3|takt-figure|takt-model|takt-video|takt-mermaid)\b|class="[^"]*\btakt-(grid|card|panel|stat|callout|split|cols-)/i;
+const VISUAL = /<(svg|table|takt-figure|takt-model|takt-video|takt-mermaid|img)\b/i;
 const SVG_DARK_FILL = /<rect\b[^>]*\bfill=(["'])(#000(000)?|black)\1/i;
 
 // A connector <path> (arrow marker) with no fill:none renders as a black blob.

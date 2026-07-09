@@ -3,20 +3,43 @@ import { decodeStreamingHtml, type Product, type SseEvent } from "@takt/shared";
 import { collectTurn, type Emit } from "./turn.js";
 import { safeParseArgs } from "./turn-loop.js";
 import { resolveBuild } from "./providers.js";
-import { CANVAS_GUIDE } from "./prompt.js";
+import { moduleIndex, readDesign } from "./design-catalog.js";
 import { lintCanvas, p0, lintFeedback } from "./lint-canvas.js";
 
-const MAX_STEPS = 3;
+const MAX_STEPS = 4;
 
 // The ONE canvas composer, used by BOTH text chat (build_canvas/edit_canvas) and
-// live voice (fire-and-forget). It runs a clean-context BUILD model with a single
-// `create_canvas({html})` tool, streams the HTML page in live (canvas_delta), then
-// sanitizes + lints it and emits the authoritative canvas_end. Replaces the old
-// compose lane (agent.ts) AND the separate build subagent.
+// live voice (fire-and-forget). It runs a clean-context BUILD model that loads the
+// design modules it needs (read_design) then streams ONE `create_canvas({html})`
+// page in live (canvas_delta), sanitizes + lints it, and emits canvas_end.
+
+// Slim base prompt — the bulk lives in the on-demand design catalog so the system
+// prompt stays lean and the catalog can grow without bloating every call.
+function canvasSystemPrompt(): string {
+  return `You are Takt's canvas composer for AI TECHNICAL SUPPORT. Compose ONE self-contained HTML page (no <html>/<head>/<body>) that answers the brief, then call create_canvas exactly once. You never write prose to the user.
+
+STREAM IN ORDER: any <style> first → the HTML → any <script> LAST. The design system (fonts, colors, .takt-* classes, the page grid) is ALREADY loaded — use its classes + \`var(--takt-*)\` tokens; never redeclare colors/fonts. LOOK: clean, editorial, precise, technical; make full use of the canvas WITH breathable space; NO gradients, drop shadows, blur, emoji, or marketing filler; headlines are light-weight serif.
+
+SHOW, don't tell — pull at least one real manual figure / 3D part / video / diagram to carry the answer (use ONLY real /assets URLs a tool returned this turn; never invent one). Give each top-level block a stable \`data-takt-id\`.
+
+DESIGN MODULES — before composing, call read_design ONCE with the 2–4 modules that fit THIS answer, then build from what it returns:
+${moduleIndex()}
+e.g. "show me the part" → [layout, figures, components]; a settings/spec question → [layout, components, chart, interactive]; a troubleshooting flow → [layout, mermaid, components].`;
+}
+
+const READ_DESIGN_TOOL = {
+  name: "read_design",
+  description: "Load the design modules you need before composing the canvas. Call this ONCE with the 2–4 module names that fit this answer; it returns their guidance + component snippets.",
+  parameters: {
+    type: "object",
+    properties: { modules: { type: "array", items: { type: "string" }, description: "Module names from the list, e.g. [\"layout\",\"figures\",\"chart\"]" } },
+    required: ["modules"],
+  },
+};
 
 const CREATE_CANVAS_TOOL = {
   name: "create_canvas",
-  description: "Emit the finished canvas: ONE self-contained HTML fragment (no <html>/<head>/<body>) that fills the page. Stream style first, then the HTML, then any <script> last. This is your only tool — call it exactly once when the page is ready.",
+  description: "Emit the finished canvas: ONE self-contained HTML fragment (no <html>/<head>/<body>) that fills the page. Stream style first, then the HTML, then any <script> last. Call it exactly once when the page is ready.",
   parameters: {
     type: "object",
     properties: {
@@ -99,8 +122,7 @@ export async function runCanvasWorker(o: CanvasWorkerOpts): Promise<boolean> {
   // In edit mode, every /assets URL already on the page is allowed (reused).
   if (o.currentHtml) for (const m of o.currentHtml.matchAll(/\/assets\/[^"'?\s)]+/g)) allowed.add(m[0]);
 
-  const sys = `You are Takt's canvas composer. Compose ONE designed HTML page that answers the brief, then call create_canvas exactly once. You never write prose to the user.
-${CANVAS_GUIDE}`;
+  const sys = canvasSystemPrompt();
   const user: Message = { role: "user", text: buildUserMessage(o) };
   const seed = o.images?.length ? o.images.slice(-4) : (o.frame ? [o.frame.image] : undefined);
   if (seed) user.images = seed;
@@ -129,7 +151,7 @@ ${CANVAS_GUIDE}`;
       // stays off so Anthropic/MiniMax send no thinking params either.)
       void effort;
       const turn = await collectTurn(
-        streamProvider(provider, apiKey ?? undefined, { model, messages, tools: [CREATE_CANVAS_TOOL], reasoningEffort: "minimal", maxTokens: 16000 }, o.signal),
+        streamProvider(provider, apiKey ?? undefined, { model, messages, tools: [READ_DESIGN_TOOL, CREATE_CANVAS_TOOL], reasoningEffort: "minimal", maxTokens: 16000 }, o.signal),
         // swallow the worker's prose/reasoning — only the canvas reaches the user
         (e: SseEvent) => { if (e.type !== "text_delta" && e.type !== "reasoning_delta") return o.emit(e); },
         onArgDelta,
@@ -137,8 +159,17 @@ ${CANVAS_GUIDE}`;
       messages.push({ role: "assistant", text: turn.text, toolCalls: turn.toolCalls.length ? turn.toolCalls : undefined });
       const call = turn.toolCalls.find((t) => t.name === "create_canvas");
       if (!call) {
-        // model wrote prose instead of calling the tool — nudge once, else stop
-        if (step === 0) { messages.push({ role: "user", text: "Call create_canvas now with the finished HTML page." }); continue; }
+        // read_design → hand back the modules and let it compose next turn.
+        const designCalls = turn.toolCalls.filter((t) => t.name === "read_design");
+        if (designCalls.length) {
+          for (const dc of designCalls) {
+            const mods = safeParseArgs(dc.arguments).modules;
+            messages.push({ role: "tool", callId: dc.id, name: "read_design", result: readDesign(Array.isArray(mods) ? mods.map(String) : []) });
+          }
+          continue;
+        }
+        // wrote prose instead of a tool call — nudge once, else stop
+        if (step < 2) { messages.push({ role: "user", text: "Call read_design for the modules you need, then create_canvas with the finished page." }); continue; }
         break;
       }
       const rawHtml = String(safeParseArgs(call.arguments).html ?? "");
