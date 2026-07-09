@@ -4,13 +4,11 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "motion/react";
 import Link from "next/link";
-import { Boxes, FileText, Image as ImageIcon, Film, Network, ScrollText } from "lucide-react";
-import { Graph, type GraphProps } from "@/components/product/Graph";
+import { Boxes, FileText, Image as ImageIcon, Film, ScrollText } from "lucide-react";
 import { Model3D } from "@/components/product/Model3D";
 
-// The product's resources + the explorable "virtual product", revealed as you
-// scroll past the questions on the landing. Everything is read-only and fed by
-// /api/resources/<slug>: the knowledge graph (click a node to explore), the 3D
+// The product's resources, revealed as you scroll past the questions on the
+// landing. Everything is read-only and fed by /api/resources/<slug>: the 3D
 // parts, source manuals, image/video media, and the authored concept docs.
 
 interface Resources {
@@ -20,8 +18,6 @@ interface Resources {
   videos: { url: string; name: string }[];
   models: { url: string; name: string }[];
   concepts: { id: string; title: string; type: string }[];
-  graph: GraphProps;
-  stats: { entities: number; edges: number; procedures: number };
   counts: Record<string, number>;
 }
 
@@ -81,32 +77,16 @@ export function ResourcesSection({ slug }: { slug: string }) {
   if (isLoading) return <div className="mt-16 h-64 animate-pulse rounded-2xl border border-border bg-card" />;
   if (!data) return null;
 
-  const { manuals, images, videos, models, concepts, graph, stats } = data;
-  const hasGraph = graph.nodes.length > 0;
-  const nothing = !hasGraph && !manuals.length && !images.length && !videos.length && !models.length && !concepts.length;
+  const { manuals, images, videos, models, concepts } = data;
+  const nothing = !manuals.length && !images.length && !videos.length && !models.length && !concepts.length;
   if (nothing) return null;
 
   return (
     <div className="mt-20 flex flex-col gap-16 border-t border-border pt-12">
       <Reveal>
         <h2 className="text-[19px] font-semibold tracking-tight">Everything Takt knows about the {data.name}</h2>
-        <p className="mt-1 text-[13px] text-muted-foreground">The sources we ingested and the knowledge graph we built from them — explore it below.</p>
+        <p className="mt-1 text-[13px] text-muted-foreground">The sources we ingested — manuals, 3D parts, media, and the docs we authored from them.</p>
       </Reveal>
-
-      {/* The explorable virtual product — the knowledge graph. */}
-      {hasGraph && (
-        <Reveal>
-          <Eyebrow icon={Network}>Virtual product · knowledge graph</Eyebrow>
-          <div className="mb-3 flex flex-wrap gap-x-6 gap-y-1 text-[12px] text-muted-foreground">
-            <span><strong className="text-foreground tabular-nums">{stats.entities}</strong> parts, faults, procedures &amp; specs</span>
-            <span><strong className="text-foreground tabular-nums">{stats.edges}</strong> connections</span>
-            {stats.procedures > 0 && <span><strong className="text-foreground tabular-nums">{stats.procedures}</strong> procedures</span>}
-          </div>
-          <div className="overflow-hidden rounded-2xl border border-border bg-card">
-            <Graph props={{ ...graph, caption: "Click a node to see how it connects — the top-connected parts, faults and procedures." }} />
-          </div>
-        </Reveal>
-      )}
 
       {/* Interactive 3D parts. */}
       {models.length > 0 && (

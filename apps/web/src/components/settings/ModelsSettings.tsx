@@ -176,9 +176,9 @@ export function ModelsSettings() {
       </section>
 
       <section>
-        <h2 className="text-[15px] font-semibold">Artifact (compose) model</h2>
+        <h2 className="text-[15px] font-semibold">Canvas (compose) model</h2>
         <p className="mt-1 text-[12.5px] text-muted-foreground">
-          Takt&apos;s main job is building the designed artifact on the canvas. The <span className="font-medium text-foreground">chat model</span> (above) gathers the facts and crops the figures; this <span className="font-medium text-foreground">compose model</span> writes the page from that material and streams it. Leave it empty to use one model for both (cheapest to set up); pick a <span className="font-medium text-foreground">stronger model here</span> for better-composed artifacts while a cheap chat model does the gathering — so you only pay the strong model for the final compose.
+          Takt&apos;s main job is building the designed page on the canvas. The <span className="font-medium text-foreground">chat model</span> (above) gathers the facts and crops the figures; this <span className="font-medium text-foreground">compose model</span> writes the page from that material and streams it. Leave it empty to use one model for both (cheapest to set up); pick a <span className="font-medium text-foreground">stronger model here</span> for a better-composed canvas while a cheap chat model does the gathering — so you only pay the strong model for the final compose.
         </p>
         <div className="mt-3 flex flex-wrap items-end gap-3">
           <div>

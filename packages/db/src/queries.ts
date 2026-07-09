@@ -280,7 +280,7 @@ export function getFrequentQuestions(productId: string | null, limit = 6, minCou
       let grounded = false;
       try {
         const blocks = JSON.parse(r.content) as { type: string; tool?: string }[];
-        grounded = blocks.some((b) => b.type === "page_image" || (b.type === "tool" && /search/.test(b.tool ?? "")));
+        grounded = blocks.some((b) => b.type === "source" || (b.type === "tool" && /search/.test(b.tool ?? "")));
       } catch { /* skip */ }
       if (grounded) firstByChat.set(r.chatId, { text: entry?.text ?? "", at: entry?.at ?? r.createdAt, grounded: true });
     }

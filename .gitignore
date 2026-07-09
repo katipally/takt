@@ -16,25 +16,13 @@ out
 # private notes — local only, never committed or uploaded
 *.local.md
 
-# generated data. The RUNTIME db holds the encrypted provider key + chat
-# history, so it stays out of the repo. We DO commit a key-free pre-seeded
-# template (data/seed.db) plus the static page/hero images, so a fresh clone
-# runs with zero seeding (connection.ts copies seed.db -> takt.db on first boot).
-# Rebuild the template after re-seeding with scripts/bake-seed-db.sh.
+# Everything under data/ is machine-local and regenerable via `pnpm ingest
+# <folder>`: the runtime DB (with your encrypted provider key + chats), the
+# ingested product bundles (markdown + compiled index + media), rendered pages,
+# and heroes. The repo ships an EMPTY catalog — a fresh clone ingests its own
+# products (connection.ts creates an empty takt.db from the schema on first boot;
+# no committed seed.db needed).
 /data/*
-!/data/seed.db
-!/data/pages/
-!/data/heroes/
-# Per-product knowledge — OKF Profile bundles (readable markdown + media),
-# READ-ONLY to the chat agent. Committed like pages/heroes so a fresh clone + the
-# HF image ship with them. The agent greps/reads these directly (no vector index).
-!/data/products/
-# never commit: runtime db, its sidecars, the encryption key, or ingest inputs
-/data/takt.db
-/data/takt.db-wal
-/data/takt.db-shm
-/data/.enc-key
-/data/pdfs/
 
 # the full walkthrough is 144MB (over GitHub's 100MB limit) — it lives on Google
 # Drive, linked from the README. The short feature clips are committed and embedded.

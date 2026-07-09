@@ -296,7 +296,7 @@ function LiveSessionCard({ turns, live, selectedUserId, onSelectTurn, onOpenSour
         </span>
         <span className="min-w-0 flex-1">
           <span className="block text-[12.5px] font-medium text-foreground">{live ? "Live session · active" : "Live session"}</span>
-          <span className="block text-[11px] text-muted-foreground">{turns.length} turn{turns.length === 1 ? "" : "s"}{artifactCount ? ` · ${artifactCount} artifact${artifactCount === 1 ? "" : "s"}` : ""}</span>
+          <span className="block text-[11px] text-muted-foreground">{turns.length} turn{turns.length === 1 ? "" : "s"}{artifactCount ? ` · ${artifactCount} canvas${artifactCount === 1 ? "" : "es"}` : ""}</span>
         </span>
         <ChevronRight className={cn("size-3.5 shrink-0 text-muted-foreground transition", expanded && "rotate-90")} />
       </button>
