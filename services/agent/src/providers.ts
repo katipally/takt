@@ -79,26 +79,34 @@ export function resolveChat(): ResolvedChat {
 }
 
 // Which provider + model powers LIVE voice. Its own settings so live can run a
-// fast, low-latency model (Haiku / Gemini Flash / Groq …) independent of the
-// heavier chat model. Falls back to the chat provider+model when unset.
+// fast, low-latency model independent of the heavier chat model. When unset, we
+// prefer a keyed provider whose fast live model can SEE (camera-first) — so the
+// camera works even when the chat model can't take images (e.g. MiniMax over its
+// Anthropic-compat endpoint). Falls back to the chat provider when none can see.
+function liveProviderId(): string {
+  const explicit = getSetting("liveProviderId");
+  if (explicit && providerInfo(explicit) && getProviderKey(explicit)) return explicit;
+  // camera-first: a keyed provider whose default live model has vision.
+  for (const id of ["anthropic", "openai", "minimax"]) {
+    if (!getProviderKey(id)) continue;
+    const rec = liveRecsFor(id).find((r) => r.default) ?? liveRecsFor(id)[0];
+    if (rec?.vision) return id;
+  }
+  return resolveChatProviderId();
+}
 export function resolveLive(): ResolvedChat {
-  const liveProviderId = getSetting("liveProviderId");
-  const liveModel = getSetting("liveModel");
-  const providerId = (liveProviderId && providerInfo(liveProviderId)) ? liveProviderId : resolveChatProviderId();
+  const providerId = liveProviderId();
   const provider = providerInfo(providerId) ?? BUILTIN_PROVIDERS[0]!;
-  // When live isn't explicitly configured, prefer the provider's curated FAST
-  // live model (low time-to-first-token, reliable tool calls) over inheriting
-  // the chat model — a heavy/reasoning chat model (e.g. GPT-5) thinks silently
-  // then bursts its whole reply, which reads as "talks only after it finishes".
-  // The user can still pick any live model in Settings → Models.
+  // The explicit live model applies only when the resolved provider IS the one the
+  // user configured (else the camera-first switch would pair a model with the wrong
+  // provider). Otherwise use the provider's curated FAST live rec — low
+  // time-to-first-token, reliable tool calls, and vision when the camera's on.
   const recs = liveRecsFor(provider.id);
   const rec = recs.find((r) => r.default) ?? recs[0];
-  return {
-    provider,
-    model: liveModel || rec?.model || getSetting("chatModel") || defaultModel(provider.id),
-    apiKey: getProviderKey(provider.id),
-    effort: undefined, // live always drives lowest effort in the turn runner
-  };
+  const explicitProvider = getSetting("liveProviderId");
+  const liveModel = getSetting("liveModel");
+  const model = (explicitProvider === providerId && liveModel) ? liveModel : (rec?.model || defaultModel(provider.id));
+  return { provider, model, apiKey: getProviderKey(provider.id), effort: undefined };
 }
 
 // Which provider + model powers the canvas worker (build_canvas). Its own

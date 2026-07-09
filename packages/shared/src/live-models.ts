@@ -20,9 +20,13 @@ export const LIVE_MODEL_RECS: Record<string, LiveModelRec[]> = {
     { model: "gpt-5-mini", label: "GPT-5 mini", note: "fast, multimodal, cheap", vision: true, default: true },
     { model: "gpt-5-nano", label: "GPT-5 nano", note: "lowest latency", vision: true },
   ],
+  // MiniMax runs over its Anthropic-compatible endpoint, which does NOT accept
+  // image input (M3 400s on an image, M2.5 says "no image") — so live camera
+  // vision must NOT go to MiniMax. Text/voice-only here; for the camera the live
+  // resolver prefers a vision-capable provider (OpenAI / Anthropic).
   minimax: [
-    { model: "MiniMax-M2.5-highspeed", label: "M2.5 highspeed", note: "fast, vision, strong tool use", vision: true, default: true },
-    { model: "MiniMax-M3", label: "M3", note: "1M context, vision", vision: true },
+    { model: "MiniMax-M2.5-highspeed", label: "M2.5 highspeed", note: "fast, strong tool use (voice only — no camera)", vision: false, default: true },
+    { model: "MiniMax-M3", label: "M3", note: "1M context (voice only — no camera)", vision: false },
   ],
 };
 
@@ -40,7 +44,7 @@ export function modelVision(providerId: string, model: string): boolean {
   switch (providerId) {
     case "anthropic": return true;                 // all current Claude models see
     case "openai": return !/^(o1-mini|o3-mini)$/i.test(model); // gpt-5 / 4o / o-series see
-    case "minimax": return /m3|m2\.5/i.test(model); // M3 + M2.5 see; M2 is text-only
+    case "minimax": return false;                  // no image input over the Anthropic-compat endpoint
     default: return true;
   }
 }

@@ -51,6 +51,11 @@ export class LiveTurnRunner {
     const canSee = modelVision(provider.id, model);
     const imgs = canSee && frames.length ? frames : undefined;
     this.messages.push({ role: "user", text: userText, images: imgs });
+    // Keep camera frames only on the 2 most recent user turns — the model "sees
+    // live" from the current view, and a long call doesn't balloon with every past
+    // frame (cost + latency). Older turns keep their text.
+    const withImgs = this.messages.filter((m) => m.role === "user" && m.images?.length);
+    for (const m of withImgs.slice(0, -2)) if (m.role === "user") m.images = undefined;
 
     // Ground the live build like chat: accumulate the facts + /assets URLs this
     // turn gathered (search_product, crop_page_image, get_media) and hand them to

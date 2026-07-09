@@ -155,7 +155,7 @@ export function useLiveSession(chatId: string, productSlug: string | null) {
         onNeedFrame: async (reqId) => {
           const camera = cam.current;
           if (!camera || !useLiveStore.getState().cameraOn) { client.current?.frameResponse(reqId); return; }
-          const jpeg = await camera.captureOne();
+          const jpeg = await camera.captureHiRes();
           client.current?.frameResponse(reqId);   // server arms for the look frame FIRST
           if (jpeg) client.current?.sendFrame(jpeg);
         },
