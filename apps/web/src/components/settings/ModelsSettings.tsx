@@ -35,7 +35,7 @@ function ProviderKey({ kind }: { kind: string }) {
     <div className="mt-3 flex flex-wrap items-center gap-2">
       <div className="flex flex-1 items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-[12.5px] text-muted-foreground">
         {row?.hasKey
-          ? <><Check className="size-3.5 text-[var(--takt-success,#16a34a)]" /> Key set · ••••{row.keyLast4}</>
+          ? <><Check className="size-3.5 text-success" /> Key set · ••••{row.keyLast4}</>
           : "No key set"}
       </div>
       <input value={key} onChange={(e) => setKey(e.target.value)} type="password" name={`${kind}-api-key`}
