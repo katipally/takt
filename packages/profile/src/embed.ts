@@ -12,7 +12,9 @@ import { indexDir } from "./index-store";
 // loaded ONCE per process and cached — the old design JSON-parsed and linearly
 // rescanned a 15 MB file on every query, which was the single worst runtime cost.
 
-const MODEL = process.env.TAKT_EMBED_MODEL ?? "Xenova/all-MiniLM-L6-v2"; // 384-dim
+// Must match .env.example's TAKT_EMBED_MODEL — the ingest-time and query-time
+// embedder MUST be the same model or the vectors are meaningless. Both are 384-dim.
+const MODEL = process.env.TAKT_EMBED_MODEL ?? "Xenova/bge-small-en-v1.5"; // 384-dim
 export const EMBED_DIM = 384;
 
 interface VectorStore {

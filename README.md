@@ -3,11 +3,12 @@
 **An AI that actually understands your product — and answers, shows, and talks like it.**
 
 Takt turns a product's scattered documentation — manuals, spec sheets, diagrams,
-photos, video, and 3D models — into a **knowledge graph** an AI can search, cite, and
-reason over. Ask it anything in chat or by voice; it answers grounded in the real docs,
-cites the exact page, and composes a **designed, full-page answer** — cropped and
-annotated figures, the interactive 3D part, specs, and step-by-step guides — when a
-picture beats a paragraph.
+photos, video, and 3D models — into **captioned markdown an AI can search, cite, and
+reason over**, plus a flat index of every figure, 3D part, and video clip. Ask it
+anything in chat or by voice; it answers grounded in the real docs, cites the exact
+page, and composes a **designed, full-page answer** — cropped and annotated figures,
+the interactive 3D part, specs, and step-by-step guides — when a picture beats a
+paragraph.
 
 ![Takt answering a grounded, cited question — 25% duty cycle at 200A / 240V, cited to p.7 and p.19](docs/media/hero.png)
 
@@ -19,9 +20,10 @@ yourself:
 
 > Built around one idea most assistants get wrong: product knowledge should stay
 > **human- and AI-readable** — plain markdown you can open and edit is the source of
-> truth. From it Takt compiles a transparent, regenerable **knowledge graph + search
-> index** (parts, faults, procedures, specs and how they connect), so answers are
-> grounded in the product's real structure, not a black-box embedding blob.
+> truth. From it Takt compiles a transparent, regenerable **search index + media
+> index** (vision captions inlined next to their page images, every figure/part/clip
+> catalogued), so answers are grounded in the product's real docs, not a black-box
+> embedding blob.
 
 ---
 
@@ -34,10 +36,11 @@ yourself:
 - **Understands images, not just text.** A vision pass reads every page — transcribing
   tables, describing diagrams, and capturing what each figure answers — so image-only
   content becomes fully searchable.
-- **Designs the answer, full-page.** The canvas isn't a wall of text — Takt composes an
-  editorial, full-bleed page (headline, cropped and *annotated* figures, the interactive
-  3D part, spec tables, step-by-step guides, live calculators) in a sandboxed frame, held
-  to a consistent design system by a built-in anti-slop check.
+- **Designs the answer, full-page.** The canvas isn't a wall of text — Takt writes a
+  raw HTML page (headline, cropped and *annotated* figures, the interactive 3D part, spec
+  tables, step-by-step guides, live calculators), streamed token-by-token and rendered
+  directly in the app (no iframe), held to a consistent design system by a built-in
+  anti-slop check.
 - **Talks.** On-device voice mode: speak to it, it speaks back, and with the camera on it
   can look at what you're looking at.
 - **Asks before guessing.** When a choice would change the answer, it asks a short
@@ -52,53 +55,63 @@ yourself:
 
 ---
 
-## The idea: markdown you own + a graph compiled from it
+## The idea: markdown you own + an index compiled from it
 
 Each product's knowledge lives in a **Profile** — a folder of
 [OKF](https://okf.md/)-style markdown (`data/products/<slug>/`), one concept per source,
 with the vision captions inlined next to their page images. It's **canonical and
-human-editable**: open a `.md`, fix a fact, rebuild the index, and it's live.
+human-editable**: open a `.md`, fix a fact, re-ingest, and it's live.
 
-From that markdown Takt compiles a **PKB** (`.pkb/`) — a regenerable index, never the
-source of truth:
+From that markdown Takt compiles an index under `.index/` — a regenerable artifact, never
+the source of truth:
 
 ```
-graph.json    → the knowledge graph: parts, faults, procedures, specs + how they
-                connect, each tied to its media (a page crop, a 3D part, a video clip)
-chunks.json   → text units for lexical + semantic search
-vectors.json  → local embeddings (Xenova MiniLM, no API key)
+chunks.json        → text units for lexical + semantic search
+vectors.bin        → local embeddings (Xenova MiniLM, 384-dim, no API key), a flat
+                     Float32 array loaded into memory once
+vectors.meta.json  → the sidecar for vectors.bin (model, dim, ids, kinds)
+media.json         → a flat media index: every page, 3D mesh, video clip, and image
+                     with its /assets URL + caption
 ```
 
-Retrieval is **hybrid**: traverse the graph from the entity the question is about, blend
-in semantic search for symptoms described in the user's own words, and fall back to grep
-for exact codes and part numbers. It stays **transparent and regenerable** — delete the
-`.pkb` and rebuild it (`pnpm pkb:build <slug>`) any time; a markdown-only product still
-answers via grep. See [docs/architecture.md](docs/architecture.md).
+Retrieval is **hybrid**: semantic search over the chunks blended with a lexical grep for
+exact codes and part numbers (`search_product`), plus a cosine scan of the media index for
+the right figure/part/clip (`get_media`). It stays **transparent and regenerable** — delete
+the `.index/` and re-ingest any time; a markdown-only product still answers via grep. See
+[docs/architecture.md](docs/architecture.md).
 
 ---
 
 ## Run it
 
-**Hosted:** open the [live Space](https://yash3471-takt.hf.space), go to
-**Settings → Providers**, paste your own Anthropic API key, and start asking. (A free
-Space sleeps when idle, so the first request may take ~30–60s to wake.)
+**Hosted:** if you have a live Space, open it, go to **Settings → Providers**, paste your
+own API key (Anthropic, OpenAI, or MiniMax), and start asking. (A free Space sleeps when
+idle, so the first request may take ~30–60s to wake. See
+[docs/hosting.md](docs/hosting.md) to deploy your own.)
 
 **Local**, in under two minutes:
 
 ```bash
 git clone <this-repo> && cd takt
-cp .env.example .env          # optional: put ANTHROPIC_API_KEY here for CLI ingest
+cp .env.example .env          # add one of ANTHROPIC_/OPENAI_/MINIMAX_API_KEY for ingest
 pnpm install
 pnpm dev                      # web on :3000, agent on :8787
 ```
 
-Open http://localhost:3000, pick a product, and ask. There's no seeding step — a key-free
-catalog (`data/seed.db`), the rendered manual pages, and each product's Profile + compiled
-`.pkb` (`data/products/`) ship in the repo and load on first boot. It works offline out of
-the box (grep + the prebuilt knowledge graph); semantic search downloads a small local
-embedding model on first use (no API key) and quietly falls back to lexical if it can't.
+Open http://localhost:3000. A fresh clone ships with an **empty catalog** — the runtime DB
+(`data/takt.db`) is created from the schema on first boot — so your first step is to add a
+product:
 
-Questions to try (Vulcan OmniPro 220 welder):
+```bash
+pnpm ingest ./path/to/product-folder
+```
+
+Drop one folder holding everything (PDF manuals, STL 3D models, a walkthrough video,
+images), and Takt does the rest (see [Add a product](#add-a-product)). Once it's in, pick
+it in the picker and ask. Semantic search downloads a small local embedding model on first
+use (no API key) and quietly falls back to lexical grep if it can't.
+
+Questions to try, once you've ingested a welder manual:
 
 - *"What's the duty cycle for MIG welding at 200A on 240V?"*
 - *"I'm getting porosity in my flux-cored welds. What should I check?"*
@@ -110,18 +123,27 @@ Questions to try (Vulcan OmniPro 220 welder):
 
 ## Add a product
 
-Upload its manuals — plus source URLs, 3D part models (`.stl`), and a walkthrough video —
-in-app (**Settings → Products**). Takt renders the pages, reads them with vision, writes
-the Profile, builds the knowledge graph, and the product shows up in the picker
-immediately (with its resources + explorable graph on the landing page). Or from the CLI:
+One fully-automatic command. Drop **one folder** holding everything — PDF manuals, STL 3D
+models (in subsystem subfolders), a walkthrough video, images, gcode — and point ingest at
+it:
 
 ```bash
-pnpm ingest --product <slug> --name "<Name>" --manufacturer "<Maker>" \
-  --dir ./path/to/pdfs --models ./stls --video ./walkthrough.mp4 \
-  --hero ./photo.webp --model gpt-5-mini
+pnpm ingest ./path/to/product-folder
 ```
 
-Full details in [docs/adding-a-product.md](docs/adding-a-product.md).
+It auto-detects each file type, **vision-detects the product identity** (name, maker,
+summary from the manual cover), renders and captions every page, authors the Profile
+markdown, and builds the search + media index — so runtime needs zero processing. Override
+anything it guesses with optional flags:
+
+```bash
+pnpm ingest ./path/to/product-folder \
+  --name "<Name>" --manufacturer "<Maker>" --summary "<one line>" \
+  --hero ./photo.webp --provider openai --model gpt-5-mini
+```
+
+The product shows up in the picker immediately — no redeploy. Full details in
+[docs/adding-a-product.md](docs/adding-a-product.md).
 
 ---
 
@@ -133,16 +155,16 @@ A pnpm monorepo:
 |---|---|
 | `apps/web` | Next.js UI + API routes |
 | `services/agent` | the agent loop, tools, and live-voice WebSocket (Hono) |
-| `pipeline/ingest` | offline loader: docs → Profile + PKB (render → vision-caption → markdown → extract graph + embeddings; fold in 3D/video) |
+| `pipeline/ingest` | offline loader: one folder → Profile + index (render → vision-caption → markdown → chunks + embeddings + media index; fold in 3D/video) |
 | `packages/db` | SQLite metadata + connection |
-| `packages/harness` | LLM provider adapters (Anthropic / OpenAI / Google) |
-| `packages/profile` | the OKF Profile store + the compiled PKB (graph, chunks, embeddings) + hybrid retrieval |
-| `packages/shared` | shared types + SSE / UI-surface (Page) specs |
+| `packages/harness` | LLM provider adapters (Anthropic / OpenAI / MiniMax) |
+| `packages/profile` | the OKF Profile store + the compiled index (chunks, embeddings, media) + hybrid retrieval |
+| `packages/shared` | shared types + the SSE protocol |
 
 The SQLite database holds only metadata + app state (catalog, chats); the product
-knowledge is the markdown + compiled `.pkb` in `data/products/`. Full architecture and the SSE
-protocol are in [docs/architecture.md](docs/architecture.md); hosting on a free Hugging
-Face Space is in [docs/hosting.md](docs/hosting.md).
+knowledge is the markdown + compiled `.index/` in `data/products/`. Full architecture and
+the SSE protocol are in [docs/architecture.md](docs/architecture.md); hosting on a free
+Hugging Face Space is in [docs/hosting.md](docs/hosting.md).
 
 ---
 
