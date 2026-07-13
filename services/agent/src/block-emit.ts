@@ -44,6 +44,13 @@ export function foldBlock(blocks: MessageBlock[], e: SseEvent): void {
       else blocks.push({ type: "canvas", canvasId: e.canvasId, title: e.title, html: e.html });
       break;
     }
+    case "canvas_error": {
+      // Build failed — drop the empty canvas block so a reload never shows a
+      // blank stage. The chat answer remains.
+      const i = blocks.findIndex((b) => b.type === "canvas" && b.canvasId === e.canvasId);
+      if (i !== -1) blocks.splice(i, 1);
+      break;
+    }
     case "ask_user": blocks.push({ type: "ask_user", askId: e.askId, questions: e.questions }); break;
     case "ask_answer": {
       const a = blocks.find((b) => b.type === "ask_user" && b.askId === e.askId);

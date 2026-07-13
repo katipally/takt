@@ -22,7 +22,6 @@ async function captionCost(provider: any, model: string): Promise<{ input: numbe
 }
 import { runAgent } from "./agent.js";
 import { resolveAnswers } from "./pending.js";
-import { attachLiveWs } from "./live/ws.js";
 import type { Server } from "node:http";
 
 loadEnv();
@@ -167,7 +166,6 @@ app.post("/ingest", async (c) => {
 
 const port = Number(process.env.AGENT_PORT ?? 8787);
 const server = serve({ fetch: app.fetch, port }) as unknown as Server;
-const wss = attachLiveWs(server); // live voice+vision on ws://…/live
 console.log(`▸ Takt agent service listening on http://localhost:${port}`);
 
 // A clear message on a busy port instead of an unhandled-'error' crash, and a
@@ -181,8 +179,6 @@ server.on("error", (e: NodeJS.ErrnoException) => {
 let closing = false;
 function shutdown() {
   if (closing) return; closing = true;
-  for (const c of wss.clients) { try { c.close(); } catch { /* */ } }
-  wss.close();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 1500).unref(); // don't hang on a stuck socket
 }

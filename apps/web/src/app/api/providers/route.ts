@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { listProviders, createProvider, updateProvider } from "@takt/db";
 import { BUILTIN_PROVIDERS } from "@takt/harness";
+import { forbidden, isAdmin } from "@/lib/admin-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,6 +15,7 @@ export function GET() {
 // Upsert a key for a provider by its registry id (kind). Creates the DB row on
 // first use; the first provider configured becomes the default.
 export async function POST(req: Request) {
+  if (!(await isAdmin())) return forbidden();
   const { kind, apiKey } = (await req.json()) as { kind?: string; apiKey?: string };
   const info = BUILTIN_PROVIDERS.find((p) => p.id === kind);
   if (!kind || !info) return NextResponse.json({ error: "Unknown provider." }, { status: 400 });

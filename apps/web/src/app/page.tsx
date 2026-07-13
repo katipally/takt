@@ -13,14 +13,11 @@ import { STARTERS } from "@/lib/starters";
 import { spring, easeOut } from "@/lib/motion";
 import { Wordmark } from "@/components/brand/Wordmark";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
-import { SettingsModal } from "@/components/settings/SettingsModal";
-import { useUi } from "@/lib/uiStore";
 import { ResourcesSection } from "@/components/product/ResourcesSection";
 import { cn } from "@/lib/cn";
 
 export default function Home() {
   const { data: products = [], isLoading } = useQuery({ queryKey: ["products"], queryFn: api.products });
-  const openSettings = useUi((s) => s.openSettings);
   const [active, setActive] = useState(0);
   // The "+ Add product" pill already signals more can be uploaded, so show each
   // product once (no duplicate pill for a single-product catalog).
@@ -33,9 +30,9 @@ export default function Home() {
         <Link href="/" className="transition hover:opacity-70"><Wordmark size="md" /></Link>
         <div className="flex items-center gap-1">
           <ThemeToggle />
-          <button onClick={() => openSettings("models")} className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-muted-foreground transition hover:bg-foreground/[0.06] hover:text-foreground">
-            <Settings className="size-4" /> Settings
-          </button>
+          <Link href="/admin" className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-muted-foreground transition hover:bg-foreground/[0.06] hover:text-foreground">
+            <Settings className="size-4" /> Admin
+          </Link>
         </div>
       </header>
 
@@ -46,18 +43,16 @@ export default function Home() {
       ) : (
         <Showcase products={display} active={active} setActive={setActive} product={product!} />
       )}
-      <SettingsModal />
     </main>
   );
 }
 
 function AddProductPill() {
-  const openSettings = useUi((s) => s.openSettings);
   return (
-    <button onClick={() => openSettings("products")} title="Add a product"
+    <Link href="/admin" title="Add a product (admin)"
       className="flex items-center gap-1.5 rounded-full border border-dashed border-border-heavy px-3 py-2.5 text-[13px] text-muted-foreground transition hover:border-foreground/30 hover:text-foreground">
       <Plus className="size-4" /> Add product
-    </button>
+    </Link>
   );
 }
 
@@ -203,15 +198,14 @@ function AskBar({ onAsk }: { onAsk: (q: string) => void }) {
 }
 
 function EmptyState() {
-  const openSettings = useUi((s) => s.openSettings);
   return (
     <div className="mt-10 max-w-xl">
       <h1 className="text-[24px] font-semibold tracking-tight">No products yet</h1>
-      <p className="mt-2 text-[14px] text-muted-foreground">Add a product by uploading its manuals — Takt indexes them and it shows up here instantly.</p>
-      <button onClick={() => openSettings("products")}
-        className="mt-4 flex items-center gap-1.5 rounded-full bg-foreground px-4 py-2.5 text-[13px] font-medium text-background transition hover:opacity-90">
+      <p className="mt-2 text-[14px] text-muted-foreground">Add a product by uploading its manuals in the admin console — Takt indexes them and they show up here.</p>
+      <Link href="/admin"
+        className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-foreground px-4 py-2.5 text-[13px] font-medium text-background transition hover:opacity-90">
         <Plus className="size-4" /> Add product
-      </button>
+      </Link>
       <p className="mt-6 text-[12.5px] text-muted-foreground">Or from the command line:</p>
       <pre className="mt-2 overflow-x-auto rounded-xl border border-border bg-surface p-4 font-mono text-[12px] text-foreground takt-scroll">pnpm ingest --product my-product --name &quot;My Product&quot; --dir ./my-pdfs --url https://…</pre>
     </div>

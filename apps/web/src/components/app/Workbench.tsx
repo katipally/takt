@@ -12,16 +12,13 @@ import { Stage } from "@/components/stage/Stage";
 import { FloatingComposer } from "@/components/stage/FloatingComposer";
 import { StatusBar } from "@/components/stage/StatusBar";
 import { ProcessRail } from "@/components/rail/ProcessRail";
-import { LiveDock } from "@/components/live/LiveDock";
 import { SourceModal } from "@/components/canvas/SourceModal";
 import { AskModal } from "@/components/chat/AskModal";
-import { SettingsModal } from "@/components/settings/SettingsModal";
 import { Wordmark } from "@/components/brand/Wordmark";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import type { CanvasPart } from "@/lib/chatStore";
 import { useWorkbench } from "@/hooks/useWorkbench";
 import { useUi } from "@/lib/uiStore";
-import { useLiveStore } from "@/lib/live/liveStore";
 import { STARTERS } from "@/lib/starters";
 import { quick } from "@/lib/motion";
 import { cn } from "@/lib/cn";
@@ -33,8 +30,7 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
   const heading = productName ?? (isMaster ? "Takt" : "");
   const empty = wb.messages.length === 0;
   const prompts = starters?.length ? starters : STARTERS;
-  const { sidebarCollapsed, toggleSidebar, railOpen, toggleRail, liveOpen, setLiveOpen, railWidth, setRailWidth, sidebarWidth, setSidebarWidth } = useUi();
-  const liveActive = useLiveStore((s) => s.active);
+  const { sidebarCollapsed, toggleSidebar, railOpen, toggleRail, railWidth, setRailWidth, sidebarWidth, setSidebarWidth } = useUi();
   const reduce = useReducedMotion();
   const [drawerOpen, setDrawerOpen] = useState(false); // mobile sidebar
   const [sheetOpen, setSheetOpen] = useState(false);    // mobile activity sheet
@@ -198,12 +194,8 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
           </div>
         </div>
 
-        {/* The Stage is ALWAYS mounted — even during a live call, so concept
-            visuals render live. In live mode it shows visuals only (no transcript).
-            The composer stays visible under the setup modal, then MORPHS into the
-            voice bar once the call is live (shared layoutId="takt-dock"). */}
         <Stage
-          empty={empty && !liveOpen}
+          empty={empty}
           canvas={canvas}
           chatId={wb.chatId}
           productSlug={slug}
@@ -216,13 +208,10 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
             : "Ask anything — answers are grounded in the manual, cited to the page, and designed when words aren't enough."}
           starters={prompts}
           onStarter={send}
-          liveMode={liveOpen}
         />
-        {/* Composer shows until the call goes live; it morphs into the voice bar. */}
-        {!liveActive && (
+        {
           <FloatingComposer onSend={sendFromComposer} onStop={wb.stop} isStreaming={wb.isStreaming}
-            onOpenLive={() => setLiveOpen(true)}
-            above={!wb.ask && !liveOpen ? (
+            above={!wb.ask ? (
               <div className="flex flex-col gap-1.5">
                 {selection && (
                   <div className="flex items-center gap-1.5 self-start rounded-full border border-accent/45 bg-accent-soft/50 py-1 pl-2.5 pr-1.5 text-[12px]">
@@ -236,11 +225,7 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
                 <StatusBar node={latest?.assistant} streaming={wb.isStreaming} todos={wb.todos} />
               </div>
             ) : undefined} />
-        )}
-        {/* Closing the call just stops live (leak-free teardown in useLiveSession)
-            and stays in the SAME chat — the artifact it produced remains on the
-            canvas. `follow()` snaps the stage to the latest answer. */}
-        {liveOpen && <LiveDock key={wb.chatId} chatId={wb.chatId} productSlug={slug} onExit={() => { setLiveOpen(false); follow(); }} />}
+        }
 
         <AnimatePresence>
           {wb.ask && <AskModal key="ask" ask={wb.ask} onSubmit={wb.submitAsk} onCancel={wb.cancelAsk} />}
@@ -309,7 +294,6 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
 
       <SourceModal source={wb.source} onClose={wb.closeSource}
         onNavigate={(p) => wb.openCitation(p, wb.source?.manualKind, wb.source?.productSlug)} />
-      <SettingsModal />
     </div>
   );
 }

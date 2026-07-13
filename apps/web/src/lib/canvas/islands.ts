@@ -7,7 +7,6 @@
 // CustomEvent contract (all bubble + composed, dispatched at document):
 //   takt:cite     {page:number, product:string|null}
 //   takt:lightbox {src:string, caption:string}
-//   takt:model    {src:string, caption:string}
 //   takt:action   {id:string, value:string}
 //   takt:select   {id:string, text:string}   (right-click → "Select this area")
 
@@ -15,6 +14,41 @@ const SVGNS = "http://www.w3.org/2000/svg";
 
 function emit(el: Element, type: string, detail: unknown) {
   el.dispatchEvent(new CustomEvent(type, { detail, bubbles: true, composed: true }));
+}
+
+// Lazy-load <model-viewer> (three.js wrapper) once — shared by every takt-model
+// in the canvas. Idempotent: the custom element registers globally on first load.
+let modelViewerLoad: Promise<unknown> | null = null;
+function ensureModelViewer(): Promise<unknown> {
+  if (!modelViewerLoad) modelViewerLoad = import("@google/model-viewer").catch(() => null);
+  return modelViewerLoad;
+}
+
+// STL→GLB parts carry NO color (STL is geometry-only, no UVs), so ingest bakes one
+// flat grey material. Give each such part a distinct, attractive color at render
+// time — REAL colored/textured models (a baseColorTexture, or a non-default factor)
+// are left exactly as authored. Deterministic per part so a model keeps its color.
+const STL_DEFAULT_GREY: [number, number, number] = [0.33, 0.35, 0.4];
+const PART_PALETTE: [number, number, number][] = [
+  [0.80, 0.33, 0.09], [0.10, 0.42, 0.45], [0.30, 0.34, 0.58], [0.58, 0.20, 0.26],
+  [0.26, 0.42, 0.24], [0.46, 0.27, 0.50], [0.20, 0.30, 0.40], [0.68, 0.50, 0.12],
+];
+function hashStr(s: string): number { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h; }
+function isDefaultGrey(f: number[] | undefined): boolean {
+  return !!f && STL_DEFAULT_GREY.every((c, i) => Math.abs((f[i] ?? 0) - c) < 0.02);
+}
+function colorizeFlatMaterials(mv: any, key: string): void {
+  try {
+    const mats = mv?.model?.materials ?? [];
+    const color = PART_PALETTE[hashStr(key) % PART_PALETTE.length]!;
+    for (const m of mats) {
+      const pbr = m?.pbrMetallicRoughness;
+      if (!pbr) continue;
+      const textured = !!(pbr.baseColorTexture && pbr.baseColorTexture.texture);
+      // Only recolor OUR flat grey default; respect real textures/authored colors.
+      if (!textured && isDefaultGrey(pbr.baseColorFactor)) pbr.setBaseColorFactor([...color, 1]);
+    }
+  } catch { /* scene-graph API unavailable — leave as-is */ }
 }
 
 function toneColor(t?: string) {
@@ -191,14 +225,38 @@ function defineIslands() {
 
   build("takt-model", (el) => {
     const src = el.getAttribute("src"); if (!src) return;
-    const cap = el.getAttribute("caption") || "3D part";
-    const t = document.createElement("div"); t.className = "takt-model-tile";
-    const badge = document.createElement("span"); badge.className = "badge"; badge.textContent = "3D model";
-    const capEl = document.createElement("span"); capEl.className = "cap"; capEl.textContent = cap;
-    const hint = document.createElement("span"); hint.className = "hint"; hint.textContent = "Click to rotate";
-    t.appendChild(badge); t.appendChild(capEl); t.appendChild(hint);
-    el.textContent = ""; el.appendChild(t);
-    t.addEventListener("click", () => emit(el, "takt:model", { src, caption: cap }));
+    const cap = el.getAttribute("caption") || "";
+    el.textContent = "";
+    // Render the interactive 3D viewer INLINE (drag to rotate, scroll to zoom) —
+    // no click-to-reveal. The viewer loads asynchronously; __islandRendered (set
+    // by build) keeps morphdom from wiping it while the stream settles.
+    const wrap = document.createElement("div"); wrap.className = "takt-model-view";
+    const status = document.createElement("div"); status.className = "takt-model-status"; status.textContent = "Loading 3D model…";
+    wrap.appendChild(status);
+    el.appendChild(wrap);
+    if (cap) { const fc = document.createElement("div"); fc.className = "takt-mediacap"; fc.textContent = cap; el.appendChild(fc); }
+    ensureModelViewer().then((mod) => {
+      if (!mod) { status.textContent = "Couldn’t load the 3D viewer."; return; }
+      const mv = document.createElement("model-viewer");
+      // Full material pipeline: neutral IBL so PBR materials shade, ACES tone-
+      // mapping + exposure for rich color, ground shadow. A real GLB's textures/
+      // colors/animations all render; a colorless STL part gets colorized on load.
+      const A: Record<string, string> = {
+        src, alt: cap || "3D model", "camera-controls": "", "auto-rotate": "",
+        "auto-rotate-delay": "600", "rotation-per-second": "18deg", "interaction-prompt": "none",
+        "environment-image": "neutral", "tone-mapping": "aces", "shadow-intensity": "1.1",
+        "shadow-softness": "0.9", exposure: "1.15", "touch-action": "pan-y", loading: "eager",
+      };
+      for (const [k, v] of Object.entries(A)) mv.setAttribute(k, v);
+      mv.style.width = "100%";
+      mv.style.height = "360px";
+      mv.style.background = "radial-gradient(120% 100% at 50% 0%, var(--surface), var(--card))";
+      mv.style.borderRadius = "10px";
+      mv.addEventListener("load", () => colorizeFlatMaterials(mv, src));
+      mv.addEventListener("error", () => { status.style.display = ""; status.textContent = "Couldn’t load this 3D part."; });
+      const hint = document.createElement("div"); hint.className = "takt-model-hint"; hint.textContent = "drag to rotate · scroll to zoom";
+      wrap.replaceChildren(mv, hint);
+    });
   });
 
   build("takt-action", (el) => {

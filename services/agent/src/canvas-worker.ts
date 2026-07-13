@@ -22,9 +22,9 @@ STREAM IN ORDER: any <style> first → the HTML → any <script> LAST. The desig
 
 SHOW, don't tell — pull at least one real manual figure / 3D part / video / diagram to carry the answer (use ONLY real /assets URLs a tool returned this turn; never invent one). Give each top-level block a stable \`data-takt-id\`.
 
-DESIGN MODULES — before composing, call read_design ONCE with the 2–4 modules that fit THIS answer, then build from what it returns:
+DESIGN MODULES — before composing, call read_design ONCE with the 2–4 modules that fit THIS answer (ALWAYS include \`workflows\` for a product-support answer — it names the right format), then build from what it returns:
 ${moduleIndex()}
-e.g. "show me the part" → [layout, figures, components]; a settings/spec question → [layout, components, chart, interactive]; a troubleshooting flow → [layout, mermaid, components].`;
+e.g. a diagnosis ("why won't it feed") → [workflows, layout, mermaid, figures]; "show me the part" → [workflows, figures, components]; a spec/product card → [workflows, components, chart]; "which one should I use" / a sizing question → [workflows, interactive, components].`;
 }
 
 const READ_DESIGN_TOOL = {
@@ -174,18 +174,36 @@ export async function runCanvasWorker(o: CanvasWorkerOpts): Promise<boolean> {
       }
       const rawHtml = String(safeParseArgs(call.arguments).html ?? "");
       const clean = sanitizeCanvasHtml(rawHtml, allowed);
+      // A page must carry real content — text or a visual element. An empty or
+      // markup-only `html` (a common failure with some models) must NEVER be
+      // reported as a built canvas, or the user is told "it's on the canvas"
+      // while the stage sits blank.
+      const hasContent = clean.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<[^>]+>/g, "").trim().length > 10
+        || /<(takt-|img|svg|table|input|button)/i.test(clean);
       const findings = p0(lintCanvas(clean));
-      if (findings.length && !rejectedOnce) {
+      if ((findings.length || !hasContent) && !rejectedOnce) {
         rejectedOnce = true;
-        messages.push({ role: "tool", callId: call.id, name: "create_canvas", result: lintFeedback(findings), isError: true });
+        const feedback = !hasContent
+          ? "create_canvas received empty or content-less HTML. Put the COMPLETE page — a <style> then the visible HTML (headings, text, and at least one figure/3D/table) — in the `html` argument, then call create_canvas once."
+          : lintFeedback(findings);
+        messages.push({ role: "tool", callId: call.id, name: "create_canvas", result: feedback, isError: true });
         continue;
       }
+      if (!hasContent) break; // second empty attempt → give up (emitted stays false)
       await o.emit({ type: "canvas_end", canvasId: o.canvasId, html: clean, title: o.title });
       emitted = true;
     }
   } catch (e: any) {
     if (o.signal.aborted || e?.name === "AbortError") return emitted;
-    // non-fatal: the caller already answered in chat
+    // Surface the failure instead of swallowing it — otherwise a broken build is
+    // invisible and the stage sticks on the skeleton.
+    if (!emitted) await o.emit({ type: "canvas_error", canvasId: o.canvasId, message: String(e?.message ?? e).slice(0, 200) });
+  }
+  // Never leave the client stuck on the build skeleton: if nothing usable was
+  // emitted, tell it the build failed so it clears the skeleton and keeps the
+  // chat answer.
+  if (!emitted && !o.signal.aborted) {
+    await o.emit({ type: "canvas_error", canvasId: o.canvasId, message: "The canvas build produced no usable page." });
   }
   return emitted;
 }

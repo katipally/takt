@@ -8,7 +8,6 @@ export interface ModelInfo {
 export interface AppSettings {
   chatModel: string; captionModel: string; effort: string;
   chatProviderId?: string; captionProviderId?: string;
-  liveModel?: string; liveProviderId?: string;
   buildModel?: string; buildProviderId?: string;
 }
 

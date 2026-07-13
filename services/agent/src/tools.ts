@@ -11,6 +11,8 @@ import { askQuestionsSchema } from "@takt/shared";
 import {
   DATA_DIR, getPageImage, getManualsByProduct,
   listProducts, getProductBySlug, listMessages,
+  findEntity, getEntity, neighbors, trace, getMediaByEntity, graphExists,
+  type Entity, type KgMedia,
 } from "@takt/db";
 import {
   profileExists, listConcepts, readConcept, indexExists,
@@ -127,12 +129,11 @@ export function buildTaktTools(ctx: {
   emit: Emit;
   chatId?: string;
   context?: "main" | "build";
-  // canvas callbacks (chat wires compose/edit; live wires spawnBuild)
+  // canvas callbacks — chat wires compose/edit
   compose?: (brief: string, canvasId?: string) => Promise<boolean>;
   edit?: (brief: string, canvasId?: string, target?: string) => Promise<boolean>;
-  spawnBuild?: (brief: string, canvasId?: string) => void;
 }): TaktTool[] {
-  const { product, emit, chatId, context = "main", compose, edit, spawnBuild } = ctx;
+  const { product, emit, chatId, context = "main", compose, edit } = ctx;
   const masterMode = !product;
 
   const manualsHint = (prodId: string): string => {
@@ -157,7 +158,7 @@ export function buildTaktTools(ctx: {
   // ── SEARCH — hybrid (semantic ∪ lexical) over the product's knowledge ──
   const searchProductTool: TaktTool = {
     name: "search_product",
-    description: "Search a product's knowledge — the primary way to answer a product question. Hybrid: finds passages by MEANING (a symptom in the user's words like 'prints come out stringy') AND by exact term (an error code, part number, torque value). Returns ranked snippets with their source manual page. Cite the page a fact came from.",
+    description: "Full-text search over the product's manual passages — best for an exact term (error code, part number, torque value) or free-text wording. For a specific PART, SYMPTOM, SPEC, or PROCEDURE, prefer find_entity first (it resolves the user's words and shows what connects). Returns ranked snippets with their source manual page. Cite the page a fact came from.",
     parameters: params({ query: z.string().describe("What to find — a symptom, spec, part, procedure, or exact term"), ...productParam }),
     execute: async (args) => {
       const g = searchGuard(args); if ("output" in g) return g;
@@ -281,8 +282,92 @@ export function buildTaktTools(ctx: {
     },
   };
 
+  // ── KNOWLEDGE GRAPH: resolve the user's words → entities, then traverse ──
+  const graphGuard = (args: any): { id: string; slug: string; name: string } | ToolResult => {
+    const prod = pageProduct(args);
+    if (!prod) return text("Pass a `product` slug (see list_products).");
+    if (!graphExists(prod.id)) return text(`No knowledge graph for ${prod.name} yet — use search_product instead.`);
+    return { id: prod.id, slug: prod.slug, name: prod.name };
+  };
+  const resolveEntity = (pid: string, ref: unknown): Entity | undefined => {
+    const r = String(ref ?? "").trim();
+    if (!r) return undefined;
+    if (r.includes(":")) { const e = getEntity(r); if (e && e.productId === pid) return e; }
+    return findEntity(pid, r, 1)[0];
+  };
+  const entLine = (e: Entity) => `[${e.type}] ${e.name}${e.page ? ` (p.${e.page})` : ""}${e.summary ? ` — ${e.summary.slice(0, 100)}` : ""}  {${e.id}}`;
+  const graphMediaHint = (m: KgMedia): string => {
+    const abs = (u: string) => (u.startsWith("/") ? `${WEB_URL()}${u}` : u);
+    const cap = m.caption ? ` — ${m.caption.replace(/\s+/g, " ").slice(0, 90)}` : "";
+    switch (m.kind) {
+      case "mesh": return `- 3D part${cap}: embed <takt-model src="${abs(m.assetUrl)}" caption="…">`;
+      case "video_clip": return `- video${cap}: embed <takt-video src="${abs(m.assetUrl)}" caption="…">`;
+      case "image": return `- image${cap}: embed <takt-figure src="${abs(m.assetUrl)}" caption="…">`;
+      default: return `- figure${cap}: embed <takt-figure src="${abs(m.assetUrl)}" caption="…"> (or crop_page_image tight to it)`;
+    }
+  };
+
+  const findEntityTool: TaktTool = {
+    name: "find_entity",
+    description: "Resolve the user's words — even non-technical ones ('clicking noise', 'won't feed') — to the exact things in the product: a part, symptom, spec, procedure, warning. START HERE for a specific-thing question. Returns matching entities with a {id} you pass to explore_entity. Aliases mean a layman phrase still finds the right part.",
+    parameters: params({ query: z.string().describe("A part, symptom, spec, procedure — in any words the user might use"), ...productParam }),
+    execute: async (args) => {
+      const g = graphGuard(args); if ("output" in g) return g;
+      const id = randomUUID();
+      await emit({ type: "tool_start", id, tool: "find_entity", summary: String(args.query) });
+      const ents = findEntity(g.id, String(args.query), 8);
+      await emit({ type: "tool_done", id, detail: `${ents.length} entities` });
+      if (!ents.length) return text(`No entity for "${args.query}". Try search_product for free-text passages.`);
+      return text(`${ents.map(entLine).join("\n")}\n\nCall explore_entity with an {id} to see what it connects to (parts, the fix, figures, the 3D model, cited pages).`);
+    },
+  };
+
+  const exploreEntityTool: TaktTool = {
+    name: "explore_entity",
+    description: "Given an entity (an {id} from find_entity, or a name), return what it CONNECTS to — the part it's on, the procedure that fixes it, the figures/3D model/video that show it, and the manual pages to cite. This is how you assemble a grounded, cross-linked answer for the canvas.",
+    parameters: params({ entity: z.string().describe("An entity {id} from find_entity, or its name"), ...productParam }),
+    execute: async (args) => {
+      const g = graphGuard(args); if ("output" in g) return g;
+      const id = randomUUID();
+      await emit({ type: "tool_start", id, tool: "explore_entity", summary: String(args.entity) });
+      const ent = resolveEntity(g.id, args.entity);
+      if (!ent) { await emit({ type: "tool_done", id, detail: "not found" }); return text(`No entity "${args.entity}". Call find_entity first.`); }
+      const nbrs = neighbors(ent.id);
+      const linkedMedia = getMediaByEntity(ent.id);
+      // media on any directly-connected entity too (e.g. the figure that depicts this part)
+      for (const n of nbrs) linkedMedia.push(...getMediaByEntity(n.entity.id));
+      const media = [...new Map(linkedMedia.map((m) => [m.id, m])).values()];
+      await emit({ type: "tool_done", id, detail: `${nbrs.length} links, ${media.length} media` });
+      const byRel = new Map<string, string[]>();
+      for (const n of nbrs) (byRel.get(n.edge.rel) ?? byRel.set(n.edge.rel, []).get(n.edge.rel)!).push(entLine(n.entity));
+      const relBlocks = [...byRel].map(([rel, lines]) => `${rel}:\n${lines.map((l) => `  ${l}`).join("\n")}`).join("\n");
+      const cites = [...new Set(nbrs.concat({ edge: null as any, entity: ent }).map((n) => n.entity.page).filter(Boolean))];
+      const head = `${entLine(ent)}${ent.aliases.length ? `\nalso called: ${ent.aliases.join(", ")}` : ""}`;
+      const mediaBlock = media.length ? `\n\nSHOW these (embed the EXACT /assets URL, never invent one):\n${media.map(graphMediaHint).join("\n")}` : "";
+      const citeBlock = cites.length ? `\n\nCite these manual pages with <takt-cite page="N">: ${cites.map((p) => `p.${p}`).join(", ")} (call crop_page_image for the figure on a page).` : "";
+      return text(`${head}\n\nCONNECTS TO:\n${relBlocks || "(no links)"}${mediaBlock}${citeBlock}\n\nUse search_product for the exact wording on a cited page.`);
+    },
+  };
+
+  const traceTool: TaktTool = {
+    name: "trace_path",
+    description: "Find how two things in the product relate — the chain of links between them (e.g. a symptom → the part → the fix). Pass two entity {id}s or names.",
+    parameters: params({ from: z.string().describe("Start entity id or name"), to: z.string().describe("End entity id or name"), ...productParam }),
+    execute: async (args) => {
+      const g = graphGuard(args); if ("output" in g) return g;
+      const id = randomUUID();
+      await emit({ type: "tool_start", id, tool: "trace_path", summary: `${args.from} → ${args.to}` });
+      const a = resolveEntity(g.id, args.from), b = resolveEntity(g.id, args.to);
+      if (!a || !b) { await emit({ type: "tool_done", id, detail: "unresolved" }); return text("Couldn't resolve one of the entities — call find_entity first."); }
+      const path = trace(g.id, a.id, b.id);
+      await emit({ type: "tool_done", id, detail: path ? `${path.length} hops` : "no path" });
+      if (!path) return text(`No connection found between ${a.name} and ${b.name}.`);
+      return text(path.map(entLine).join("\n  ↓\n"));
+    },
+  };
+
   // ── CANVAS: build, edit, read, select ──
-  const buildCanvasTool: TaktTool | null = (compose || spawnBuild) ? {
+  const buildCanvasTool: TaktTool | null = compose ? {
     name: "build_canvas",
     description: "Compose the full answer as a designed page on the canvas from what you've gathered this turn. The page (title included) streams in and PAINTS itself live, so call this the moment you've gathered enough — don't wait. Give a brief naming what to show and which gathered facts/media to use.",
     parameters: params({ brief: z.string().describe("What to show and which gathered sources to use") }),
@@ -290,11 +375,12 @@ export function buildTaktTools(ctx: {
       const brief = String(args?.brief ?? "").trim();
       if (!brief) return { output: "build_canvas needs a brief.", isError: true };
       const id = randomUUID();
-      await emit({ type: "tool_start", id, tool: "build_canvas", summary: brief.slice(0, 60), lane: spawnBuild ? "build" : "main" });
-      if (spawnBuild) { spawnBuild(brief); await emit({ type: "tool_done", id, detail: "building" }); return text("Canvas is now building on screen (takes ~20–30s). Do NOT end the turn silently — reply with ONE short spoken sentence to the user right now telling them it's coming up (e.g. \"okay, it's drawing now — one sec\"). Then stop."); }
+      await emit({ type: "tool_start", id, tool: "build_canvas", summary: brief.slice(0, 60), lane: "main" });
       const ok = await compose!(brief);
       await emit({ type: "tool_done", id, detail: ok ? "built" : "failed" });
-      return ok ? text("Built on the canvas. Reply with ONE short line pointing at it; don't restate the page.") : { output: "The canvas build produced nothing.", isError: true };
+      return ok
+        ? text("Built on the canvas. Reply with ONE short line pointing at it; don't restate the page.")
+        : { output: "The canvas build failed (no usable page was produced). Do NOT tell the user it's on the canvas. Instead, give the actual answer concisely in your chat reply this turn.", isError: true };
     },
   } : null;
 
@@ -410,7 +496,7 @@ export function buildTaktTools(ctx: {
     },
   };
 
-  const gather = [searchProductTool, getMediaTool, readProfile, getPageImageTool, cropPageImage, listProductsTool, fetchUrl];
+  const gather = [findEntityTool, exploreEntityTool, traceTool, searchProductTool, getMediaTool, readProfile, getPageImageTool, cropPageImage, listProductsTool, fetchUrl];
   const canvas = [
     ...(buildCanvasTool ? [buildCanvasTool] : []),
     ...(editCanvasTool ? [editCanvasTool] : []),

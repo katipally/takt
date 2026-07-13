@@ -2,12 +2,15 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
+import { forbidden, isAdmin } from "@/lib/admin-auth";
+
 const AGENT_URL = process.env.AGENT_SERVICE_URL ?? "http://localhost:8787";
 
 // Forward the PDF upload to the agent's cheap page-count estimate and return its
 // JSON ({ perFile, totalPages, model, hasKey }) so the form can show a cost
 // estimate before any paid captioning runs.
 export async function POST(req: Request) {
+  if (!(await isAdmin())) return forbidden();
   const upstream = await fetch(`${AGENT_URL}/ingest/estimate`, {
     method: "POST",
     headers: {

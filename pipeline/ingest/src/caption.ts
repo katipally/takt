@@ -1,16 +1,24 @@
 import { streamProvider, type ProviderInfo, type ChatRequest } from "@takt/harness";
+import type { ParsedItem } from "./graph-build.js";
 
-// Vision-caption a rendered page. This is the key move that makes image-only
-// content (selection charts, schematics, weld-diagnosis photos, wiring
-// diagrams) retrievable: the caption becomes an embedded `image_caption` chunk,
-// and the original PNG is one get_page_image call away for display.
+// Vision-PARSE a rendered page into (a) a full markdown transcription and (b) the
+// typed things on it — parts, specs, symptoms, procedures, warnings, figures.
+// The transcription stays retrievable + displayable; the typed items feed the
+// knowledge graph (buildGraphInput). One vision call per page produces both, so
+// the graph is built at no extra per-page cost over the old flat caption.
 //
 // Provider-neutral: runs through the harness `streamProvider`, so any
 // vision-capable provider/model the user picks in Settings works — the key and
 // provider come from the caller (the stored provider key), not process.env.
 
-export interface CaptionResult {
-  text: string;
+export interface PageParseResult {
+  textMd: string;                         // full transcription (caption + page chunk)
+  parts: ParsedItem[];
+  specs: ParsedItem[];                    // value/unit; refHint = part it belongs to
+  symptoms: ParsedItem[];                 // layman + technical; refHint = the fix
+  procedures: ParsedItem[];
+  warnings: ParsedItem[];
+  figures: { label: string; caption: string }[];
   inputTokens: number;
   outputTokens: number;
 }
@@ -37,28 +45,69 @@ async function complete(
   return { text: text.trim(), input, output };
 }
 
-const PROMPT = `You are digitizing a page of a product owner's manual so it becomes searchable.
-Transcribe and describe EVERYTHING on this page so a technician could answer questions from your text alone:
-- All body text, headings, labels, and callouts (verbatim where it matters).
-- Every table as a GitHub-flavored markdown table (keep all rows/columns/units).
-- Every diagram, schematic, photo, chart, or control panel: describe what it shows, every labeled part, and what real question it answers (e.g. "which socket the ground clamp goes into for DCEN", "duty cycle at 200A on 240V").
-- Numbers, settings, amperage/voltage/wire-speed values, polarity, part numbers.
-Be thorough and literal. Do not add information that is not on the page. Output plain text + markdown, no preamble.`;
+const PARSE_PROMPT = `You are digitizing ONE page of a product manual into a searchable knowledge graph.
+Return ONLY a JSON object (no preamble, no markdown fence) with this exact shape:
+{
+  "textMd": "<full faithful transcription of the page as markdown — ALL body text, headings, callouts; EVERY table as a GFM table with all rows/cols/units; describe every diagram/schematic/photo and its labeled parts and what question it answers. Be literal; add nothing not on the page.>",
+  "parts": [{"name":"<component/assembly>","aliases":["<other names, incl. plain-language>"],"summary":"<what it is / does, one line>"}],
+  "specs": [{"name":"<what is measured, e.g. PLA nozzle temperature>","value":"<number>","unit":"<unit>","refHint":"<the part/assembly this spec is for, if any>"}],
+  "symptoms": [{"name":"<problem in TECHNICAL terms>","aliases":["<how a NON-technical user would describe it, e.g. clicking noise, won't feed>"],"summary":"<what's happening>","refHint":"<the procedure/fix that resolves it, if on the page>"}],
+  "procedures": [{"name":"<a task/fix/how-to on this page>","aliases":["<plain-language name>"],"summary":"<one line>"}],
+  "warnings": [{"name":"<safety/caution note>","summary":"<what to avoid>"}],
+  "figures": [{"label":"<figure label e.g. Fig 3>","caption":"<what the diagram/photo shows + every labeled part>"}]
+}
+Rules: Every array may be empty. Only include items actually present on THIS page. For symptoms, ALWAYS include layman aliases so a non-technical user's words find it. Keep names short and canonical (so the same part on other pages matches). Do NOT invent part numbers or values.`;
 
-export async function captionPage(
+const EMPTY_PARSE: Omit<PageParseResult, "inputTokens" | "outputTokens"> = { textMd: "", parts: [], specs: [], symptoms: [], procedures: [], warnings: [], figures: [] };
+
+// Parse the model's JSON reply; fall back to raw-as-transcription so the page is
+// still captioned + searchable even if the model didn't return clean JSON.
+function parseStructured(raw: string, input: number, output: number): PageParseResult {
+  try {
+    const obj = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1));
+    const arr = (v: unknown): any[] => (Array.isArray(v) ? v : []);
+    return {
+      textMd: typeof obj.textMd === "string" ? obj.textMd : "",
+      parts: arr(obj.parts), specs: arr(obj.specs), symptoms: arr(obj.symptoms),
+      procedures: arr(obj.procedures), warnings: arr(obj.warnings),
+      figures: arr(obj.figures).filter((f) => f && typeof f.caption === "string"),
+      inputTokens: input, outputTokens: output,
+    };
+  } catch {
+    return { ...EMPTY_PARSE, textMd: raw, inputTokens: input, outputTokens: output };
+  }
+}
+
+/** Parse a page IMAGE into a transcription + typed graph items (needs a vision model). */
+export async function parsePage(
   png: Uint8Array,
   provider: ProviderInfo,
   model: string,
   apiKey?: string,
-): Promise<CaptionResult> {
+): Promise<PageParseResult> {
   const base64 = Buffer.from(png).toString("base64");
-  const { text, input, output } = await complete(provider, apiKey, {
-    model,
-    maxTokens: 2048,
-    tools: [],
-    messages: [{ role: "user", text: PROMPT, images: [{ data: base64, mime: "image/png" }] }],
+  const { text: raw, input, output } = await complete(provider, apiKey, {
+    model, maxTokens: 4096, tools: [],
+    messages: [{ role: "user", text: PARSE_PROMPT, images: [{ data: base64, mime: "image/png" }] }],
   });
-  return { text, inputTokens: input, outputTokens: output };
+  return parseStructured(raw, input, output);
+}
+
+/** Parse a page's EMBEDDED TEXT into the same structure — works with any text
+ *  model (e.g. MiniMax, which can't take images). Used when the PDF has real text
+ *  or the caption model isn't vision-capable. Diagrams-only pages yield little. */
+export async function parsePageText(
+  pageText: string,
+  provider: ProviderInfo,
+  model: string,
+  apiKey?: string,
+): Promise<PageParseResult> {
+  if (!pageText.trim()) return { ...EMPTY_PARSE, inputTokens: 0, outputTokens: 0 };
+  const { text: raw, input, output } = await complete(provider, apiKey, {
+    model, maxTokens: 4096, tools: [],
+    messages: [{ role: "user", text: `${PARSE_PROMPT}\n\nHere is the extracted text of the page:\n"""\n${pageText.slice(0, 12000)}\n"""` }],
+  });
+  return parseStructured(raw, input, output);
 }
 
 // Vision-detect the product's identity from its cover / first manual page. One

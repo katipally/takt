@@ -3,7 +3,7 @@ import {
   getProviderApiKey, getSetting, setSetting,
 } from "@takt/db";
 import { BUILTIN_PROVIDERS, defaultModel, type ProviderInfo, type Effort } from "@takt/harness";
-import { DEFAULT_EFFORT, liveRecsFor } from "@takt/shared";
+import { DEFAULT_EFFORT } from "@takt/shared";
 
 // Provider-neutral resolution. Keys live in the DB `providers` table (kind =
 // harness provider id) or fall back to the provider's declared env vars. Which
@@ -80,34 +80,6 @@ export function resolveChat(): ResolvedChat {
 
 // Which provider + model powers LIVE voice. Its own settings so live can run a
 // fast, low-latency model independent of the heavier chat model. When unset, we
-// prefer a keyed provider whose fast live model can SEE (camera-first) — so the
-// camera works even when the chat model can't take images (e.g. MiniMax over its
-// Anthropic-compat endpoint). Falls back to the chat provider when none can see.
-function liveProviderId(): string {
-  const explicit = getSetting("liveProviderId");
-  if (explicit && providerInfo(explicit) && getProviderKey(explicit)) return explicit;
-  // camera-first: a keyed provider whose default live model has vision.
-  for (const id of ["anthropic", "openai", "minimax"]) {
-    if (!getProviderKey(id)) continue;
-    const rec = liveRecsFor(id).find((r) => r.default) ?? liveRecsFor(id)[0];
-    if (rec?.vision) return id;
-  }
-  return resolveChatProviderId();
-}
-export function resolveLive(): ResolvedChat {
-  const providerId = liveProviderId();
-  const provider = providerInfo(providerId) ?? BUILTIN_PROVIDERS[0]!;
-  // The explicit live model applies only when the resolved provider IS the one the
-  // user configured (else the camera-first switch would pair a model with the wrong
-  // provider). Otherwise use the provider's curated FAST live rec — low
-  // time-to-first-token, reliable tool calls, and vision when the camera's on.
-  const recs = liveRecsFor(provider.id);
-  const rec = recs.find((r) => r.default) ?? recs[0];
-  const explicitProvider = getSetting("liveProviderId");
-  const liveModel = getSetting("liveModel");
-  const model = (explicitProvider === providerId && liveModel) ? liveModel : (rec?.model || defaultModel(provider.id));
-  return { provider, model, apiKey: getProviderKey(provider.id), effort: undefined };
-}
 
 // Which provider + model powers the canvas worker (build_canvas). Its own
 // settings so builds can run a STRONGER model than the fast talker. Falls back to

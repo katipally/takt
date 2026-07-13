@@ -35,6 +35,9 @@ export const sseEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("canvas_start"), canvasId: z.string(), title: z.string().optional() }),
   z.object({ type: z.literal("canvas_delta"), canvasId: z.string(), html: z.string() }),
   z.object({ type: z.literal("canvas_end"), canvasId: z.string(), html: z.string(), title: z.string().optional() }),
+  // The canvas build failed to produce a usable page (empty/contentless output,
+  // or an error). The client clears the build skeleton — the answer stays in chat.
+  z.object({ type: z.literal("canvas_error"), canvasId: z.string(), message: z.string() }),
   // Highlight (ring + scroll-into-view) a block by its data-takt-id; empty clears.
   z.object({ type: z.literal("canvas_highlight"), target: z.string() }),
   // Resolution of an interactive canvas action (ack to the client).

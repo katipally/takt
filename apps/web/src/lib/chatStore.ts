@@ -107,6 +107,7 @@ function applyStreamEvent(chatId: string, assistantId: string, e: SseEvent) {
   else if (e.type === "canvas_start") update(chatId, (s) => setStatus(patchAssistant(s, assistantId, (p) => upsertCanvas(p, e.canvasId, (c) => ({ ...c, title: e.title ?? c.title }))), assistantId, null));
   else if (e.type === "canvas_delta") update(chatId, (s) => patchAssistant(s, assistantId, (p) => upsertCanvas(p, e.canvasId, (c) => ({ ...c, html: e.html }))));
   else if (e.type === "canvas_end") update(chatId, (s) => patchAssistant(s, assistantId, (p) => upsertCanvas(p, e.canvasId, (c) => ({ ...c, html: e.html, title: e.title ?? c.title }))));
+  else if (e.type === "canvas_error") update(chatId, (s) => setStatus(patchAssistant(s, assistantId, (p) => p.filter((q) => !(q.kind === "canvas" && q.canvasId === e.canvasId))), assistantId, null));
   else if (e.type === "canvas_highlight") useUi.getState().highlightCanvas(e.target);
   else if (e.type === "action_result") { /* client ack only */ }
   else if (e.type === "ask_user") update(chatId, (s) => {
@@ -155,27 +156,6 @@ async function runStream(chatId: string, productSlug: string | null, attachments
 
 export const chatStore = {
   getSession, subscribe, activePath,
-
-  // ── live mode ──
-  liveUserTurn(chatId: string, productSlug: string | null, text: string): string {
-    const userId = uid();
-    update(chatId, (x) => ({ ...x, messages: [...x.messages, { id: userId, role: "user", text, live: true }], productSlug }));
-    const assistantId = uid();
-    update(chatId, (x) => ({ ...x, messages: [...x.messages, { id: assistantId, role: "assistant", parts: [], streaming: true }], streaming: true }));
-    return assistantId;
-  },
-  liveApply(chatId: string, assistantId: string, e: SseEvent) { if (e.type !== "done") applyStreamEvent(chatId, assistantId, e); },
-  liveFinish(chatId: string, assistantId: string) {
-    update(chatId, (s) => ({ ...s, streaming: false, messages: s.messages.map((n) => (n.id === assistantId && n.role === "assistant" ? { ...n, streaming: false, status: null } : n)) }));
-  },
-  liveSetText(chatId: string, assistantId: string, text: string) {
-    update(chatId, (s) => patchAssistant(s, assistantId, (parts) => {
-      let placed = false;
-      const next = parts.map((p) => { if (p.kind !== "text") return p; if (!placed) { placed = true; return { ...p, text }; } return { ...p, text: "" }; });
-      if (!placed && text) next.unshift({ id: uid(), kind: "text", text });
-      return next;
-    }));
-  },
 
   submitAsk(chatId: string, answers: AskAnswer[]) {
     const ask = getSession(chatId).ask; if (!ask) return;

@@ -2,14 +2,16 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { join, basename } from "node:path";
 import {
   PAGES_DIR, PDF_DIR, HERO_DIR, PRODUCTS_DIR,
-  upsertProduct, upsertManual, upsertSourceManual, upsertPageImage, getPageImage,
-  setPageCaption, setSetting,
+  upsertProduct, upsertManual, upsertSourceManual, upsertPageImage, getCachedPage,
+  setPageCaption, setSetting, replaceProductGraph, contentHash,
 } from "@takt/db";
-import { buildIndex, writeMedia, addMedia, type MediaItem } from "@takt/profile";
+import { buildIndex, writeMedia, addMedia, loadMedia, type MediaItem } from "@takt/profile";
 import { renderPdf } from "./pdf.js";
-import { captionPage, generateStarters, detectProduct } from "./caption.js";
+import { parsePage, parsePageText, generateStarters, detectProduct } from "./caption.js";
+import { modelVision } from "@takt/shared";
 import { fetchWebSource } from "./sources.js";
 import { authorFromUnits, type ProfileConceptInput } from "./author.js";
+import { buildGraphInput, type PageParse } from "./graph-build.js";
 import { addMeshParts, type ModelFile } from "./mesh.js";
 import { addVideo, type VideoFile } from "./video.js";
 import type { ManualKind, Product } from "@takt/shared";
@@ -66,6 +68,8 @@ export function titleFromName(file: string): string {
 const slugify = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 48) || "product";
 
+const safeJson = (s: string): any => { try { return JSON.parse(s); } catch { return undefined; } };
+
 async function pMap<T>(items: T[], concurrency: number, fn: (item: T) => Promise<void>): Promise<void> {
   let i = 0;
   await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, async () => {
@@ -84,6 +88,9 @@ async function pMap<T>(items: T[], concurrency: number, fn: (item: T) => Promise
 export async function ingestProduct(input: IngestInput): Promise<IngestResult> {
   const report = async (m: string) => { await input.onProgress?.(m); };
   const { captionProvider: provider, captionModel: model, apiKey } = input;
+  // Vision models parse the page IMAGE (richest, captures diagrams); text-only
+  // models (e.g. MiniMax) parse the PDF's embedded text instead.
+  const canSee = modelVision(provider.id, model);
   let inputTokens = 0, outputTokens = 0;
 
   // Render all PDFs up front — needed both for the per-page pass and so we can
@@ -129,6 +136,7 @@ export async function ingestProduct(input: IngestInput): Promise<IngestResult> {
   let totalPages = 0;
   let sampleText = "";
   const concepts: ProfileConceptInput[] = [];
+  const pageParses: PageParse[] = []; // structured pages → knowledge graph
 
   for (const { file, kind, pages } of rendered) {
     await report(`Rendering ${file.filename}…`);
@@ -141,44 +149,57 @@ export async function ingestProduct(input: IngestInput): Promise<IngestResult> {
     totalPages += pages.length;
     mkdirSync(join(PAGES_DIR, manual.id), { recursive: true });
 
+    // Write the png + row, carrying forward a cached caption/parse ONLY when the
+    // image is byte-identical (hash), else clearing stale text (null overwrite).
+    const cached = new Map<number, { caption: string; parseJson: string | null }>();
     for (const page of pages) {
       writeFileSync(join(PAGES_DIR, manual.id, `${page.pageNumber}.png`), page.png);
+      const hash = contentHash(Buffer.from(page.png).toString("base64"));
+      const hit = getCachedPage(manual.id, page.pageNumber, hash);
+      if (hit) cached.set(page.pageNumber, hit);
       upsertPageImage({
         manualId: manual.id, productId: product.id, pageNumber: page.pageNumber,
         pngPath: `pages/${manual.id}/${page.pageNumber}.png`, width: page.width, height: page.height,
+        pngHash: hash, caption: hit?.caption ?? null, parseJson: hit?.parseJson ?? null,
       });
     }
 
     let done = 0;
-    const captions = new Map<number, string>();
+    const parses = new Map<number, { textMd: string; parse?: any }>();
     await pMap(pages, input.concurrency ?? 5, async (page) => {
-      // Reuse a cached caption (cheap re-runs) — the expensive vision call only
-      // fires when this page has never been captioned.
-      const existing = getPageImage(product.id, kind, page.pageNumber);
-      let caption = existing?.caption ?? "";
-      if (!caption) {
-        const cap = await captionPage(page.png, provider, model, apiKey);
-        caption = cap.text;
-        inputTokens += cap.inputTokens; outputTokens += cap.outputTokens;
-        setPageCaption(manual.id, page.pageNumber, caption);
+      const hit = cached.get(page.pageNumber);
+      if (hit) {
+        // Unchanged page → reuse the cached transcription + structured parse (no LLM).
+        parses.set(page.pageNumber, { textMd: hit.caption, parse: hit.parseJson ? safeJson(hit.parseJson) : undefined });
+      } else {
+        const r = canSee ? await parsePage(page.png, provider, model, apiKey)
+                         : await parsePageText(page.text, provider, model, apiKey);
+        inputTokens += r.inputTokens; outputTokens += r.outputTokens;
+        const parse = { parts: r.parts, specs: r.specs, symptoms: r.symptoms, procedures: r.procedures, warnings: r.warnings, figures: r.figures };
+        setPageCaption(manual.id, page.pageNumber, r.textMd, JSON.stringify(parse));
+        parses.set(page.pageNumber, { textMd: r.textMd, parse });
       }
-      captions.set(page.pageNumber, caption);
       await report(`Reading ${file.filename}: ${++done}/${pages.length} pages`);
     });
 
-    if (sampleText.length < 4000) {
-      for (const page of pages) {
-        const c = captions.get(page.pageNumber);
-        if (c) sampleText += c.slice(0, 600) + "\n";
-        if (sampleText.length >= 4000) break;
-      }
+    for (const page of pages) {
+      const pp = parses.get(page.pageNumber);
+      if (!pp) continue;
+      if (sampleText.length < 4000 && pp.textMd) sampleText += pp.textMd.slice(0, 600) + "\n";
+      const p = pp.parse ?? {};
+      pageParses.push({
+        manualId: manual.id, manualKind: kind, page: page.pageNumber,
+        imageUrl: `/assets/pages/${manual.id}/${page.pageNumber}.png`,
+        textMd: pp.textMd,
+        parts: p.parts, specs: p.specs, symptoms: p.symptoms, procedures: p.procedures, warnings: p.warnings, figures: p.figures,
+      });
     }
 
     concepts.push({
       title: manual.title, source: manual.pdfPath, manualKind: kind,
       units: pages.map((page) => ({
         label: `Page ${page.pageNumber}`,
-        text: captions.get(page.pageNumber) ?? "",
+        text: parses.get(page.pageNumber)?.textMd ?? "",
         imageUrl: `/assets/pages/${manual.id}/${page.pageNumber}.png`,
       })),
     });
@@ -199,6 +220,10 @@ export async function ingestProduct(input: IngestInput): Promise<IngestResult> {
     concepts.push({
       title: manual.title, source: src.url,
       units: fetched.sections.map((text, i) => ({ label: `Section ${i + 1}`, text })),
+    });
+    // Web-source text also goes into the graph as retrievable chunks (no figures).
+    fetched.sections.forEach((text, i) => {
+      pageParses.push({ manualId: manual.id, manualKind: "other", page: i + 1, imageUrl: "", textMd: text });
     });
     if (sampleText.length < 4000 && fetched.sections[0]) sampleText += fetched.sections[0].slice(0, 600) + "\n";
     await report(`Fetched source: ${manual.title} (${fetched.sections.length} sections)`);
@@ -256,6 +281,22 @@ export async function ingestProduct(input: IngestInput): Promise<IngestResult> {
     await report(`Index: ${idx.chunks} chunks${idx.embedded ? " + embeddings" : ""}`);
   } catch (e: any) {
     await report(`Index skipped: ${String(e?.message ?? e)}`);
+  }
+
+  // Build the KNOWLEDGE GRAPH from the structured page parses + the media the
+  // steps above wrote (3D parts, video clips, images). Deterministic + additive:
+  // replaceProductGraph swaps this product's graph transactionally (no orphans).
+  try {
+    await report("Building knowledge graph…");
+    const allMedia = loadMedia(slug);
+    const meshes = allMedia.filter((m) => m.kind === "mesh").map((m) => ({ name: m.nodeName || m.caption, subsystem: m.subsystem, assetUrl: m.url, caption: m.caption }));
+    const videos = allMedia.filter((m) => m.kind === "video_clip").map((m) => ({ name: m.caption.slice(0, 60), assetUrl: m.url, caption: m.caption, tStart: m.tStart, tEnd: m.tEnd }));
+    const imgs = allMedia.filter((m) => m.kind === "image").map((m) => ({ name: m.caption, assetUrl: m.url, caption: m.caption }));
+    const graph = buildGraphInput({ productId: product.id, pages: pageParses, meshes, videos, images: imgs });
+    replaceProductGraph(product.id, graph);
+    await report(`Graph: ${graph.entities.length} entities, ${graph.edges.length} links, ${graph.media.length} media`);
+  } catch (e: any) {
+    await report(`Graph skipped: ${String(e?.message ?? e)}`);
   }
 
   // Product-specific starter questions: one cheap text call, stored for reuse.

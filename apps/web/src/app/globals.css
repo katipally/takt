@@ -345,14 +345,13 @@ video.takt-video{width:100%;display:block;border-radius:var(--takt-radius-sm);ba
 .takt-mermaid{display:block;margin:.4em 0;text-align:center}
 .takt-mermaid svg{max-width:100%;height:auto;margin-inline:auto}
 
-/* 3D part tile */
-.takt-model-tile{cursor:pointer;position:relative;display:grid;place-items:center;gap:.45em;min-height:172px;
-  border:1px solid var(--takt-border);border-radius:var(--takt-radius-sm);background:var(--takt-surface);
-  font-family:var(--takt-sans);color:var(--takt-muted);transition:border-color .15s,background .15s}
-.takt-model-tile:hover{border-color:var(--takt-accent);background:var(--takt-surface-2)}
-.takt-model-tile .badge{font-size:.64rem;text-transform:uppercase;letter-spacing:.12em;color:var(--takt-arc);font-weight:700}
-.takt-model-tile .cap{font-weight:600;color:var(--takt-fg)}
-.takt-model-tile .hint{font-size:.8rem}
+/* 3D part — interactive <model-viewer> rendered inline (no click-to-reveal) */
+.takt-model-view{position:relative;overflow:hidden;border:1px solid var(--takt-border);border-radius:var(--takt-radius-sm);background:var(--takt-surface)}
+.takt-model-view model-viewer{display:block;width:100%}
+.takt-model-status{display:grid;place-items:center;min-height:172px;font-family:var(--takt-sans);font-size:.85rem;color:var(--takt-muted)}
+.takt-model-hint{position:absolute;bottom:.55em;left:50%;transform:translateX(-50%);pointer-events:none;
+  background:rgba(0,0,0,.45);color:rgba(255,255,255,.85);font-family:var(--takt-sans);font-size:.72rem;
+  padding:.2em .7em;border-radius:999px}
 
 button.takt-action{cursor:pointer;font-family:var(--takt-sans);font-weight:600;font-size:.92rem;color:#fff;background:var(--takt-accent);
   border:0;border-radius:var(--takt-radius-sm);padding:.6em 1.1em;margin:.3em .4em .3em 0;transition:filter .15s}

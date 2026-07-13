@@ -1,6 +1,6 @@
 "use client";
 
-import { createElement, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { chatStore, type CanvasPart, type SourcePart } from "@/lib/chatStore";
@@ -13,8 +13,9 @@ import { applyCanvasHtml } from "@/lib/canvas/stream";
 // (morphdom, no iframe). It shares the app's stylesheet + .dark toggle, so the
 // design system and theme "just work". The island custom elements dispatch
 // bubbling CustomEvents which we bridge here into the app: citations open the
-// source modal, figures/3D open a lightbox, actions are acked (TODO), and block
-// selection bubbles to the Workbench.
+// source modal, figures open a lightbox, actions are acked (TODO), and block
+// selection bubbles to the Workbench. 3D parts (<takt-model>) render inline in
+// the island itself (model-viewer), so they need no bridge here.
 
 export function Canvas({ part, chatId, productSlug, streaming }: {
   part: CanvasPart;
@@ -24,7 +25,6 @@ export function Canvas({ part, chatId, productSlug, streaming }: {
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [lightbox, setLightbox] = useState<{ src: string; caption: string } | null>(null);
-  const [model, setModel] = useState<{ src: string; caption: string } | null>(null);
   const highlight = useUi((s) => s.canvasHighlight);
 
   useEffect(() => { registerIslands(); }, []);
@@ -48,16 +48,13 @@ export function Canvas({ part, chatId, productSlug, streaming }: {
     const el = ref.current; if (!el) return;
     const onCite = (e: Event) => { const d = (e as CustomEvent).detail; openCite(chatId, productSlug, d.page, d.product); };
     const onLightbox = (e: Event) => setLightbox((e as CustomEvent).detail);
-    const onModel = (e: Event) => setModel((e as CustomEvent).detail);
     const onAction = (e: Event) => { /* TODO: continue the turn with the action value */ void (e as CustomEvent).detail; };
     el.addEventListener("takt:cite", onCite);
     el.addEventListener("takt:lightbox", onLightbox);
-    el.addEventListener("takt:model", onModel);
     el.addEventListener("takt:action", onAction);
     return () => {
       el.removeEventListener("takt:cite", onCite);
       el.removeEventListener("takt:lightbox", onLightbox);
-      el.removeEventListener("takt:model", onModel);
       el.removeEventListener("takt:action", onAction);
     };
   }, [chatId, productSlug]);
@@ -77,7 +74,6 @@ export function Canvas({ part, chatId, productSlug, streaming }: {
         </div>
       )}
       {lightbox && <Lightbox {...lightbox} onClose={() => setLightbox(null)} />}
-      {model && <ModelModal {...model} onClose={() => setModel(null)} />}
     </>
   );
 }
@@ -118,37 +114,3 @@ function Lightbox({ src, caption, onClose }: { src: string; caption: string; onC
   );
 }
 
-// 3D part viewer — lazy-loads @google/model-viewer (already a dep) on open.
-function ModelModal({ src, caption, onClose }: { src: string; caption: string; onClose: () => void }) {
-  const [ready, setReady] = useState(false);
-  const [err, setErr] = useState(false);
-  useEffect(() => {
-    let alive = true;
-    import("@google/model-viewer").then(() => { if (alive) setReady(true); }).catch(() => { if (alive) setErr(true); });
-    return () => { alive = false; };
-  }, []);
-  return createPortal(
-    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/75 p-6" onClick={onClose}>
-      <div className="relative flex h-[70vh] w-[min(880px,92vw)] flex-col overflow-hidden rounded-2xl border border-border bg-card" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
-          <span className="text-[13px] font-medium text-foreground">{caption}</span>
-          <button onClick={onClose} aria-label="Close" className="grid size-7 place-items-center rounded-full text-muted-foreground transition hover:bg-foreground/10 hover:text-foreground"><X className="size-4" /></button>
-        </div>
-        <div className="relative flex-1">
-          {err ? (
-            <div className="grid h-full place-items-center text-[12px] text-muted-foreground">Couldn’t load the 3D viewer.</div>
-          ) : ready ? (
-            createElement("model-viewer", {
-              src, alt: caption, "camera-controls": true, "auto-rotate": true, "environment-image": "neutral",
-              "shadow-intensity": "1.1", exposure: "1.15", "touch-action": "pan-y",
-              style: { width: "100%", height: "100%", background: "radial-gradient(120% 100% at 50% 0%, var(--surface), var(--card))" },
-            })
-          ) : (
-            <div className="grid h-full place-items-center text-[12px] text-muted-foreground">Loading 3D model…</div>
-          )}
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
-}

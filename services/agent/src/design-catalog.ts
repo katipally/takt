@@ -67,6 +67,16 @@ flowchart TD
 • Keep node labels SHORT and plain — avoid \`()[]{}\` and punctuation inside the label text (the parser chokes); use quotes if you must: \`A["Heat to 215 C"]\`.
 • Good for: troubleshooting decision trees, load/unload sequences, calibration state flow. It renders + themes automatically and fits the column width.`,
   },
+  workflows: {
+    blurb: "Prox product workflows — troubleshooter, product card, selector, sizing calculator, step guide, kit builder",
+    body: `WORKFLOWS — the repeatable product-support formats. Pick the one that fits the ask and build it grounded in the retrieved graph (cite every spec). Each is a LAYOUT recipe; pull the components/figures/interactive modules it names.
+• TROUBLESHOOTER — symptom (in the user's words) as the lead → a decision flow (\`mermaid\`) OR \`takt-cols-2\` cause cards → the cited fix steps beside their figures → a safety \`.takt-callout[warn]\`. End with "if that didn't work" next steps. (This is the flagship — a diagnosis, not an article.)
+• PRODUCT CARD — hero(name + one-line + hero figure/3D) → a \`.takt-stat\` row of the headline specs → a full-width spec \`<table>\` (dimensions, capabilities, ratings) → a compatibility/at-a-glance card. Every number cited.
+• SELECTOR — "which one should I use/buy": an \`interactive\` picker (\`<select>\`/\`<input>\` for the user's requirement — material, size, load, temp) that filters to the right variant/SKU and shows WHY, backed by a comparison \`<table>\` of the options with a verdict chip each.
+• SIZING CALCULATOR — an \`interactive\` calc: inputs (dimensions / load / temperature / distance) → \`<script>\` computes the requirement from the manual's formula/table → result in \`.takt-stat\` tiles + the recommended part, with the cited source rule. Always compute a sensible default on load.
+• STEP GUIDE — hero → numbered steps, each paired with its cited figure or a stat → tools/parts \`.takt-chips\` up top → warnings inline as \`.takt-callout\`. A compact quick-reference card at the end.
+• KIT BUILDER — the goal → \`takt-cols-2/3\` of required parts (each a card: part name, number, qty, a \`<takt-model>\`/figure) → a running "what you need" \`<table>\` with quantities → total count. Use \`<takt-action>\` to let the user confirm/adjust a part.`,
+  },
   interactive: {
     blurb: "in-canvas calculators, selectors, toggles — real <input>/<select>/<button> + <script>",
     body: `INTERACTIVE — make the answer a TOOL when it helps (a settings picker, a unit/temp calculator, a symptom selector). Write plain \`<input>\`/\`<select>\`/\`<button>\` PLUS a \`<script>\` (streamed LAST) that reads them and updates the DOM. It runs sandboxed in the canvas — no round-trip.
@@ -98,6 +108,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   assert(readDesign(["layout"]).includes("HERO = a PAIR"), "layout module loads");
   assert(readDesign(["chart", "mermaid"]).includes("viewBox") && readDesign(["chart", "mermaid"]).includes("takt-mermaid"), "multiple modules concat");
   assert(readDesign(["nope"]).startsWith("No such module"), "unknown module → hint");
-  assert(moduleIndex().includes("layout") && moduleIndex().includes("interactive"), "index lists modules");
+  assert(readDesign(["workflows"]).includes("TROUBLESHOOTER") && readDesign(["workflows"]).includes("KIT BUILDER"), "workflows module loads Prox recipes");
+  assert(moduleIndex().includes("layout") && moduleIndex().includes("workflows") && moduleIndex().includes("interactive"), "index lists modules");
   console.log("design-catalog self-check ok");
 }

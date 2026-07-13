@@ -7,7 +7,6 @@ import { KeyRound, Check, Trash2, ShieldAlert } from "lucide-react";
 // can't bundle into this client component.
 import { BUILTIN_PROVIDERS } from "@takt/harness/registry";
 import { allowedEfforts } from "@takt/harness/types";
-import { liveRecsFor } from "@takt/shared";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 
@@ -64,12 +63,10 @@ export function ModelsSettings() {
 
   const chatProviderId = settings?.chatProviderId ?? providers.find((p) => p.isDefault)?.kind ?? providers[0]?.kind ?? PROVIDERS[0]!.id;
   const captionProviderId = settings?.captionProviderId ?? chatProviderId;
-  const liveProviderId = settings?.liveProviderId ?? chatProviderId;
   const buildProviderId = settings?.buildProviderId ?? chatProviderId;
 
   const { data: chatModels = [] } = useQuery({ queryKey: ["models", chatProviderId], queryFn: () => api.models(chatProviderId), enabled: !!chatProviderId });
   const { data: captionModels = [] } = useQuery({ queryKey: ["models", captionProviderId], queryFn: () => api.models(captionProviderId), enabled: !!captionProviderId });
-  const { data: liveModels = [] } = useQuery({ queryKey: ["models", liveProviderId], queryFn: () => api.models(liveProviderId), enabled: !!liveProviderId });
   const { data: buildModels = [] } = useQuery({ queryKey: ["models", buildProviderId], queryFn: () => api.models(buildProviderId), enabled: !!buildProviderId });
 
   const saveSetting = useMutation({
@@ -133,46 +130,6 @@ export function ModelsSettings() {
           <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-[var(--takt-arc,#e2701f)]" />
           <span>This key is shared by everyone who can open this instance (there&apos;s no login). Use a spend-limited key, remove it when you&apos;re done, or run a private copy.</span>
         </div>
-      </section>
-
-      <section>
-        <h2 className="text-[15px] font-semibold">Live voice provider &amp; model</h2>
-        <p className="mt-1 text-[12.5px] text-muted-foreground">
-          The model that talks in Live mode. Pick a fast, low-latency one — voice is realtime, so time-to-first-word matters more than raw depth. Leave the model empty to reuse your chat model.
-        </p>
-        <div className="mt-3 flex flex-wrap items-end gap-3">
-          <div>
-            <label htmlFor="live-provider" className="mb-1 block text-[11.5px] text-faint">Provider</label>
-            {providerSelect(liveProviderId, (id) => saveSetting.mutate({ liveProviderId: id, liveModel: "" }), "live-provider")}
-          </div>
-          <div className="flex-1">
-            <label htmlFor="live-model" className="mb-1 block text-[11.5px] text-faint">Model</label>
-            <select id="live-model" className={cn(inputCls, "max-w-md")} value={settings?.liveModel ?? ""} onChange={(e) => saveSetting.mutate({ liveModel: e.target.value })}>
-              <option value="">{liveModels.length ? "Reuse chat model" : "Add a key to load models…"}</option>
-              {liveModels.map((m) => <option key={m.id} value={m.id}>{m.display_name}</option>)}
-            </select>
-          </div>
-        </div>
-        {liveRecsFor(liveProviderId).length > 0 && (
-          <div className="mt-3">
-            <p className="mb-1.5 text-[11.5px] text-faint">Recommended for live</p>
-            <div className="flex flex-wrap gap-2">
-              {liveRecsFor(liveProviderId).map((r) => {
-                const active = settings?.liveModel === r.model;
-                return (
-                  <button key={r.model} title={r.note} onClick={() => saveSetting.mutate({ liveModel: r.model })}
-                    className={cn("rounded-full border px-3 py-1.5 text-[12px] transition",
-                      active ? "border-foreground bg-foreground text-background"
-                        : "border-border text-muted-foreground hover:border-border-heavy hover:text-foreground")}>
-                    {r.default ? "✦ " : ""}{r.label}
-                    {!r.vision && <span className="ml-1 opacity-60">· no camera</span>}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-        {liveProviderId !== chatProviderId && <div className="mt-3"><ProviderKey kind={liveProviderId} /></div>}
       </section>
 
       <section>

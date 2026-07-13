@@ -1,4 +1,4 @@
-import { Search, FileText, Image as ImageIcon, Boxes, Check, Globe, Eye, HelpCircle, type LucideIcon } from "lucide-react";
+import { Search, FileText, Image as ImageIcon, Boxes, Check, Globe, Eye, HelpCircle, Target, Waypoints, Route, type LucideIcon } from "lucide-react";
 
 // One source of truth for tool → { icon, active label, done label }, shared by the
 // ProcessRail step log and the StatusBar strip. `active` shows while the tool runs
@@ -8,6 +8,9 @@ import { Search, FileText, Image as ImageIcon, Boxes, Check, Globe, Eye, HelpCir
 export interface ToolMeta { icon: LucideIcon; active: string; done: string; }
 
 export const TOOL_META: Record<string, ToolMeta> = {
+  find_entity: { icon: Target, active: "Pinpointing the part…", done: "Found the part" },
+  explore_entity: { icon: Waypoints, active: "Tracing connections…", done: "Traced connections" },
+  trace_path: { icon: Route, active: "Finding the link…", done: "Found the link" },
   search_product: { icon: Search, active: "Searching the product…", done: "Searched the product" },
   get_media: { icon: ImageIcon, active: "Gathering media…", done: "Gathered the media" },
   read_profile: { icon: FileText, active: "Reading the docs…", done: "Read the docs" },

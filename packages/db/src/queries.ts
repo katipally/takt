@@ -100,15 +100,29 @@ export function upsertSourceManual(m: {
 // ─── Page images ───────────────────────────────────────────────────────────
 export function upsertPageImage(pi: {
   manualId: string; productId: string; pageNumber: number;
-  pngPath: string; width: number; height: number; caption?: string | null;
+  pngPath: string; width: number; height: number;
+  caption?: string | null; pngHash?: string | null; parseJson?: string | null;
 }): void {
+  // OVERWRITE caption/parse (not COALESCE): when a page is replaced its hash
+  // changes and the caller passes null, so stale text is CLEARED rather than kept
+  // (the old COALESCE bug). Unchanged pages pass the cached values back in.
   db().prepare(
-    `INSERT INTO page_images (id, manual_id, product_id, page_number, png_path, width, height, caption)
-     VALUES (?,?,?,?,?,?,?,?)
+    `INSERT INTO page_images (id, manual_id, product_id, page_number, png_path, width, height, caption, png_hash, parse_json)
+     VALUES (?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(manual_id, page_number) DO UPDATE SET
        png_path=excluded.png_path, width=excluded.width, height=excluded.height,
-       caption=COALESCE(excluded.caption, page_images.caption)`,
-  ).run(randomUUID(), pi.manualId, pi.productId, pi.pageNumber, pi.pngPath, pi.width, pi.height, pi.caption ?? null);
+       png_hash=excluded.png_hash, caption=excluded.caption, parse_json=excluded.parse_json`,
+  ).run(randomUUID(), pi.manualId, pi.productId, pi.pageNumber, pi.pngPath, pi.width, pi.height, pi.caption ?? null, pi.pngHash ?? null, pi.parseJson ?? null);
+}
+
+/** The cached caption + structured parse for a page — returned ONLY when the
+ *  stored image hash matches the current render, so a replaced manual never
+ *  reuses stale text and a re-ingest of an unchanged page skips the vision call. */
+export function getCachedPage(manualId: string, pageNumber: number, pngHash: string): { caption: string; parseJson: string | null } | null {
+  const row = db().prepare(`SELECT caption, png_hash, parse_json FROM page_images WHERE manual_id=? AND page_number=?`)
+    .get(manualId, pageNumber) as { caption: string | null; png_hash: string | null; parse_json: string | null } | undefined;
+  if (!row || row.png_hash !== pngHash || !row.caption) return null;
+  return { caption: row.caption, parseJson: row.parse_json };
 }
 
 // All page images (with captions) for a manual, in page order — the author step
@@ -121,9 +135,9 @@ export function listPageImages(manualId: string): PageImage[] {
   ).all(manualId) as PageImage[];
 }
 
-export function setPageCaption(manualId: string, pageNumber: number, caption: string): void {
-  db().prepare(`UPDATE page_images SET caption=? WHERE manual_id=? AND page_number=?`)
-    .run(caption, manualId, pageNumber);
+export function setPageCaption(manualId: string, pageNumber: number, caption: string, parseJson?: string | null): void {
+  db().prepare(`UPDATE page_images SET caption=?, parse_json=COALESCE(?, parse_json) WHERE manual_id=? AND page_number=?`)
+    .run(caption, parseJson ?? null, manualId, pageNumber);
 }
 
 export function getPageImage(productId: string, manualKind: ManualKind | null, page: number): (PageImage & { manualKind: ManualKind; manualTitle: string }) | undefined {

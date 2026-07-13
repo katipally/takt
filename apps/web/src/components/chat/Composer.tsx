@@ -2,19 +2,17 @@
 
 import { useEffect, useRef, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
-import { ArrowUp, Square, Mic, Plus, X, AudioLines } from "lucide-react";
+import { ArrowUp, Square, Plus, X } from "lucide-react";
 import type { Attachment } from "@/lib/chatStore";
-import { cn } from "@/lib/cn";
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random() + Date.now()));
 
 export function Composer({
-  onSend, onStop, isStreaming, onOpenLive,
+  onSend, onStop, isStreaming,
 }: {
   onSend: (text: string, attachments?: Attachment[]) => void;
   onStop: () => void;
   isStreaming: boolean;
-  onOpenLive: () => void;
 }) {
   const reduce = useReducedMotion();
   // Shared morph spring for the composer ⇄ voice-bar transition (layoutId
@@ -23,11 +21,8 @@ export function Composer({
   const morph = reduce ? { duration: 0 } : { type: "spring" as const, stiffness: 400, damping: 34, mass: 0.9 };
   const [value, setValue] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [listening, setListening] = useState(false);
-  const [micNote, setMicNote] = useState<string | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
-  const recogRef = useRef<any>(null);
 
   useEffect(() => {
     const ta = taRef.current;
@@ -51,20 +46,6 @@ export function Composer({
       next.push({ id: uid(), mediaType: f.type, dataUrl });
     }
     setAttachments((a) => [...a, ...next].slice(0, 4));
-  }
-
-  function toggleMic() {
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) { setMicNote("Voice input needs Chrome or Edge."); setTimeout(() => setMicNote(null), 4000); return; }
-    if (listening) { recogRef.current?.stop(); return; }
-    const r = new SR();
-    r.lang = "en-US"; r.interimResults = true; r.continuous = false;
-    r.onresult = (e: any) => setValue(Array.from(e.results).map((x: any) => x[0].transcript).join(""));
-    r.onend = () => setListening(false);
-    r.onerror = () => setListening(false);
-    recogRef.current = r;
-    setListening(true);
-    r.start();
   }
 
   return (
@@ -101,14 +82,6 @@ export function Composer({
           <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
 
           <div className="flex items-center gap-1.5">
-            <button onClick={onOpenLive} title="Live conversation" aria-label="Start a live voice conversation"
-              className="grid size-8 place-items-center rounded-full text-muted-foreground transition hover:bg-foreground/10 hover:text-accent">
-              <AudioLines className="size-4" />
-            </button>
-            <button onClick={toggleMic} title="Speak your question" aria-label="Speak your question" aria-pressed={listening}
-              className={cn("grid size-8 place-items-center rounded-full text-muted-foreground transition hover:bg-foreground/10", listening && "bg-arc-soft text-arc animate-pulse-dot")}>
-              <Mic className="size-4" />
-            </button>
             {isStreaming ? (
               <button onClick={onStop} title="Stop" aria-label="Stop generating" className="grid size-8 place-items-center rounded-full bg-foreground text-background transition hover:opacity-90"><Square className="size-3 fill-current" /></button>
             ) : (
@@ -118,8 +91,6 @@ export function Composer({
           </div>
         </div>
       </motion.div>
-      {/* Only a transient mic hint appears below the pill — no permanent caption. */}
-      {micNote && <p className="mt-2 text-center text-[11px] text-muted-foreground" role="status">{micNote}</p>}
     </div>
   );
 }

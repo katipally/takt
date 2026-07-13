@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { updateProvider, clearProviderKey } from "@takt/db";
+import { forbidden, isAdmin } from "@/lib/admin-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,6 +9,7 @@ export const dynamic = "force-dynamic";
 // Validate the shape up front so an obviously-wrong paste fails here with a
 // clear message instead of a confusing 401 mid-chat.
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  if (!(await isAdmin())) return forbidden();
   const { id } = await params;
   const body = await req.json().catch(() => ({}));
 

@@ -14,7 +14,7 @@ import { Wordmark } from "@/components/brand/Wordmark";
 // never shows the conversation; prose/reasoning/tools/sources live in the rail.
 
 export function Stage({
-  canvas, chatId, productSlug, constructing, buildStatus, streaming, empty, heading, subheading, starters, onStarter, liveMode,
+  canvas, chatId, productSlug, constructing, buildStatus, streaming, empty, heading, subheading, starters, onStarter,
 }: {
   canvas?: CanvasPart;
   chatId: string;
@@ -27,7 +27,6 @@ export function Stage({
   subheading?: string;
   starters?: string[];
   onStarter?: (s: string) => void;
-  liveMode?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   // Stick to bottom while a canvas streams in.
@@ -52,7 +51,6 @@ export function Stage({
       {streaming && (
         <div aria-hidden className="pointer-events-none sticky inset-x-0 top-0 z-30 h-[3px] bg-accent/80 animate-pulse" />
       )}
-      {liveMode && <div aria-hidden className="pointer-events-none absolute inset-0 bg-[radial-gradient(55%_45%_at_50%_28%,var(--accent-soft,rgba(120,130,255,0.1)),transparent_70%)]" />}
       {/* The canvas owns the WHOLE stage (full-bleed; .takt-page provides its own
           padding + layout). It renders OUTSIDE the crossfade so morphdom never
           remounts. */}
@@ -68,7 +66,7 @@ export function Stage({
             <motion.div key={mode} {...fade}>
               {mode === "empty"
                 ? <EmptyState heading={heading} subheading={subheading} starters={starters} onStarter={onStarter} />
-                : <Placeholder streaming={streaming} status={buildStatus ?? null} live={liveMode} />}
+                : <Placeholder streaming={streaming} status={buildStatus ?? null} />}
             </motion.div>
           </AnimatePresence>
         </div>
