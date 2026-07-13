@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS entities (
   manual_id    TEXT,                        -- provenance pointer (not a strict FK — may be null / synthetic)
   page         INTEGER,                    -- source page (provenance)
   content_hash TEXT,
+  embedding    BLOB,                        -- name+summary vector (Float32 LE); in-DB semantic search
   updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_entities_product ON entities(product_id);
@@ -116,7 +117,8 @@ CREATE TABLE IF NOT EXISTS kg_chunks (
   manual_id  TEXT,
   page       INTEGER,
   kind       TEXT NOT NULL DEFAULT 'page', -- page|section|caption|table|region
-  text       TEXT NOT NULL
+  text       TEXT NOT NULL,
+  embedding  BLOB                          -- chunk text vector (Float32 LE)
 );
 CREATE INDEX IF NOT EXISTS idx_kgchunks_product ON kg_chunks(product_id);
 
@@ -129,7 +131,8 @@ CREATE TABLE IF NOT EXISTS kg_media (
   caption      TEXT NOT NULL DEFAULT '',
   subsystem    TEXT,
   bbox_json    TEXT,                      -- structured crop {page,x,y,w,h,expected_labels[]}
-  content_hash TEXT
+  content_hash TEXT,
+  embedding    BLOB                       -- caption vector (Float32 LE)
 );
 CREATE INDEX IF NOT EXISTS idx_kgmedia_product ON kg_media(product_id);
 
@@ -185,6 +188,13 @@ export function migrate(handle: MigrateHandle) {
   // rendered page is byte-identical (fixes stale captions after a manual is replaced).
   try { handle.exec("ALTER TABLE page_images ADD COLUMN png_hash TEXT"); } catch { /* already present */ }
   try { handle.exec("ALTER TABLE page_images ADD COLUMN parse_json TEXT"); } catch { /* already present */ }
+
+  // Unify semantic search into the KG: embeddings move from the on-disk vectors.bin
+  // into a BLOB on each entity/chunk/media row, so one store answers lexical (FTS),
+  // semantic (cosine over these BLOBs), and graph traversal. Additive columns.
+  try { handle.exec("ALTER TABLE entities ADD COLUMN embedding BLOB"); } catch { /* already present */ }
+  try { handle.exec("ALTER TABLE kg_chunks ADD COLUMN embedding BLOB"); } catch { /* already present */ }
+  try { handle.exec("ALTER TABLE kg_media ADD COLUMN embedding BLOB"); } catch { /* already present */ }
 
   // Master mode: chats.product_id must be NULLABLE. Rebuild the table if it's
   // still the old NOT NULL shape. FKs OFF so dropping chats (referenced by

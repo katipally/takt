@@ -18,7 +18,7 @@ const MAX_STEPS = 4;
 function canvasSystemPrompt(): string {
   return `You are Takt's canvas composer for AI TECHNICAL SUPPORT. Compose ONE self-contained HTML page (no <html>/<head>/<body>) that answers the brief, then call create_canvas exactly once. You never write prose to the user.
 
-STREAM IN ORDER: any <style> first → the HTML → any <script> LAST. The design system (fonts, colors, .takt-* classes, the page grid) is ALREADY loaded — use its classes + \`var(--takt-*)\` tokens; never redeclare colors/fonts. LOOK: clean, editorial, precise, technical; make full use of the canvas WITH breathable space; NO gradients, drop shadows, blur, emoji, or marketing filler; headlines are light-weight serif.
+STREAM IN ORDER: any <style> first → the HTML → any <script> LAST. The design system (fonts, colors, .takt-* classes, the page grid) is ALREADY loaded — use its classes + \`var(--takt-*)\` tokens; never redeclare colors/fonts. Do NOT wrap your output in a \`.takt-page\` div — that wrapper is already applied; emit the blocks directly. LOOK: clean, editorial, precise, technical; make full use of the canvas WITH breathable space; NO gradients, drop shadows, blur, emoji, or marketing filler; headlines are light-weight serif.
 
 SHOW, don't tell — pull at least one real manual figure / 3D part / video / diagram to carry the answer (use ONLY real /assets URLs a tool returned this turn; never invent one). Give each top-level block a stable \`data-takt-id\`.
 
@@ -77,6 +77,7 @@ export interface CanvasWorkerOpts {
   facts?: string;
   mediaHints?: string;
   figures?: string[]; // real /assets URLs the page may embed
+  hero?: { url: string; tag: "model" | "figure" | "video" }; // deterministic hero the page MUST lead with
   /** edit: the current page + optional single-block target */
   currentHtml?: string;
   target?: string;
@@ -100,8 +101,15 @@ ${o.currentHtml ?? ""}`;
   const figs = o.figures?.length
     ? o.figures.map((u) => `- ${u}`).join("\n")
     : "(none gathered — use an inline <svg> or text only, no <img>)";
+  // Deterministic hero: the gather step already chose the strongest visual (a 3D
+  // part beats a crop beats a photo). The worker MUST lead with it in the hero
+  // pair — this is what makes the opening consistent instead of model-roulette.
+  const heroMandate = o.hero
+    ? `\nHERO MANDATE: open the page with \`<div class="takt-grid takt-split" data-takt-id="hero">\` whose media child is <takt-${o.hero.tag} src="${o.hero.url}" caption="…"> paired with the eyebrow + serif <h1> + .takt-lead. Do NOT bury this visual lower down.\n`
+    : "";
   return `QUESTION: ${o.question ?? o.brief}
 BRIEF: ${o.brief}
+${heroMandate}
 
 GATHERED MEDIA — embed these EXACT URLs (never invent one): as <takt-figure src="…"> for a manual figure/image, <takt-model src="…"> for a 3D part, <takt-video src="…"> for a clip. Any images shown to you below carry a faint 0–1 coordinate grid FOR YOUR REFERENCE (the user sees them clean) — read feature x,y off that grid for annotations:
 ${o.mediaHints || figs}
@@ -143,15 +151,15 @@ export async function runCanvasWorker(o: CanvasWorkerOpts): Promise<boolean> {
         lastLen = html.length;
         await o.emit({ type: "canvas_delta", canvasId: o.canvasId, html });
       };
-      // NO reasoning on compose. Thinking here is a pre-write PAUSE — the model
-      // deliberates silently, then dumps the whole page at once (the user stares
-      // at the title, then the artifact appears in a burst). Minimal reasoning
-      // makes the create_canvas args start streaming immediately, so the page
-      // visibly PAINTS itself token-by-token. (reasoningEffort → OpenAI; effort
-      // stays off so Anthropic/MiniMax send no thinking params either.)
+      // PLAN THEN PAINT. A brief think lets the model compose a real spread (which
+      // archetype, what fills each row) instead of dumping generic blocks — the fix
+      // for "artifacts feel generic". "low" keeps the pause short so the page still
+      // visibly PAINTS itself token-by-token once create_canvas starts streaming.
+      // (reasoningEffort → OpenAI; effort stays off so Anthropic/MiniMax send no
+      // thinking params either.)
       void effort;
       const turn = await collectTurn(
-        streamProvider(provider, apiKey ?? undefined, { model, messages, tools: [READ_DESIGN_TOOL, CREATE_CANVAS_TOOL], reasoningEffort: "minimal", maxTokens: 16000 }, o.signal),
+        streamProvider(provider, apiKey ?? undefined, { model, messages, tools: [READ_DESIGN_TOOL, CREATE_CANVAS_TOOL], reasoningEffort: "low", maxTokens: 16000 }, o.signal),
         // swallow the worker's prose/reasoning — only the canvas reaches the user
         (e: SseEvent) => { if (e.type !== "text_delta" && e.type !== "reasoning_delta") return o.emit(e); },
         onArgDelta,

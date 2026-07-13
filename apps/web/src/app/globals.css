@@ -288,6 +288,13 @@ summary:focus-visible,
 .takt-card{background:var(--takt-card);border:1px solid var(--takt-border);border-radius:var(--takt-radius);padding:clamp(20px,2.4cqi,30px)}
 .takt-panel{background:var(--takt-surface);border:1px solid var(--takt-border);border-radius:var(--takt-radius);padding:clamp(20px,2.4cqi,30px)}
 
+/* HERO — the opening pair. Center the two columns so a shorter text side never
+   leaves dead space beside taller media (the "empty black" failure in the wild),
+   and cap the hero media so it can't tower over the intro. */
+.takt-page > .takt-grid[data-takt-id="hero"],.takt-page > .takt-hero{align-items:center}
+.takt-grid[data-takt-id="hero"] .takt-model-view{height:clamp(260px,32cqi,400px)}
+.takt-grid[data-takt-id="hero"] figure.takt-figure img{max-height:min(46vh,400px)}
+
 /* Info blocks */
 .takt-callout{border:1px solid var(--takt-border);border-left-width:3px;border-radius:var(--takt-radius-sm);
   padding:.85em 1.1em;margin:1.2em 0;background:var(--takt-surface)}
@@ -345,9 +352,11 @@ video.takt-video{width:100%;display:block;border-radius:var(--takt-radius-sm);ba
 .takt-mermaid{display:block;margin:.4em 0;text-align:center}
 .takt-mermaid svg{max-width:100%;height:auto;margin-inline:auto}
 
-/* 3D part — interactive <model-viewer> rendered inline (no click-to-reveal) */
-.takt-model-view{position:relative;overflow:hidden;border:1px solid var(--takt-border);border-radius:var(--takt-radius-sm);background:var(--takt-surface)}
-.takt-model-view model-viewer{display:block;width:100%}
+/* 3D part — interactive <model-viewer> rendered inline (no click-to-reveal).
+   Height scales with the canvas width (the two targets ~1100 / 390) instead of a
+   fixed 360px, so a hero 3D part matches its text column instead of leaving a gap. */
+.takt-model-view{position:relative;overflow:hidden;border:1px solid var(--takt-border);border-radius:var(--takt-radius-sm);background:var(--takt-surface);height:clamp(240px,34cqi,380px)}
+.takt-model-view model-viewer{display:block;width:100%;height:100%}
 .takt-model-status{display:grid;place-items:center;min-height:172px;font-family:var(--takt-sans);font-size:.85rem;color:var(--takt-muted)}
 .takt-model-hint{position:absolute;bottom:.55em;left:50%;transform:translateX(-50%);pointer-events:none;
   background:rgba(0,0,0,.45);color:rgba(255,255,255,.85);font-family:var(--takt-sans);font-size:.72rem;

@@ -1,19 +1,22 @@
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join, basename } from "node:path";
 import {
-  PAGES_DIR, PDF_DIR, HERO_DIR, PRODUCTS_DIR,
+  PAGES_DIR, PDF_DIR, HERO_DIR, PRODUCTS_DIR, DATA_DIR,
   upsertProduct, upsertManual, upsertSourceManual, upsertPageImage, getCachedPage,
   setPageCaption, setSetting, replaceProductGraph, contentHash,
+  getManualByKind, setProductHero,
 } from "@takt/db";
-import { buildIndex, writeMedia, addMedia, loadMedia, type MediaItem } from "@takt/profile";
+import { writeMedia, addMedia, loadMedia, embedGraph, type MediaItem } from "@takt/profile";
+import { linkGraph } from "./link.js";
 import { renderPdf } from "./pdf.js";
-import { parsePage, parsePageText, generateStarters, detectProduct } from "./caption.js";
+import { parsePage, parsePageText, parseImage, generateStarters, detectProduct } from "./caption.js";
 import { modelVision } from "@takt/shared";
 import { fetchWebSource } from "./sources.js";
 import { authorFromUnits, type ProfileConceptInput } from "./author.js";
 import { buildGraphInput, type PageParse } from "./graph-build.js";
 import { addMeshParts, type ModelFile } from "./mesh.js";
 import { addVideo, type VideoFile } from "./video.js";
+import { transcribeAudio } from "./transcribe.js";
 import type { ManualKind, Product } from "@takt/shared";
 import type { ProviderInfo } from "@takt/harness";
 
@@ -29,10 +32,13 @@ export interface IngestInput {
   webSources?: { url: string; title?: string }[];
   // 3D part models (STL) → converted to .glb and added as `mesh` media.
   models?: ModelFile[];
-  // A repair/walkthrough video → added as `video_clip` media.
-  video?: VideoFile;
+  // Walkthrough/repair videos → each chaptered into timestamped `video_clip` media.
+  videos?: VideoFile[];
   // Loose images → added as `image` media.
   images?: { filename: string; data: Uint8Array }[];
+  // Audio (voice notes / recordings) → transcribed to text and folded in as
+  // retrievable, linkable chunks. Best-effort: needs TAKT_WHISPER_CMD, else skipped.
+  audios?: { filename: string; data: Uint8Array }[];
   // Catalogued misc files (STP/STEP, gcode, other) — recorded in resources.json,
   // NOT otherwise ingested (no dependency-free tessellator for STEP).
   resources?: { filename: string; kind: string }[];
@@ -69,6 +75,11 @@ const slugify = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 48) || "product";
 
 const safeJson = (s: string): any => { try { return JSON.parse(s); } catch { return undefined; } };
+
+const mimeFromName = (f: string): string => {
+  const e = f.toLowerCase().split(".").pop();
+  return e === "jpg" || e === "jpeg" ? "image/jpeg" : e === "webp" ? "image/webp" : e === "gif" ? "image/gif" : "image/png";
+};
 
 async function pMap<T>(items: T[], concurrency: number, fn: (item: T) => Promise<void>): Promise<void> {
   let i = 0;
@@ -229,6 +240,20 @@ export async function ingestProduct(input: IngestInput): Promise<IngestResult> {
     await report(`Fetched source: ${manual.title} (${fetched.sections.length} sections)`);
   }
 
+  // Audio → transcript (best-effort). Each becomes a text-only source concept +
+  // graph chunk, so it's retrievable and the cross-modal linker can connect it.
+  for (const au of input.audios ?? []) {
+    await report(`Transcribing ${au.filename}…`);
+    const transcript = transcribeAudio(au.filename, au.data);
+    if (!transcript) { await report(`Skipped audio ${au.filename} (no transcript — set TAKT_WHISPER_CMD)`); continue; }
+    const title = titleFromName(au.filename.replace(/\.[^.]+$/, ""));
+    const manual = upsertSourceManual({ productId: product.id, kind: "other", title: `${title} (audio)`, sourceRef: au.filename, pageCount: 1 });
+    concepts.push({ title: manual.title, source: au.filename, units: [{ label: "Transcript", text: transcript }] });
+    pageParses.push({ manualId: manual.id, manualKind: "other", page: 1, imageUrl: "", textMd: transcript });
+    if (sampleText.length < 4000) sampleText += transcript.slice(0, 600) + "\n";
+    await report(`Transcribed ${au.filename}`);
+  }
+
   // Author the canonical Profile from everything captured. This deletes and
   // rewrites the bundle (fresh-start) and seeds the media index with `page`
   // items, so it MUST run before any other addMedia (mesh/video/images).
@@ -242,22 +267,32 @@ export async function ingestProduct(input: IngestInput): Promise<IngestResult> {
     if (input.models?.length) {
       await report("Adding 3D part models…");
       const mesh = await addMeshParts(slug, input.models, { onProgress: report });
-      await report(`3D models: ${mesh.parts} parts in ${mesh.subsystems} subsystems`);
+      await report(`3D models: ${mesh.parts} parts in ${mesh.subsystems} subsystems${mesh.deduped ? ` (${mesh.deduped} duplicate-format twins skipped)` : ""}`);
     }
-    if (input.video) {
-      await report("Adding repair video…");
-      await addVideo(slug, input.video, { provider, model, apiKey, onProgress: report });
+    for (const vid of input.videos ?? []) {
+      await report(`Adding video ${vid.filename}…`);
+      await addVideo(slug, vid, { provider, model, apiKey, onProgress: report });
     }
     if (input.images?.length) {
       await report("Adding images…");
-      const items: MediaItem[] = input.images.map((img) => {
+      const items: MediaItem[] = [];
+      let done = 0;
+      for (const img of input.images) {
         const link = writeMedia(slug, img.filename, img.data);
-        return {
-          id: `image:${img.filename}`, kind: "image" as const,
-          url: `/assets/products/${slug}/${link}`,
-          caption: titleFromName(img.filename.replace(/\.[^.]+$/, "")),
-        };
-      });
+        // Vision-caption each image so it's understood (not a filename). The rich
+        // caption is what the cross-modal linker uses to connect it to the right
+        // part/topic even when the file name says nothing.
+        let caption = titleFromName(img.filename.replace(/\.[^.]+$/, ""));
+        if (canSee) {
+          try {
+            const r = await parseImage(img.data, provider, model, apiKey, mimeFromName(img.filename));
+            inputTokens += r.inputTokens; outputTokens += r.outputTokens;
+            if (r.textMd.trim()) caption = r.textMd.trim().slice(0, 400);
+          } catch { /* keep the filename caption */ }
+        }
+        items.push({ id: `image:${img.filename}`, kind: "image" as const, url: `/assets/products/${slug}/${link}`, caption });
+        await report(`Reading images: ${++done}/${input.images.length}`);
+      }
       addMedia(slug, items);
       await report(`Images: ${items.length}`);
     }
@@ -272,16 +307,10 @@ export async function ingestProduct(input: IngestInput): Promise<IngestResult> {
     writeFileSync(join(PRODUCTS_DIR, slug, "resources.json"), JSON.stringify(input.resources, null, 2));
   }
 
-  // Build the compiled index ONCE — chunks the authored markdown and embeds
-  // chunks + media captions into a single binary vector store. Runtime does zero
-  // processing after this. Best-effort: retrieval falls back to grep without it.
-  try {
-    await report("Building index…");
-    const idx = await buildIndex(slug);
-    await report(`Index: ${idx.chunks} chunks${idx.embedded ? " + embeddings" : ""}`);
-  } catch (e: any) {
-    await report(`Index skipped: ${String(e?.message ?? e)}`);
-  }
+  // NOTE: the old flat markdown-chunk index (buildIndex → chunks.json + vectors.bin)
+  // is retired — semantic search now lives in the KG (embedGraph writes vectors onto
+  // the entity/chunk/media rows; retrieval fuses FTS + those vectors). The markdown
+  // Profile remains as the human-editable export + read_profile source only.
 
   // Build the KNOWLEDGE GRAPH from the structured page parses + the media the
   // steps above wrote (3D parts, video clips, images). Deterministic + additive:
@@ -293,10 +322,31 @@ export async function ingestProduct(input: IngestInput): Promise<IngestResult> {
     const videos = allMedia.filter((m) => m.kind === "video_clip").map((m) => ({ name: m.caption.slice(0, 60), assetUrl: m.url, caption: m.caption, tStart: m.tStart, tEnd: m.tEnd }));
     const imgs = allMedia.filter((m) => m.kind === "image").map((m) => ({ name: m.caption, assetUrl: m.url, caption: m.caption }));
     const graph = buildGraphInput({ productId: product.id, pages: pageParses, meshes, videos, images: imgs });
+    // Embed every entity/chunk/media INTO the graph rows (the unified store), then
+    // run the linking cascade (fuzzy + embedding cross-modal) so media/topics that
+    // don't share an exact name still connect. Both are best-effort.
+    const embedded = await embedGraph(graph);
+    await linkGraph(graph, { onProgress: report });
     replaceProductGraph(product.id, graph);
-    await report(`Graph: ${graph.entities.length} entities, ${graph.edges.length} links, ${graph.media.length} media`);
+    await report(`Graph: ${graph.entities.length} entities, ${graph.edges.length} links, ${graph.media.length} media${embedded ? " + embeddings" : ""}`);
   } catch (e: any) {
     await report(`Graph skipped: ${String(e?.message ?? e)}`);
+  }
+
+  // Auto-pick a hero when none was uploaded, so the product never shows an empty
+  // hero. Best available image: a loose product photo, else the owner manual's
+  // cover (page 1) — a real picture beats a dim letter everywhere it's shown.
+  if (!heroPath) {
+    try {
+      const looseImg = loadMedia(slug).find((m) => m.kind === "image");
+      let auto: string | null = looseImg?.url ? looseImg.url.replace(/^\/assets\//, "") : null;
+      if (!auto) {
+        const owner = getManualByKind(product.id, "owner");
+        const cover = owner ? `pages/${owner.id}/1.png` : null;
+        if (cover && existsSync(join(DATA_DIR, cover))) auto = cover;
+      }
+      if (auto) { setProductHero(product.id, auto); await report("Set product hero"); }
+    } catch { /* best-effort — a missing hero just falls back to the letter */ }
   }
 
   // Product-specific starter questions: one cheap text call, stored for reuse.

@@ -17,6 +17,7 @@ import {
 import {
   profileExists, listConcepts, readConcept, indexExists,
   searchProduct, findMedia, type MediaItem,
+  searchChunks, searchKgMedia, searchEntities,
 } from "@takt/profile";
 import { awaitAnswers } from "./pending.js";
 
@@ -162,12 +163,25 @@ export function buildTaktTools(ctx: {
     parameters: params({ query: z.string().describe("What to find — a symptom, spec, part, procedure, or exact term"), ...productParam }),
     execute: async (args) => {
       const g = searchGuard(args); if ("output" in g) return g;
+      const prod = pageProduct(args)!;
       const id = randomUUID();
       await emit({ type: "tool_start", id, tool: "search_product", summary: String(args.query) });
-      const hits = await searchProduct(g.slug, String(args.query), 8);
-      await emit({ type: "tool_done", id, detail: `${hits.length} hits` });
-      if (!hits.length) return text(`No matches for "${args.query}". Try a synonym, or read_profile a concept.`);
-      const body = hits.map((h) => `[${h.title}${h.page ? ` p.${h.page}` : ""}] ${h.text.replace(/\s+/g, " ").slice(0, 280)}`).join("\n\n");
+      // KG-first (hybrid FTS + semantic over the unified store); fall back to the
+      // legacy flat markdown index only for products with no graph yet.
+      let body: string;
+      let n: number;
+      if (graphExists(prod.id)) {
+        const titles = new Map(getManualsByProduct(prod.id).map((m) => [m.id, m.title]));
+        const chunks = await searchChunks(prod.id, String(args.query), 8);
+        n = chunks.length;
+        body = chunks.map((c) => `[${titles.get(c.manualId ?? "") ?? "manual"}${c.page ? ` p.${c.page}` : ""}] ${c.text.replace(/\s+/g, " ").slice(0, 280)}`).join("\n\n");
+      } else {
+        const hits = await searchProduct(g.slug, String(args.query), 8);
+        n = hits.length;
+        body = hits.map((h) => `[${h.title}${h.page ? ` p.${h.page}` : ""}] ${h.text.replace(/\s+/g, " ").slice(0, 280)}`).join("\n\n");
+      }
+      await emit({ type: "tool_done", id, detail: `${n} hits` });
+      if (!n) return text(`No matches for "${args.query}". Try a synonym, or read_profile a concept.`);
       return text(`${body}\n\nTo SHOW a figure/3D part/video for this, call get_media. To read a concept in full, call read_profile.`);
     },
   };
@@ -179,8 +193,17 @@ export function buildTaktTools(ctx: {
     parameters: params({ query: z.string().describe("What you want to show — a part, step, or region"), kind: z.enum(["figure", "page", "mesh", "video_clip", "image"]).optional().describe("Restrict to one media kind"), ...productParam }),
     execute: async (args) => {
       const g = searchGuard(args); if ("output" in g) return g;
+      const prod = pageProduct(args)!;
       const id = randomUUID();
       await emit({ type: "tool_start", id, tool: "get_media", summary: String(args.query) });
+      // KG media (hybrid) so the ingest cascade's cross-modal links surface — a 3D
+      // part or figure connected by embedding, not just an exact caption match.
+      if (graphExists(prod.id)) {
+        const media = await searchKgMedia(prod.id, String(args.query), 6, args.kind);
+        await emit({ type: "tool_done", id, detail: `${media.length} media` });
+        if (!media.length) return text(`No media for "${args.query}". Use crop_page_image on a manual page instead.`);
+        return text(`${media.map(graphMediaHint).join("\n")}\n\nEmbed only these exact URLs — never invent one. For a manual page, crop_page_image tight to the one figure.`);
+      }
       const media = await findMedia(g.slug, String(args.query), 6, args.kind);
       await emit({ type: "tool_done", id, detail: `${media.length} media` });
       if (!media.length) return text(`No media for "${args.query}". Use crop_page_image on a manual page instead.`);
@@ -315,7 +338,8 @@ export function buildTaktTools(ctx: {
       const g = graphGuard(args); if ("output" in g) return g;
       const id = randomUUID();
       await emit({ type: "tool_start", id, tool: "find_entity", summary: String(args.query) });
-      const ents = findEntity(g.id, String(args.query), 8);
+      // Hybrid (FTS + semantic) so layman words resolve even without a lexical hit.
+      const ents = await searchEntities(g.id, String(args.query), 8);
       await emit({ type: "tool_done", id, detail: `${ents.length} entities` });
       if (!ents.length) return text(`No entity for "${args.query}". Try search_product for free-text passages.`);
       return text(`${ents.map(entLine).join("\n")}\n\nCall explore_entity with an {id} to see what it connects to (parts, the fix, figures, the 3D model, cited pages).`);

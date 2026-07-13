@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, Upload, FileText, Loader2, X, AlertTriangle } from "lucide-react";
+import { ArrowUpRight, Upload, FileText, Loader2, X, AlertTriangle, Trash2 } from "lucide-react";
 import { createSseDecoder } from "@takt/shared";
 import { api } from "@/lib/api";
 import { formatCost } from "@/lib/models";
@@ -12,6 +12,11 @@ import { cn } from "@/lib/cn";
 interface Estimate {
   perFile: { name: string; pages: number }[];
   totalPages: number;
+  pdfPages?: number;
+  images?: number;
+  videos?: number;
+  audios?: number;
+  models?: number;
   model: string;
   provider?: string;
   cost?: { input: number; output: number } | null;
@@ -19,8 +24,8 @@ interface Estimate {
 }
 
 // Rough pre-ingest estimate using the chosen model's live price: ~one vision
-// call per page (~1.6k input + ~0.7k output tokens). Labelled "~"; the real
-// spend is shown after ingest from the actual token counts.
+// call per unit (~1.6k input + ~0.7k output tokens). totalPages already folds in
+// image + video vision units server-side. Labelled "~"; real spend shown after.
 function estCost(est: Estimate): number | null {
   if (!est.cost) return null;
   return (est.totalPages * 1600 * est.cost.input + est.totalPages * 700 * est.cost.output) / 1_000_000;
@@ -28,29 +33,108 @@ function estCost(est: Estimate): number | null {
 
 const inputCls = "w-full rounded-lg border border-border bg-card px-3 py-2 text-[13px] text-foreground outline-none placeholder:text-faint focus:border-border-heavy";
 
+// One folder drop, every modality. Classify a picked file list by extension into
+// the buckets the ingest accepts — this is the "just upload a folder" path.
+const EXT = {
+  pdf: [".pdf"],
+  image: [".png", ".jpg", ".jpeg", ".webp", ".gif"],
+  video: [".mp4", ".mov", ".webm", ".mkv"],
+  audio: [".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"],
+  model: [".stl", ".glb", ".gltf", ".stp", ".step", ".3mf"], // 3D → converted/rendered
+} as const;
+// 3D formats we STILL don't render (need a converter) — flagged, not silently dropped.
+const UNSUPPORTED_3D = [".obj", ".fbx", ".ply", ".dae", ".igs", ".iges"];
+export interface Bucketed { pdfs: File[]; images: File[]; videos: File[]; audios: File[]; models: File[]; skipped: File[] }
+export function classifyFiles(files: File[]): Bucketed {
+  const b: Bucketed = { pdfs: [], images: [], videos: [], audios: [], models: [], skipped: [] };
+  for (const f of files) {
+    const n = f.name.toLowerCase();
+    if (n.startsWith(".") || n.endsWith("/")) continue; // dotfiles / dir entries
+    if (EXT.pdf.some((e) => n.endsWith(e))) b.pdfs.push(f);
+    else if (EXT.image.some((e) => n.endsWith(e))) b.images.push(f);
+    else if (EXT.video.some((e) => n.endsWith(e))) b.videos.push(f);
+    else if (EXT.audio.some((e) => n.endsWith(e))) b.audios.push(f);
+    else if (EXT.model.some((e) => n.endsWith(e))) b.models.push(f);
+    else b.skipped.push(f);
+  }
+  return b;
+}
+const ext = (name: string) => (name.toLowerCase().match(/\.[a-z0-9]+$/)?.[0] ?? "");
+
+type GraphStat = { slug: string; name: string; entities: number; edges: number; chunks: number; media: number; byType: Record<string, number> };
+
 export function ProductsSettings() {
+  const qc = useQueryClient();
   const { data: products = [] } = useQuery({ queryKey: ["products"], queryFn: api.products });
+  // Each product's own knowledge — folded into its row (no separate graph tab).
+  const { data: graphStats = [] } = useQuery<GraphStat[]>({ queryKey: ["admin-graph"], queryFn: () => fetch("/api/admin/graph").then((r) => r.json()) });
+  const statBySlug = new Map(graphStats.map((g) => [g.slug, g]));
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  async function remove(slug: string, name: string) {
+    if (!window.confirm(`Delete "${name}" and ALL its data (manuals, graph, media, chats)? This cannot be undone.`)) return;
+    setDeleting(slug);
+    try {
+      const res = await fetch(`/api/products/${slug}`, { method: "DELETE" });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error ?? "delete failed");
+      qc.invalidateQueries({ queryKey: ["products"] });
+      qc.invalidateQueries({ queryKey: ["admin-graph"] });
+    } catch (err) {
+      window.alert(`Couldn't delete: ${String(err instanceof Error ? err.message : err)}`);
+    } finally {
+      setDeleting(null);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-9">
       <section>
         <h2 className="text-[15px] font-semibold">Products</h2>
-        <p className="mt-1 text-[12.5px] text-muted-foreground">The knowledge base is product-agnostic. Each product is its own manual set, indexed independently.</p>
+        <p className="mt-1 text-[12.5px] text-muted-foreground">Master control. Each product is its own manual set, indexed independently — its knowledge graph is shown per product below.</p>
         <div className="mt-4 flex flex-col gap-2">
-          {products.map((p) => (
-            <div key={p.id} className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3">
-              <div className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-lg bg-surface text-[14px] font-semibold text-muted-foreground">
-                {p.heroPath
-                  // eslint-disable-next-line @next/next/no-img-element
-                  ? <img src={`/assets/${p.heroPath}`} alt="" className="size-full object-cover" />
-                  : p.name.charAt(0)}
+          {products.map((p) => {
+            const g = statBySlug.get(p.slug);
+            return (
+              <div key={p.id} className="rounded-xl border border-border bg-card px-4 py-3">
+                <div className="flex items-center gap-3">
+                  <div className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-lg bg-surface text-[14px] font-semibold text-muted-foreground">
+                    {p.heroPath
+                      // eslint-disable-next-line @next/next/no-img-element
+                      ? <img src={`/assets/${p.heroPath}`} alt="" className="size-full object-cover" />
+                      : p.name.charAt(0)}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[13px] font-medium text-foreground">{p.name}</div>
+                    <div className="truncate text-[11px] text-muted-foreground">{p.manufacturer ?? "—"} · {p.slug}</div>
+                  </div>
+                  <Link href={`/${p.slug}`} className="flex items-center gap-1 text-[12px] text-muted-foreground transition hover:text-foreground">Open <ArrowUpRight className="size-3.5" /></Link>
+                  <button onClick={() => remove(p.slug, p.name)} disabled={deleting === p.slug} aria-label={`Delete ${p.name}`}
+                    className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[12px] text-muted-foreground transition hover:text-destructive disabled:opacity-40">
+                    {deleting === p.slug ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+                  </button>
+                </div>
+                {/* This product's knowledge graph — the old separate tab, now per product. */}
+                {g && (
+                  <div className="mt-3 border-t border-border pt-2.5">
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-muted-foreground">
+                      <span><b className="text-foreground tabular-nums">{g.entities}</b> entities</span>
+                      <span><b className="text-foreground tabular-nums">{g.edges}</b> links</span>
+                      <span><b className="text-foreground tabular-nums">{g.chunks}</b> chunks</span>
+                      <span><b className="text-foreground tabular-nums">{g.media}</b> media</span>
+                      {g.entities === 0 && <span className="text-destructive">empty — re-run ingest</span>}
+                    </div>
+                    {Object.keys(g.byType ?? {}).length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {Object.entries(g.byType).sort((a, b) => b[1] - a[1]).map(([type, n]) => (
+                          <span key={type} className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">{type} <b className="text-foreground">{n}</b></span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-[13px] font-medium text-foreground">{p.name}</div>
-                <div className="truncate text-[11px] text-muted-foreground">{p.manufacturer ?? "—"} · {p.slug}</div>
-              </div>
-              <Link href={`/${p.slug}`} className="flex items-center gap-1 text-[12px] text-muted-foreground transition hover:text-foreground">Open <ArrowUpRight className="size-3.5" /></Link>
-            </div>
-          ))}
+            );
+          })}
           {products.length === 0 && <div className="rounded-xl border border-border bg-card p-4 text-[12.5px] text-muted-foreground">No products yet.</div>}
         </div>
       </section>
@@ -65,33 +149,51 @@ function AddProduct() {
   const qc = useQueryClient();
   const [name, setName] = useState("");
   const [manufacturer, setManufacturer] = useState("");
-  const [files, setFiles] = useState<File[]>([]);
+  const [bucket, setBucket] = useState<Bucketed>({ pdfs: [], images: [], videos: [], audios: [], models: [], skipped: [] });
   const [urls, setUrls] = useState("");
   const [hero, setHero] = useState<File | null>(null);
-  const [models, setModels] = useState<File[]>([]);
-  const [video, setVideo] = useState<File | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [progress, setProgress] = useState<string>("");
-  const fileRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
   const busy = phase === "estimating" || phase === "ingesting";
   const hasUrls = urls.split(/[\n,]+/).some((u) => /^https?:\/\//i.test(u.trim()));
+  const total = bucket.pdfs.length + bucket.images.length + bucket.videos.length + bucket.audios.length + bucket.models.length;
+  const hasFiles = total > 0;
+  const paidWork = bucket.pdfs.length + bucket.images.length + bucket.videos.length > 0; // needs a vision estimate
 
+  function ingest(files: File[]) { setBucket(classifyFiles(files)); setEstimate(null); setPhase("idle"); }
   function reset() {
-    setName(""); setManufacturer(""); setFiles([]); setUrls(""); setHero(null); setModels([]); setVideo(null);
-    setEstimate(null); setPhase("done");
+    setName(""); setManufacturer(""); setBucket({ pdfs: [], images: [], videos: [], audios: [], models: [], skipped: [] });
+    setUrls(""); setHero(null); setEstimate(null); setPhase("done");
   }
 
-  // Phase 1 — count pages (no captioning yet) so the user sees the cost first.
+  function appendBuckets(fd: FormData) {
+    bucket.pdfs.forEach((f) => fd.append("pdfs", f));
+    bucket.images.forEach((f) => fd.append("images", f));
+    bucket.videos.forEach((f) => fd.append("videos", f));
+    bucket.audios.forEach((f) => fd.append("audios", f));
+    // Send each model's FOLDER PATH (webkitRelativePath) as its filename so the
+    // server can group parts by their subsystem folder (Nextruder, Frame, …).
+    bucket.models.forEach((f) => fd.append("models", f, (f as unknown as { webkitRelativePath?: string }).webkitRelativePath || f.name));
+  }
+
+  // Phase 1 — cost the vision work (pages + images + videos) before any paid call.
+  // Only PDFs are uploaded (pages must be counted); the rest go as counts so we
+  // don't ship big media/STLs just to estimate.
   async function getEstimate() {
-    if (!name.trim() || !files.length) return;
-    setPhase("estimating"); setProgress("Counting pages…");
+    if (!name.trim() || !paidWork) return;
+    setPhase("estimating"); setProgress("Analyzing files…");
     try {
       const fd = new FormData();
-      files.forEach((f) => fd.append("pdfs", f));
+      bucket.pdfs.forEach((f) => fd.append("pdfs", f));
+      fd.set("imagesCount", String(bucket.images.length));
+      fd.set("videosCount", String(bucket.videos.length));
+      fd.set("audiosCount", String(bucket.audios.length));
+      fd.set("modelsCount", String(bucket.models.length));
       const res = await fetch("/api/products/estimate", { method: "POST", body: fd });
       const data = (await res.json()) as Estimate | { error: string };
       if ("error" in data) throw new Error(data.error);
@@ -106,11 +208,9 @@ function AddProduct() {
     setPhase("ingesting"); setProgress("Uploading…");
     const fd = new FormData();
     fd.set("name", name.trim()); fd.set("slug", slug); fd.set("manufacturer", manufacturer.trim());
-    files.forEach((f) => fd.append("pdfs", f));
+    appendBuckets(fd);
     if (urls.trim()) fd.set("urls", urls.trim());
     if (hero) fd.set("hero", hero);
-    models.forEach((f) => fd.append("models", f));
-    if (video) fd.set("video", video);
     try {
       const res = await fetch("/api/products/ingest", { method: "POST", body: fd });
       if (!res.body) throw new Error("no stream");
@@ -136,11 +236,23 @@ function AddProduct() {
     }
   }
 
+  const counts = [
+    ["PDF", bucket.pdfs.length], ["image", bucket.images.length], ["video", bucket.videos.length],
+    ["audio", bucket.audios.length], ["3D", bucket.models.length],
+  ].filter(([, n]) => (n as number) > 0) as [string, number][];
+
+  // Split skipped files: CAD-source 3D (a nudge to export STL, but often redundant
+  // with .stl already present) vs. other files (gcode/toolpaths — genuinely not
+  // product knowledge, so a quiet note, not an alarm).
+  const summarize = (fs: File[]) => Object.entries(fs.reduce((m, f) => { const e = ext(f.name) || "(no ext)"; m[e] = (m[e] ?? 0) + 1; return m; }, {} as Record<string, number>)).sort((a, b) => b[1] - a[1]).map(([e, n]) => `${n}×${e}`).join(", ");
+  const skipped3d = bucket.skipped.filter((f) => UNSUPPORTED_3D.includes(ext(f.name)));
+  const skippedOther = bucket.skipped.filter((f) => !UNSUPPORTED_3D.includes(ext(f.name)));
+
   return (
     <section>
       <h2 className="text-[15px] font-semibold">Add a product</h2>
       <p className="mt-1 text-[12.5px] text-muted-foreground">
-        Add the product&apos;s manuals as PDFs (Takt renders every page and reads its diagrams/tables), and/or paste source links — web pages and YouTube videos are ingested as searchable text. Add 3D part models (.stl) and a walkthrough video to enrich the knowledge graph with interactive parts and clips. Everything lands in one index, no redeploy.
+        Drop ONE folder. Takt sorts it — PDFs (every page read), images and videos (vision-captioned & chaptered), audio (transcribed), and 3D parts (.stl/.glb/.step/.3mf) — links it all into one knowledge graph, and shows the cost before anything paid runs. Paste source links for web pages / YouTube too.
       </p>
       <div className="mt-4 grid grid-cols-2 gap-2">
         <input className={inputCls} name="product-name" placeholder="Product name" aria-label="Product name" value={name} onChange={(e) => setName(e.target.value)} />
@@ -148,39 +260,49 @@ function AddProduct() {
       </div>
 
       <div className="mt-2 flex flex-wrap items-center gap-2">
-        <button onClick={() => fileRef.current?.click()} className="flex items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-[12.5px] text-muted-foreground transition hover:border-border-heavy hover:text-foreground">
-          <Upload className="size-4" /> Choose PDFs
-        </button>
-        <input ref={fileRef} type="file" accept="application/pdf" multiple hidden
-          onChange={(e) => { setFiles(Array.from(e.target.files ?? [])); setEstimate(null); setPhase("idle"); }} />
         <button onClick={() => folderRef.current?.click()} className="flex items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-[12.5px] text-muted-foreground transition hover:border-border-heavy hover:text-foreground">
-          <Upload className="size-4" /> Choose folder
+          <Upload className="size-4" /> Upload folder
         </button>
-        {/* Folder upload: keep only the PDFs from the selected directory tree. */}
         <input ref={folderRef} type="file" multiple hidden {...{ webkitdirectory: "", directory: "" }}
-          onChange={(e) => { setFiles(Array.from(e.target.files ?? []).filter((f) => f.name.toLowerCase().endsWith(".pdf"))); setEstimate(null); setPhase("idle"); }} />
+          onChange={(e) => ingest(Array.from(e.target.files ?? []))} />
+        <button onClick={() => fileRef.current?.click()} className="flex items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-[12.5px] text-muted-foreground transition hover:border-border-heavy hover:text-foreground">
+          <Upload className="size-4" /> Choose files
+        </button>
+        <input ref={fileRef} type="file" multiple hidden
+          accept=".pdf,image/*,video/*,audio/*,.stl,.glb,.gltf,.stp,.step,.3mf"
+          onChange={(e) => ingest(Array.from(e.target.files ?? []))} />
         <label className="flex items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-[12.5px] text-muted-foreground transition hover:border-border-heavy hover:text-foreground cursor-pointer">
-          <Upload className="size-4" /> {hero ? "Hero ✓" : "Hero image"}
+          <Upload className="size-4" /> {hero ? "Hero ✓" : "Hero image (optional)"}
           <input type="file" accept="image/*" hidden onChange={(e) => setHero(e.target.files?.[0] ?? null)} />
-        </label>
-        <label className="flex items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-[12.5px] text-muted-foreground transition hover:border-border-heavy hover:text-foreground cursor-pointer">
-          <Upload className="size-4" /> {models.length ? `3D models · ${models.length}` : "3D models (.stl)"}
-          <input type="file" accept=".stl" multiple hidden onChange={(e) => { setModels(Array.from(e.target.files ?? [])); }} />
-        </label>
-        <label className="flex items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2 text-[12.5px] text-muted-foreground transition hover:border-border-heavy hover:text-foreground cursor-pointer">
-          <Upload className="size-4" /> {video ? "Video ✓" : "Walkthrough video"}
-          <input type="file" accept="video/*" hidden onChange={(e) => setVideo(e.target.files?.[0] ?? null)} />
         </label>
       </div>
 
-      {files.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {files.map((f, i) => (
-            <span key={i} className="flex items-center gap-1.5 rounded-md bg-card px-2 py-1 text-[11px] text-muted-foreground">
-              <FileText className="size-3" />{f.name}
-              <button onClick={() => { setFiles(files.filter((_, j) => j !== i)); setEstimate(null); setPhase("idle"); }}><X className="size-3 hover:text-foreground" /></button>
+      {hasFiles && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {counts.map(([label, n]) => (
+            <span key={label} className="flex items-center gap-1.5 rounded-md bg-card px-2 py-1 text-[11px] text-muted-foreground">
+              <FileText className="size-3" />{n} {label}{n > 1 ? "s" : ""}
             </span>
           ))}
+          <button onClick={() => ingest([])} className="text-[11px] text-muted-foreground transition hover:text-foreground"><X className="size-3" /></button>
+        </div>
+      )}
+
+      {bucket.skipped.length > 0 && (
+        <div className="mt-2 flex items-start gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-[12px] text-muted-foreground">
+          <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-[var(--takt-arc,#e2701f)]" />
+          <span>
+            {skipped3d.length > 0 && (
+              <>
+                {skipped3d.length} CAD-source 3D file{skipped3d.length > 1 ? "s" : ""} ({summarize(skipped3d)}) not rendered
+                {bucket.models.length > 0
+                  ? <> — your <span className="font-medium text-foreground">{bucket.models.length} .stl part{bucket.models.length > 1 ? "s" : ""}</span> already cover the same geometry.</>
+                  : <>. Export <span className="font-medium text-foreground">.stl / .glb / .gltf</span> from your slicer to include them.</>}
+                {" "}
+              </>
+            )}
+            {skippedOther.length > 0 && <>{skippedOther.length} other file{skippedOther.length > 1 ? "s" : ""} ({summarize(skippedOther)}) ignored — not product knowledge.</>}
+          </span>
         </div>
       )}
 
@@ -188,7 +310,7 @@ function AddProduct() {
         placeholder={"Source links (optional) — one per line\nhttps://en.wikipedia.org/wiki/…\nhttps://youtube.com/watch?v=…"}
         aria-label="Source URLs" value={urls}
         onChange={(e) => { setUrls(e.target.value); setEstimate(null); if (phase !== "ingesting") setPhase("idle"); }} />
-      {hasUrls && !files.length && <p className="mt-1 text-[11px] text-muted-foreground">Text-only sources index for free (no page rendering).</p>}
+      {hasUrls && !paidWork && <p className="mt-1 text-[11px] text-muted-foreground">Text-only sources index for free (no page rendering).</p>}
 
       {/* Estimate / confirm panel — shown before any paid call runs. */}
       {phase === "confirm" && estimate && (
@@ -198,9 +320,13 @@ function AddProduct() {
             {estimate.perFile.map((f) => (
               <li key={f.name} className="flex justify-between gap-3"><span className="truncate">{f.name}</span><span className="shrink-0 tabular-nums">{f.pages} pages</span></li>
             ))}
+            {!!estimate.images && <li className="flex justify-between gap-3"><span>Images</span><span className="shrink-0 tabular-nums">{estimate.images}</span></li>}
+            {!!estimate.videos && <li className="flex justify-between gap-3"><span>Videos</span><span className="shrink-0 tabular-nums">{estimate.videos}</span></li>}
+            {!!estimate.models && <li className="flex justify-between gap-3"><span>3D parts (free)</span><span className="shrink-0 tabular-nums">{estimate.models}</span></li>}
+            {!!estimate.audios && <li className="flex justify-between gap-3"><span>Audio (transcribed, free)</span><span className="shrink-0 tabular-nums">{estimate.audios}</span></li>}
           </ul>
           <div className="mt-3 grid grid-cols-3 gap-2 text-[12px]">
-            <div><div className="text-faint">Pages</div><div className="font-medium text-foreground tabular-nums">{estimate.totalPages}</div></div>
+            <div><div className="text-faint">Vision units</div><div className="font-medium text-foreground tabular-nums">{estimate.totalPages}</div></div>
             <div><div className="text-faint">Model</div><div className="font-medium text-foreground truncate">{estimate.provider ? `${estimate.provider} · ` : ""}{estimate.model || "—"}</div></div>
             <div><div className="text-faint">Est. cost</div><div className="font-medium text-foreground tabular-nums">{estCost(estimate) == null ? "—" : `~${formatCost(estCost(estimate)!)}`}</div></div>
           </div>
@@ -223,11 +349,11 @@ function AddProduct() {
 
       {phase !== "confirm" && (
         <div className="mt-3 flex items-center gap-3">
-          {/* PDFs go through the cost estimate first; URL-only sources are text-only
-              (free) so they ingest directly. */}
-          <button onClick={() => (files.length ? getEstimate() : runIngest())} disabled={busy || !name.trim() || (!files.length && !hasUrls)}
+          {/* Vision work (pdf/image/video) goes through the cost estimate first;
+              URL-only + audio-only sources ingest directly. */}
+          <button onClick={() => (paidWork ? getEstimate() : runIngest())} disabled={busy || !name.trim() || (!hasFiles && !hasUrls)}
             className="flex items-center gap-2 rounded-lg bg-foreground px-3.5 py-2 text-[13px] font-medium text-background transition hover:opacity-90 disabled:opacity-30">
-            {busy && <Loader2 className="size-4 animate-spin" />} {phase === "estimating" ? "Estimating…" : phase === "ingesting" ? "Indexing…" : "Add product"}
+            {busy && <Loader2 className="size-4 animate-spin" />} {phase === "estimating" ? "Analyzing…" : phase === "ingesting" ? "Indexing…" : "Add product"}
           </button>
           {progress && <span className={cn("text-[12px]", progress.startsWith("Error") ? "text-destructive" : "text-muted-foreground")}>{progress}</span>}
         </div>

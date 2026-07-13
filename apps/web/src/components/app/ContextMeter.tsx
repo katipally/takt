@@ -1,16 +1,17 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import Link from "next/link";
 import { Gauge, AlertCircle } from "lucide-react";
 import type { Usage } from "@/lib/chatStore";
 import { api } from "@/lib/api";
 import { metaFor, formatTokens, formatCost } from "@/lib/models";
+import { useUi } from "@/lib/uiStore";
 import { cn } from "@/lib/cn";
 
 // Live context-window usage + running cost for the active chat, sized to the
 // selected model's real context window and per-token pricing.
 export function ContextMeter({ usage }: { usage: Usage }) {
+  const openSettings = useUi((s) => s.openSettings);
   const { data: settings, isLoading } = useQuery({ queryKey: ["settings"], queryFn: api.settings });
   const { data: models = [] } = useQuery({ queryKey: ["models", settings?.chatProviderId], queryFn: () => api.models(settings?.chatProviderId), enabled: !!settings });
   const meta = metaFor(settings?.chatModel);
@@ -19,19 +20,19 @@ export function ContextMeter({ usage }: { usage: Usage }) {
   const pct = Math.min(100, (usage.contextTokens / meta.contextWindow) * 100);
   const high = pct > 80;
 
-  // No model configured yet — say so plainly and route to the admin console.
+  // No model configured yet — say so plainly and open settings to pick one.
   if (!isLoading && !settings?.chatModel) {
     return (
-      <Link href="/admin" title="Choose a model in the admin console"
+      <button onClick={openSettings} title="Choose a model"
         className="flex items-center gap-1.5 rounded-full border border-arc/40 bg-arc-soft px-3 py-1.5 text-[12px] font-medium text-arc transition hover:border-arc/70">
         <AlertCircle className="size-3.5" /> No model selected
-      </Link>
+      </button>
     );
   }
 
-  // Always show the model + live context usage; click opens the admin console.
+  // Always show the model + live context usage; click opens settings.
   return (
-    <Link href="/admin"
+    <button onClick={openSettings}
       title={`${modelName ?? "Model"} · ${formatTokens(usage.contextTokens)} of ${formatTokens(meta.contextWindow)} context · ${formatCost(usage.costUsd)}`}
       className="flex items-center gap-2.5 rounded-full border border-border bg-card px-2.5 py-1.5 transition hover:border-border-heavy hover:bg-foreground/[0.04]">
       <Gauge className="size-3.5 shrink-0 text-muted-foreground" />
@@ -48,6 +49,6 @@ export function ContextMeter({ usage }: { usage: Usage }) {
         </div>
       </div>
       <span className="max-w-[120px] truncate text-[11px] text-muted-foreground sm:hidden">{modelName ?? "Model"}</span>
-    </Link>
+    </button>
   );
 }

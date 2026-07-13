@@ -86,14 +86,17 @@ Return ONLY a JSON array, timestamps within 0..${dur}.`;
     }
   }
 
+  // Namespace clip ids by the source video so MULTIPLE videos don't overwrite each
+  // other's clips in the media index (clip:0 collided across videos before).
+  const vid = video.filename.replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "video";
   const items: MediaItem[] = chapters.length
     ? chapters.map((ch, i) => ({
-        id: `clip:${i}`, kind: "video_clip" as const, url,
+        id: `clip:${vid}:${i}`, kind: "video_clip" as const, url,
         caption: ch.caption || (ch.part ? `${ch.part} (video)` : "Repair step"),
         tStart: ch.tStart, tEnd: ch.tEnd,
       }))
     // whole-clip fallback
-    : [{ id: "clip:0", kind: "video_clip" as const, url, caption: "Repair walkthrough video", tStart: 0, tEnd: dur || 0 }];
+    : [{ id: `clip:${vid}:0`, kind: "video_clip" as const, url, caption: "Repair walkthrough video", tStart: 0, tEnd: dur || 0 }];
 
   addMedia(slug, items);
   await opts.onProgress?.(chapters.length ? `Video: ${chapters.length} timestamped clips` : "Attached repair video (whole clip)");

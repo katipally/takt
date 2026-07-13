@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Settings, ArrowRight, Sparkles, ArrowUpRight, Plus, Boxes } from "lucide-react";
+import { Settings, ArrowRight, Sparkles, ArrowUpRight, Boxes } from "lucide-react";
 import gsap from "gsap";
 import type { Product } from "@takt/shared";
 import { api } from "@/lib/api";
@@ -14,9 +14,11 @@ import { spring, easeOut } from "@/lib/motion";
 import { Wordmark } from "@/components/brand/Wordmark";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { ResourcesSection } from "@/components/product/ResourcesSection";
+import { useUi } from "@/lib/uiStore";
 import { cn } from "@/lib/cn";
 
 export default function Home() {
+  const openSettings = useUi((s) => s.openSettings);
   const { data: products = [], isLoading } = useQuery({ queryKey: ["products"], queryFn: api.products });
   const [active, setActive] = useState(0);
   // The "+ Add product" pill already signals more can be uploaded, so show each
@@ -30,9 +32,9 @@ export default function Home() {
         <Link href="/" className="transition hover:opacity-70"><Wordmark size="md" /></Link>
         <div className="flex items-center gap-1">
           <ThemeToggle />
-          <Link href="/admin" className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-muted-foreground transition hover:bg-foreground/[0.06] hover:text-foreground">
-            <Settings className="size-4" /> Admin
-          </Link>
+          <button onClick={openSettings} className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] text-muted-foreground transition hover:bg-foreground/[0.06] hover:text-foreground">
+            <Settings className="size-4" /> Settings
+          </button>
         </div>
       </header>
 
@@ -44,15 +46,6 @@ export default function Home() {
         <Showcase products={display} active={active} setActive={setActive} product={product!} />
       )}
     </main>
-  );
-}
-
-function AddProductPill() {
-  return (
-    <Link href="/admin" title="Add a product (admin)"
-      className="flex items-center gap-1.5 rounded-full border border-dashed border-border-heavy px-3 py-2.5 text-[13px] text-muted-foreground transition hover:border-foreground/30 hover:text-foreground">
-      <Plus className="size-4" /> Add product
-    </Link>
   );
 }
 
@@ -100,7 +93,6 @@ function Showcase({ products, active, setActive, product }: {
             </span>
           </button>
         ))}
-        <AddProductPill />
         {/* Master mode — Takt across every product at once. */}
         <Link href="/master" title="Ask across all products"
           className="flex items-center gap-2 rounded-full border border-dashed border-border px-3 py-1.5 text-[13px] text-muted-foreground transition hover:border-border-heavy hover:text-foreground">
@@ -201,11 +193,9 @@ function EmptyState() {
   return (
     <div className="mt-10 max-w-xl">
       <h1 className="text-[24px] font-semibold tracking-tight">No products yet</h1>
-      <p className="mt-2 text-[14px] text-muted-foreground">Add a product by uploading its manuals in the admin console — Takt indexes them and they show up here.</p>
-      <Link href="/admin"
-        className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-foreground px-4 py-2.5 text-[13px] font-medium text-background transition hover:opacity-90">
-        <Plus className="size-4" /> Add product
-      </Link>
+      <p className="mt-2 text-[14px] text-muted-foreground">
+        Products are added from the admin console. Open <code className="rounded bg-surface px-1.5 py-0.5 font-mono text-[12.5px] text-foreground">/admin</code> (type it in the address bar) → Products, drop a folder, and Takt indexes it — it&apos;ll show up here.
+      </p>
       <p className="mt-6 text-[12.5px] text-muted-foreground">Or from the command line:</p>
       <pre className="mt-2 overflow-x-auto rounded-xl border border-border bg-surface p-4 font-mono text-[12px] text-foreground takt-scroll">pnpm ingest --product my-product --name &quot;My Product&quot; --dir ./my-pdfs --url https://…</pre>
     </div>

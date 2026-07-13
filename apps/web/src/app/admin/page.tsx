@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Lock } from "lucide-react";
 import { ModelsSettings } from "@/components/settings/ModelsSettings";
 import { ProductsSettings } from "@/components/settings/ProductsSettings";
@@ -10,16 +9,16 @@ import { Wordmark } from "@/components/brand/Wordmark";
 import { cn } from "@/lib/cn";
 
 type AuthState = { required: boolean; authed: boolean };
-type GraphStat = { slug: string; name: string; entities: number; edges: number; chunks: number; media: number; byType: Record<string, number> };
 
-// The admin console: ingestion + provider keys + model config + knowledge-graph
-// stats. Gated by TAKT_ADMIN_TOKEN (open in local dev when unset). Deliberately
-// off the chat surface — end users never see or reach ingestion.
+// The admin console: product master control (ingest/delete + each product's own
+// knowledge stats) + provider keys + model config. Gated by TAKT_ADMIN_TOKEN
+// (open in local dev when unset). Reached ONLY by typing /admin — no buttons link
+// here; end users never see or reach ingestion.
 export default function AdminPage() {
   const [auth, setAuth] = useState<AuthState | null>(null);
   const [token, setToken] = useState("");
   const [err, setErr] = useState("");
-  const [tab, setTab] = useState<"products" | "models" | "graph">("products");
+  const [tab, setTab] = useState<"products" | "models">("products");
 
   const refreshAuth = () => fetch("/api/admin/auth").then((r) => r.json()).then(setAuth).catch(() => setAuth({ required: true, authed: false }));
   useEffect(() => { void refreshAuth(); }, []);
@@ -50,7 +49,7 @@ export default function AdminPage() {
     );
   }
 
-  const TABS = [{ id: "products", label: "Products & ingestion" }, { id: "models", label: "Models & API keys" }, { id: "graph", label: "Knowledge graph" }] as const;
+  const TABS = [{ id: "products", label: "Products & ingestion" }, { id: "models", label: "Models & API keys" }] as const;
 
   return (
     <div className="mx-auto flex min-h-screen max-w-5xl flex-col px-6 py-8">
@@ -73,40 +72,8 @@ export default function AdminPage() {
       </nav>
 
       <main className="min-h-0 flex-1">
-        {tab === "products" ? <ProductsSettings /> : tab === "models" ? <ModelsSettings /> : <GraphStats />}
+        {tab === "products" ? <ProductsSettings /> : <ModelsSettings />}
       </main>
-    </div>
-  );
-}
-
-function GraphStats() {
-  const { data = [], isLoading } = useQuery<GraphStat[]>({ queryKey: ["admin-graph"], queryFn: () => fetch("/api/admin/graph").then((r) => r.json()) });
-  if (isLoading) return <p className="text-muted-foreground">Loading graph stats…</p>;
-  if (!data.length) return <p className="text-muted-foreground">No products ingested yet.</p>;
-  return (
-    <div className="flex flex-col gap-4">
-      <p className="text-[12.5px] text-muted-foreground">What each product&apos;s ingestion built. A near-empty graph means the ingest needs re-running (or the caption model couldn&apos;t read the pages).</p>
-      {data.map((p) => (
-        <div key={p.slug} className="rounded-xl border border-border bg-surface p-4">
-          <div className="mb-2 flex items-baseline justify-between">
-            <h3 className="text-[14px] font-semibold">{p.name}</h3>
-            <span className="text-[11.5px] text-faint">{p.slug}</span>
-          </div>
-          <div className="flex flex-wrap gap-x-5 gap-y-1 text-[12.5px] text-muted-foreground">
-            <span><b className="text-foreground">{p.entities}</b> entities</span>
-            <span><b className="text-foreground">{p.edges}</b> links</span>
-            <span><b className="text-foreground">{p.chunks}</b> chunks</span>
-            <span><b className="text-foreground">{p.media}</b> media</span>
-          </div>
-          {Object.keys(p.byType ?? {}).length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {Object.entries(p.byType).sort((a, b) => b[1] - a[1]).map(([type, n]) => (
-                <span key={type} className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">{type} <b className="text-foreground">{n}</b></span>
-              ))}
-            </div>
-          )}
-        </div>
-      ))}
     </div>
   );
 }

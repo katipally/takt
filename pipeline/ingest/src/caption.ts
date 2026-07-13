@@ -93,6 +93,33 @@ export async function parsePage(
   return parseStructured(raw, input, output);
 }
 
+const IMAGE_PROMPT = `You are digitizing ONE product photo or diagram into a searchable knowledge graph. Return ONLY a JSON object (no preamble, no fence) with this exact shape:
+{
+  "textMd": "<a faithful, specific description of what this image shows — the object(s), their visible parts, any printed text/labels, and what question it helps answer. Be literal; add nothing not visible.>",
+  "parts": [{"name":"<component shown>","aliases":["<plain-language names>"],"summary":"<what it is, one line>"}],
+  "specs": [], "symptoms": [], "procedures": [],
+  "warnings": [{"name":"<visible caution>","summary":"<what to avoid>"}],
+  "figures": [{"label":"","caption":"<what the image shows + every labeled part>"}]
+}
+Rules: describe ONLY what is visible; name the parts so they match the manual's parts (short, canonical); include layman aliases; do NOT invent values or part numbers. Every array may be empty.`;
+
+/** Parse a loose product IMAGE (photo/diagram) into a rich caption + typed items,
+ *  so it becomes a first-class, retrievable, linkable node — not a filename. */
+export async function parseImage(
+  png: Uint8Array,
+  provider: ProviderInfo,
+  model: string,
+  apiKey?: string,
+  mime = "image/png",
+): Promise<PageParseResult> {
+  const base64 = Buffer.from(png).toString("base64");
+  const { text: raw, input, output } = await complete(provider, apiKey, {
+    model, maxTokens: 2048, tools: [],
+    messages: [{ role: "user", text: IMAGE_PROMPT, images: [{ data: base64, mime }] }],
+  });
+  return parseStructured(raw, input, output);
+}
+
 /** Parse a page's EMBEDDED TEXT into the same structure — works with any text
  *  model (e.g. MiniMax, which can't take images). Used when the PDF has real text
  *  or the caption model isn't vision-capable. Diagrams-only pages yield little. */

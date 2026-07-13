@@ -70,6 +70,7 @@ async function main() {
   const pdfs: { filename: string; data: Uint8Array }[] = [];
   const models: ModelFile[] = [];
   const images: { filename: string; data: Uint8Array }[] = [];
+  const audios: { filename: string; data: Uint8Array }[] = [];
   const resources: { filename: string; kind: string }[] = [];
   const videos: string[] = [];
 
@@ -78,33 +79,35 @@ async function main() {
     const filename = basename(abs);
     switch (ext) {
       case ".pdf": pdfs.push({ filename, data: read(abs) }); break;
-      case ".stl": {
-        // subsystem = immediate parent folder, unless the STL sits directly in
-        // the drop folder (then it has no subsystem grouping).
+      case ".stl": case ".glb": case ".gltf": case ".stp": case ".step": case ".3mf": {
+        // subsystem = immediate parent folder, unless the model sits directly in
+        // the drop folder. STL/STEP/3MF are converted to GLB; GLB/GLTF pass through.
+        // Same part in multiple formats is de-duped in addMeshParts (STL preferred).
         const parent = dirname(abs);
         const subsystem = parent === root ? undefined : basename(parent);
         models.push({ filename, data: read(abs), subsystem });
         break;
       }
-      case ".stp": case ".step": resources.push({ filename, kind: "3d-source" }); break;
+      case ".obj": resources.push({ filename, kind: "3d-source" }); break;
       case ".gcode": case ".bgcode": resources.push({ filename, kind: "gcode" }); break;
       case ".mp4": case ".mov": case ".webm": case ".mkv": videos.push(abs); break;
+      case ".mp3": case ".wav": case ".m4a": case ".aac": case ".flac": case ".ogg":
+        audios.push({ filename, data: read(abs) }); break;
       case ".png": case ".jpg": case ".jpeg": case ".webp": case ".gif":
         images.push({ filename, data: read(abs) }); break;
       default: resources.push({ filename, kind: "other" }); break;
     }
   }
 
-  // First video wins; log any extras we skip.
-  const video = videos[0] ? { filename: basename(videos[0]), data: read(videos[0]) } : undefined;
-  if (videos.length > 1) console.log(`  · ${videos.length} videos found — using ${basename(videos[0]!)}, skipping ${videos.length - 1}`);
+  // Every video is ingested (each chaptered + linked), not just the first.
+  const videoFiles = videos.map((v) => ({ filename: basename(v), data: read(v) }));
 
   const heroSrc = flags.hero ? (isAbsolute(flags.hero) ? flags.hero : resolve(REPO_ROOT, flags.hero)) : undefined;
   const hero = heroSrc && existsSync(heroSrc) ? { ext: extname(heroSrc), data: read(heroSrc) } : undefined;
 
   console.log(`Scanning ${root}`);
-  console.log(`  · ${pdfs.length} pdf, ${models.length} stl, ${images.length} image, ${video ? 1 : 0} video, ${resources.length} other`);
-  if (!pdfs.length && !models.length && !images.length && !video) {
+  console.log(`  · ${pdfs.length} pdf, ${models.length} 3d, ${images.length} image, ${videoFiles.length} video, ${resources.length} other`);
+  if (!pdfs.length && !models.length && !images.length && !videoFiles.length) {
     console.error("Nothing ingestible in that folder (no pdf/stl/image/video).");
     process.exit(1);
   }
@@ -115,7 +118,7 @@ async function main() {
     name: flags.name?.trim() || undefined,
     manufacturer: flags.manufacturer ?? null,
     summary: flags.summary ?? null,
-    pdfs, models, video, images, resources, hero,
+    pdfs, models, videos: videoFiles, images, audios, resources, hero,
     captionProvider: provider, captionModel: model, apiKey,
     onProgress: (m) => { process.stdout.write(`  · ${m}\x1b[K\r`); },
   });

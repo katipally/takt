@@ -248,9 +248,12 @@ function defineIslands() {
         "shadow-softness": "0.9", exposure: "1.15", "touch-action": "pan-y", loading: "eager",
       };
       for (const [k, v] of Object.entries(A)) mv.setAttribute(k, v);
+      // Height is driven by CSS (.takt-model-view) so the part scales to the two
+      // target canvas widths and fills a stretched hero column instead of sitting
+      // at a fixed 360px that leaves dead space beside taller text.
       mv.style.width = "100%";
-      mv.style.height = "360px";
-      mv.style.background = "radial-gradient(120% 100% at 50% 0%, var(--surface), var(--card))";
+      mv.style.height = "100%";
+      mv.style.background = "var(--surface)";
       mv.style.borderRadius = "10px";
       mv.addEventListener("load", () => colorizeFlatMaterials(mv, src));
       mv.addEventListener("error", () => { status.style.display = ""; status.textContent = "Couldn’t load this 3D part."; });

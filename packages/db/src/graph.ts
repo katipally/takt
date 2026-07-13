@@ -8,6 +8,52 @@ import { getDb } from "./connection";
 
 const db = () => getDb();
 
+// In-memory vector store, loaded once per product from the embedding BLOBs and
+// cached (invalidated when the product's graph is replaced). This is the whole
+// "semantic store" — no external vector DB, no on-disk vectors.bin; the KG rows
+// ARE the index. Fine for single-product scale (hundreds–thousands of rows).
+type VecStore = { ids: string[]; kinds: string[]; data: Float32Array; dim: number };
+const vecCache = new Map<string, VecStore | null>();
+
+function loadProductVectors(productId: string): VecStore | null {
+  const hit = vecCache.get(productId);
+  if (hit !== undefined) return hit;
+  const rows = [
+    ...db().prepare(`SELECT id, 'entity' AS kind, embedding FROM entities  WHERE product_id=? AND embedding IS NOT NULL`).all(productId),
+    ...db().prepare(`SELECT id, 'chunk'  AS kind, embedding FROM kg_chunks WHERE product_id=? AND embedding IS NOT NULL`).all(productId),
+    ...db().prepare(`SELECT id, 'media'  AS kind, embedding FROM kg_media  WHERE product_id=? AND embedding IS NOT NULL`).all(productId),
+  ] as { id: string; kind: string; embedding: Buffer }[];
+  if (!rows.length) { vecCache.set(productId, null); return null; }
+  const dim = rows[0]!.embedding.byteLength / 4;
+  const data = new Float32Array(rows.length * dim);
+  const ids: string[] = []; const kinds: string[] = [];
+  rows.forEach((r, i) => {
+    const v = new Float32Array(r.embedding.buffer, r.embedding.byteOffset, r.embedding.byteLength / 4);
+    if (v.length === dim) data.set(v, i * dim);
+    ids.push(r.id); kinds.push(r.kind);
+  });
+  const store: VecStore = { ids, kinds, data, dim };
+  vecCache.set(productId, store);
+  return store;
+}
+
+/** Semantic search over the KG: cosine (dot, vectors are unit-normalized) of the
+ *  query vector against entity/chunk/media embeddings. Empty if no vectors yet
+ *  (caller falls back to FTS). `kind` filters to one row type. */
+export function semanticSearchKg(productId: string, q: Float32Array, kind?: "entity" | "chunk" | "media", k = 8): FtsHit[] {
+  const store = loadProductVectors(productId);
+  if (!store || q.length !== store.dim) return [];
+  const { ids, kinds, data, dim } = store;
+  const hits: FtsHit[] = [];
+  for (let i = 0; i < ids.length; i++) {
+    if (kind && kinds[i] !== kind) continue;
+    let s = 0; const base = i * dim;
+    for (let j = 0; j < dim; j++) s += q[j]! * data[base + j]!;
+    hits.push({ id: ids[i]!, score: s });
+  }
+  return hits.sort((a, b) => b.score - a.score).slice(0, k);
+}
+
 export type EntityType =
   | "part" | "assembly" | "procedure" | "step" | "symptom" | "spec"
   | "warning" | "setting" | "compatibility" | "figure" | "region"
@@ -28,6 +74,7 @@ export interface Entity {
   manualId?: string | null;
   page?: number | null;
   contentHash?: string | null;
+  embedding?: Float32Array | null;   // name+summary vector, written at ingest
 }
 
 export interface Edge {
@@ -51,6 +98,7 @@ export interface KgChunk {
   page?: number | null;
   kind: string;
   text: string;
+  embedding?: Float32Array | null;
 }
 
 export interface KgMedia {
@@ -63,6 +111,7 @@ export interface KgMedia {
   subsystem?: string | null;
   bbox?: unknown;         // structured crop {page,x,y,w,h,expected_labels[]}
   contentHash?: string | null;
+  embedding?: Float32Array | null;
 }
 
 export interface GraphInput {
@@ -82,8 +131,13 @@ export function contentHash(s: string): string {
 /** Replace a product's ENTIRE graph transactionally. Deletes the old entities/
  *  edges/chunks/media (and their FTS rows), then inserts the fresh set — so a
  *  re-ingest never leaves orphan rows or stale text (the old COALESCE bug). */
+/** Float32 vector → BLOB Buffer (little-endian) for SQLite, or null. */
+const vecToBlob = (v?: Float32Array | null): Buffer | null =>
+  v && v.length ? Buffer.from(v.buffer, v.byteOffset, v.byteLength) : null;
+
 export const replaceProductGraph = (productId: string, g: GraphInput): void => {
   const h = db();
+  vecCache.delete(productId); // vectors change wholesale with the graph
   const tx = h.transaction((pid: string, input: GraphInput) => {
     for (const t of ["edges", "entities", "kg_chunks", "kg_media"]) {
       h.prepare(`DELETE FROM ${t} WHERE product_id = ?`).run(pid);
@@ -93,15 +147,15 @@ export const replaceProductGraph = (productId: string, g: GraphInput): void => {
     }
 
     const insEnt = h.prepare(
-      `INSERT INTO entities (id, product_id, type, name, aliases_json, summary, attrs_json, manual_id, page, content_hash)
-       VALUES (@id,@productId,@type,@name,@aliases,@summary,@attrs,@manualId,@page,@contentHash)`);
+      `INSERT INTO entities (id, product_id, type, name, aliases_json, summary, attrs_json, manual_id, page, content_hash, embedding)
+       VALUES (@id,@productId,@type,@name,@aliases,@summary,@attrs,@manualId,@page,@contentHash,@embedding)`);
     const insEntFts = h.prepare(`INSERT INTO entities_fts (entity_id, product_id, name, aliases, summary) VALUES (?,?,?,?,?)`);
     for (const e of input.entities) {
       insEnt.run({
         id: e.id, productId: pid, type: e.type, name: e.name,
         aliases: JSON.stringify(e.aliases ?? []), summary: e.summary ?? "",
         attrs: JSON.stringify(e.attrs ?? {}), manualId: e.manualId ?? null,
-        page: e.page ?? null, contentHash: e.contentHash ?? null,
+        page: e.page ?? null, contentHash: e.contentHash ?? null, embedding: vecToBlob(e.embedding),
       });
       insEntFts.run(e.id, pid, e.name, (e.aliases ?? []).join(" "), e.summary ?? "");
     }
@@ -117,26 +171,27 @@ export const replaceProductGraph = (productId: string, g: GraphInput): void => {
     }
 
     const insChunk = h.prepare(
-      `INSERT INTO kg_chunks (id, product_id, entity_id, manual_id, page, kind, text)
-       VALUES (@id,@productId,@entityId,@manualId,@page,@kind,@text)`);
+      `INSERT INTO kg_chunks (id, product_id, entity_id, manual_id, page, kind, text, embedding)
+       VALUES (@id,@productId,@entityId,@manualId,@page,@kind,@text,@embedding)`);
     const insChunkFts = h.prepare(`INSERT INTO chunks_fts (chunk_id, product_id, text) VALUES (?,?,?)`);
     for (const c of input.chunks) {
       insChunk.run({
         id: c.id, productId: pid, entityId: c.entityId ?? null, manualId: c.manualId ?? null,
-        page: c.page ?? null, kind: c.kind ?? "page", text: c.text,
+        page: c.page ?? null, kind: c.kind ?? "page", text: c.text, embedding: vecToBlob(c.embedding),
       });
       insChunkFts.run(c.id, pid, c.text);
     }
 
     const insMedia = h.prepare(
-      `INSERT INTO kg_media (id, product_id, entity_id, kind, asset_url, caption, subsystem, bbox_json, content_hash)
-       VALUES (@id,@productId,@entityId,@kind,@assetUrl,@caption,@subsystem,@bbox,@contentHash)`);
+      `INSERT INTO kg_media (id, product_id, entity_id, kind, asset_url, caption, subsystem, bbox_json, content_hash, embedding)
+       VALUES (@id,@productId,@entityId,@kind,@assetUrl,@caption,@subsystem,@bbox,@contentHash,@embedding)`);
     const insMediaFts = h.prepare(`INSERT INTO media_fts (media_id, product_id, caption) VALUES (?,?,?)`);
     for (const m of input.media) {
       insMedia.run({
         id: m.id, productId: pid, entityId: m.entityId ?? null, kind: m.kind, assetUrl: m.assetUrl,
         caption: m.caption ?? "", subsystem: m.subsystem ?? null,
         bbox: m.bbox != null ? JSON.stringify(m.bbox) : null, contentHash: m.contentHash ?? null,
+        embedding: vecToBlob(m.embedding),
       });
       insMediaFts.run(m.id, pid, m.caption ?? "");
     }
@@ -357,6 +412,24 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   assert(graphStats("p1").entities === 1, "re-ingest wiped old entities (no orphans)");
   assert(getEntity(gear) === undefined, "removed entity is gone after re-ingest");
   assert(getEntity(extruder)!.summary === "v2", "surviving entity updated to new content");
+
+  // semantic search over in-DB embedding BLOBs — hand-crafted unit vectors, no
+  // model needed. Verifies BLOB round-trips and cosine ranks the closer vector.
+  h.prepare(`INSERT INTO products (id, slug, name) VALUES (?,?,?)`).run("p2", "vec-prod", "Vec Product");
+  const unit = (a: number[]) => { const n = Math.hypot(...a) || 1; return new Float32Array(a.map((x) => x / n)); };
+  replaceProductGraph("p2", {
+    entities: [
+      { id: "va", productId: "p2", type: "part", name: "Alpha", aliases: [], summary: "", attrs: {}, embedding: unit([1, 0, 0]) },
+      { id: "vb", productId: "p2", type: "part", name: "Beta", aliases: [], summary: "", attrs: {}, embedding: unit([0, 1, 0]) },
+    ],
+    edges: [], chunks: [], media: [],
+  });
+  const sres = semanticSearchKg("p2", unit([0.9, 0.1, 0]), "entity", 2);
+  assert(sres.length === 2 && sres[0]!.id === "va", "semantic search ranks the nearer vector first");
+  assert(sres[0]!.score > sres[1]!.score, "cosine scores are ordered");
+  // re-replace clears the vector cache (new vectors take effect)
+  replaceProductGraph("p2", { entities: [{ id: "vb", productId: "p2", type: "part", name: "Beta", aliases: [], summary: "", attrs: {}, embedding: unit([0, 1, 0]) }], edges: [], chunks: [], media: [] });
+  assert(semanticSearchKg("p2", unit([0, 1, 0]), "entity", 2).length === 1, "vector cache invalidated on re-ingest");
 
   console.log("graph self-check ok");
   process.exit(0);

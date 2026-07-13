@@ -17,6 +17,10 @@ interface UiState {
   // fires. The Canvas listens and rings + scrolls it. Transient — not persisted.
   canvasHighlight: { id: string; nonce: number };
   highlightCanvas: (id: string) => void;
+  // User settings modal (model choice + effort). Transient — not persisted.
+  settingsOpen: boolean;
+  openSettings: () => void;
+  closeSettings: () => void;
 }
 
 export const useUi = create<UiState>()(
@@ -32,6 +36,9 @@ export const useUi = create<UiState>()(
       setRailWidth: (w) => set({ railWidth: w }),
       canvasHighlight: { id: "", nonce: 0 },
       highlightCanvas: (id) => set((s) => ({ canvasHighlight: { id, nonce: s.canvasHighlight.nonce + 1 } })),
+      settingsOpen: false,
+      openSettings: () => set({ settingsOpen: true }),
+      closeSettings: () => set({ settingsOpen: false }),
     }),
     { name: "takt-ui", partialize: (s) => ({ sidebarWidth: s.sidebarWidth, railWidth: s.railWidth, sidebarCollapsed: s.sidebarCollapsed, railOpen: s.railOpen }) },
   ),

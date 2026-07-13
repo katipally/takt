@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAllSettings, setSetting } from "@takt/db";
 import { DEFAULT_EFFORT } from "@takt/shared";
-import { forbidden, isAdmin } from "@/lib/admin-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,6 +8,10 @@ export const dynamic = "force-dynamic";
 // No model defaults — model + provider are chosen live in Settings. Only the
 // reasoning effort has a sensible default.
 const DEFAULTS = { effort: DEFAULT_EFFORT };
+// Model/provider CHOICE is user-writable (the user settings modal) — it's not
+// sensitive. API keys (/api/providers) and product ingestion (/api/products)
+// stay admin-gated. captionModel is included so admins can set the vision model,
+// but only the admin console surfaces it.
 const KEYS = ["chatModel", "captionModel", "effort", "chatProviderId", "captionProviderId", "buildModel", "buildProviderId"];
 
 export function GET() {
@@ -16,7 +19,6 @@ export function GET() {
 }
 
 export async function PUT(req: Request) {
-  if (!(await isAdmin())) return forbidden();
   const body = (await req.json()) as Record<string, string>;
   for (const [k, v] of Object.entries(body)) {
     if (KEYS.includes(k) && typeof v === "string") setSetting(k, v);

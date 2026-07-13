@@ -25,6 +25,7 @@ export function Sidebar({
   // a quarter the load of a tight 4s poll. (Stops when the tab is backgrounded.)
   const { data: chats = [] } = useQuery({ queryKey: ["chats", chatKey], queryFn: () => api.chats(chatKey), refetchInterval: 12000 });
   const toggleSidebar = useUi((s) => s.toggleSidebar);
+  const openSettings = useUi((s) => s.openSettings);
 
   return (
     <nav className="flex h-full w-full flex-col bg-transparent">
@@ -52,9 +53,9 @@ export function Sidebar({
 
       <div className="border-t border-border p-2.5">
         <div className="flex items-center gap-1">
-          <Link href="/admin" className="flex flex-1 items-center gap-2 rounded-full px-2.5 py-2 text-[13px] text-muted-foreground transition hover:bg-foreground/[0.06] hover:text-foreground">
-            <Settings className="size-4" /> Admin
-          </Link>
+          <button onClick={openSettings} className="flex flex-1 items-center gap-2 rounded-full px-2.5 py-2 text-[13px] text-muted-foreground transition hover:bg-foreground/[0.06] hover:text-foreground">
+            <Settings className="size-4" /> Settings
+          </button>
           <ThemeToggle />
         </div>
       </div>

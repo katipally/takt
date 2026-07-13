@@ -101,17 +101,38 @@ app.get("/chats", (c) => {
 // page count + model + an estimated cost and let the user confirm before spend.
 app.post("/ingest/estimate", async (c) => {
   const form = await c.req.formData();
-  const pdfFiles = form.getAll("pdfs").filter((f) => typeof f !== "string") as unknown as File[];
-  if (!pdfFiles.length) return c.json({ error: "At least one PDF is required." }, 400);
+  const files = (k: string) => form.getAll(k).filter((f) => typeof f !== "string") as unknown as File[];
+  // Only PDFs are uploaded (their pages must be counted). Everything else is sent
+  // as a COUNT — no need to upload big media/STLs just to estimate.
+  const pdfFiles = files("pdfs");
+  const num = (k: string) => { const n = Math.floor(Number(form.get(k) ?? 0)); return Number.isFinite(n) && n > 0 ? n : 0; };
+  const images = num("imagesCount");
+  const videos = num("videosCount");
+  const audios = num("audiosCount");
+  const models = num("modelsCount");
+  if (!pdfFiles.length && !images && !videos && !models) {
+    return c.json({ error: "Add at least one PDF, image, video, or 3D part." }, 400);
+  }
   const perFile = await Promise.all(pdfFiles.map(async (f) => {
     try { return { name: f.name, pages: countPdfPages(new Uint8Array(await f.arrayBuffer())) }; }
     catch { return { name: f.name, pages: 0 }; }
   }));
+  const pdfPages = perFile.reduce((n, f) => n + f.pages, 0);
+  // Cost is per vision call ≈ per page. Each image is ~1 call; each video's
+  // chaptering samples ~12 frames in one call, ~2 pages of tokens. Audio (local
+  // transcription) and 3D (pure geometry) cost nothing, so they don't add to $.
+  const imageUnits = images;
+  const videoUnits = videos * 2;
   const cap = resolveCaption();
   const cost = cap.model ? await captionCost(cap.provider, cap.model) : { input: 0, output: 0 };
   return c.json({
     perFile,
-    totalPages: perFile.reduce((n, f) => n + f.pages, 0),
+    totalPages: pdfPages + imageUnits + videoUnits,
+    pdfPages,
+    images,
+    videos,
+    audios,
+    models,
     model: cap.model,
     provider: cap.provider.name,
     cost: cost.input || cost.output ? cost : null,
@@ -129,9 +150,19 @@ app.post("/ingest", async (c) => {
   // Web/YouTube source URLs (newline- or comma-separated), text-only.
   const urls = String(form.get("urls") ?? "").split(/[\n,]+/).map((u) => u.trim()).filter((u) => /^https?:\/\//i.test(u));
   const heroFile = form.get("hero");
-  // 3D part models (.stl → converted to .glb) and an optional walkthrough video.
+  // 3D part models (.stl → .glb), walkthrough videos (each chaptered), and loose
+  // images (each vision-captioned). Multiple of each; `video` kept for back-compat.
   const modelFiles = form.getAll("models").filter((f) => typeof f !== "string") as unknown as File[];
-  const videoFile = form.get("video");
+  const videoFiles = form.getAll("videos").filter((f) => typeof f !== "string") as unknown as File[];
+  const legacyVideo = form.get("video");
+  if (legacyVideo && typeof legacyVideo !== "string") videoFiles.push(legacyVideo as unknown as File);
+  const imageFiles = form.getAll("images").filter((f) => typeof f !== "string") as unknown as File[];
+  const audioFiles = form.getAll("audios").filter((f) => typeof f !== "string") as unknown as File[];
+
+  // A folder upload sends each file's RELATIVE PATH as its name ("prusa/…/x.pdf").
+  // Strip to the basename before it becomes a disk path (else writes ENOENT into a
+  // non-existent subdir). Models keep the path so the subsystem can be derived first.
+  const base = (n: string) => n.split("/").filter(Boolean).pop() ?? n;
 
   return streamSSE(c, async (stream) => {
     const emit = (e: SseEvent) => stream.writeSSE({ data: JSON.stringify(e) });
@@ -142,16 +173,28 @@ app.post("/ingest", async (c) => {
     if (pdfFiles.length && !cap.model) { await emit({ type: "error", message: "No ingestion model selected. Pick one in Settings → Models before adding a product." }); return; }
     if (pdfFiles.length && !cap.apiKey && !cap.provider.keyless) { await emit({ type: "error", message: `No API key for ${cap.provider.name}. Add your key in Settings → Models before adding a product.` }); return; }
     try {
-      const pdfs = await Promise.all(pdfFiles.map(async (f) => ({ filename: f.name, data: new Uint8Array(await f.arrayBuffer()) })));
+      // Dedup identical PDFs (Prusa ships the same parts catalog in two folders) —
+      // by basename+size, so we don't caption + author the same doc twice.
+      const seenPdf = new Set<string>();
+      const pdfs = (await Promise.all(pdfFiles.map(async (f) => ({ filename: base(f.name), data: new Uint8Array(await f.arrayBuffer()) }))))
+        .filter((p) => { const k = `${p.filename}:${p.data.byteLength}`; if (seenPdf.has(k)) return false; seenPdf.add(k); return true; });
       const hero = heroFile && typeof heroFile !== "string"
         ? { ext: extname((heroFile as File).name) || ".png", data: new Uint8Array(await (heroFile as File).arrayBuffer()) }
         : undefined;
-      const models = await Promise.all(modelFiles.map(async (f) => ({ filename: f.name, data: new Uint8Array(await f.arrayBuffer()) })));
-      const video = videoFile && typeof videoFile !== "string"
-        ? { filename: (videoFile as File).name, data: new Uint8Array(await (videoFile as File).arrayBuffer()) }
-        : undefined;
+      // A model's filename may carry its folder path (from the web folder-drop) —
+      // derive the subsystem from the parent folder, ignoring format-only folders.
+      const models = await Promise.all(modelFiles.map(async (f) => {
+        const segs = f.name.split("/").filter(Boolean);
+        const filename = segs[segs.length - 1] ?? f.name;
+        let subsystem: string | undefined = segs.length >= 2 ? segs[segs.length - 2] : undefined;
+        if (subsystem && /^(print_files|model_files|files|stl|step|stp|3mf|glb|gltf)$/i.test(subsystem)) subsystem = undefined;
+        return { filename, data: new Uint8Array(await f.arrayBuffer()), subsystem };
+      }));
+      const videos = await Promise.all(videoFiles.map(async (f) => ({ filename: base(f.name), data: new Uint8Array(await f.arrayBuffer()) })));
+      const images = await Promise.all(imageFiles.map(async (f) => ({ filename: base(f.name), data: new Uint8Array(await f.arrayBuffer()) })));
+      const audios = await Promise.all(audioFiles.map(async (f) => ({ filename: base(f.name), data: new Uint8Array(await f.arrayBuffer()) })));
       const result = await ingestProduct({
-        slug, name, manufacturer, pdfs, webSources: urls.map((url) => ({ url })), hero, models, video,
+        slug, name, manufacturer, pdfs, webSources: urls.map((url) => ({ url })), hero, models, videos, images, audios,
         captionProvider: cap.provider, captionModel: cap.model, apiKey: cap.apiKey ?? undefined,
         onProgress: (m) => emit({ type: "tool_start", id: "ingest", tool: "ingest", summary: m }),
       });

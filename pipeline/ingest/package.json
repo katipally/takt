@@ -11,6 +11,7 @@
   },
   "scripts": {
     "start": "tsx src/cli.ts",
+    "reset": "tsx src/reset-catalog.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -18,7 +19,9 @@
     "@takt/harness": "workspace:*",
     "@takt/profile": "workspace:*",
     "@takt/shared": "workspace:*",
-    "mupdf": "^1.28.0"
+    "fflate": "^0.8.3",
+    "mupdf": "^1.28.0",
+    "occt-import-js": "^0.0.23"
   },
   "devDependencies": {
     "tsx": "^4.19.2",

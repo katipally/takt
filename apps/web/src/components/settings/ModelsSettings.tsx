@@ -56,7 +56,9 @@ function ProviderKey({ kind }: { kind: string }) {
   );
 }
 
-export function ModelsSettings() {
+// `admin` renders the full console (API keys + the ingestion/vision model);
+// the user settings modal passes admin={false} for just model choice + effort.
+export function ModelsSettings({ admin = true }: { admin?: boolean } = {}) {
   const qc = useQueryClient();
   const { data: providers = [] } = useQuery({ queryKey: ["providers"], queryFn: api.providers });
   const { data: settings } = useQuery({ queryKey: ["settings"], queryFn: api.settings });
@@ -122,14 +124,16 @@ export function ModelsSettings() {
             {chatModel.cost ? <span>Output <b className="text-foreground">${chatModel.cost.output}/M</b></span> : null}
           </div>
         )}
-        <ProviderKey kind={chatProviderId} />
+        {admin && <ProviderKey kind={chatProviderId} />}
 
         {/* No login → the key is stored once for the whole instance and used by
             anyone who can open it. Make that explicit. */}
-        <div className="mt-3 flex items-start gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-[12px] text-muted-foreground">
-          <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-[var(--takt-arc,#e2701f)]" />
-          <span>This key is shared by everyone who can open this instance (there&apos;s no login). Use a spend-limited key, remove it when you&apos;re done, or run a private copy.</span>
-        </div>
+        {admin && (
+          <div className="mt-3 flex items-start gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-[12px] text-muted-foreground">
+            <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-[var(--takt-arc,#e2701f)]" />
+            <span>This key is shared by everyone who can open this instance (there&apos;s no login). Use a spend-limited key, remove it when you&apos;re done, or run a private copy.</span>
+          </div>
+        )}
       </section>
 
       <section>
@@ -150,7 +154,7 @@ export function ModelsSettings() {
             </select>
           </div>
         </div>
-        {buildProviderId !== chatProviderId && <div className="mt-3"><ProviderKey kind={buildProviderId} /></div>}
+        {admin && buildProviderId !== chatProviderId && <div className="mt-3"><ProviderKey kind={buildProviderId} /></div>}
       </section>
 
       <section>
@@ -169,26 +173,28 @@ export function ModelsSettings() {
         </div>
       </section>
 
-      <section>
-        <h2 className="text-[15px] font-semibold">Ingestion provider &amp; model</h2>
-        <p className="mt-1 text-[12.5px] text-muted-foreground">
-          The vision model that reads each manual page when you add a product — transcribing tables and describing diagrams so they become searchable. Pick a vision-capable model.
-        </p>
-        <div className="mt-3 flex flex-wrap items-end gap-3">
-          <div>
-            <label htmlFor="caption-provider" className="mb-1 block text-[11.5px] text-faint">Provider</label>
-            {providerSelect(captionProviderId, (id) => saveSetting.mutate({ captionProviderId: id, captionModel: "" }), "caption-provider")}
+      {admin && (
+        <section>
+          <h2 className="text-[15px] font-semibold">Ingestion provider &amp; model</h2>
+          <p className="mt-1 text-[12.5px] text-muted-foreground">
+            The vision model that reads each manual page when you add a product — transcribing tables and describing diagrams so they become searchable. Pick a vision-capable model.
+          </p>
+          <div className="mt-3 flex flex-wrap items-end gap-3">
+            <div>
+              <label htmlFor="caption-provider" className="mb-1 block text-[11.5px] text-faint">Provider</label>
+              {providerSelect(captionProviderId, (id) => saveSetting.mutate({ captionProviderId: id, captionModel: "" }), "caption-provider")}
+            </div>
+            <div className="flex-1">
+              <label htmlFor="caption-model" className="mb-1 block text-[11.5px] text-faint">Model</label>
+              <select id="caption-model" className={cn(inputCls, "max-w-md")} value={settings?.captionModel ?? ""} onChange={(e) => saveSetting.mutate({ captionModel: e.target.value })}>
+                <option value="" disabled>{captionModels.length ? "Select a model…" : "Add a key to load models…"}</option>
+                {captionModels.map((m) => <option key={m.id} value={m.id}>{m.display_name}</option>)}
+              </select>
+            </div>
           </div>
-          <div className="flex-1">
-            <label htmlFor="caption-model" className="mb-1 block text-[11.5px] text-faint">Model</label>
-            <select id="caption-model" className={cn(inputCls, "max-w-md")} value={settings?.captionModel ?? ""} onChange={(e) => saveSetting.mutate({ captionModel: e.target.value })}>
-              <option value="" disabled>{captionModels.length ? "Select a model…" : "Add a key to load models…"}</option>
-              {captionModels.map((m) => <option key={m.id} value={m.id}>{m.display_name}</option>)}
-            </select>
-          </div>
-        </div>
-        {captionProviderId !== chatProviderId && <div className="mt-3"><ProviderKey kind={captionProviderId} /></div>}
-      </section>
+          {captionProviderId !== chatProviderId && <div className="mt-3"><ProviderKey kind={captionProviderId} /></div>}
+        </section>
+      )}
     </div>
   );
 }

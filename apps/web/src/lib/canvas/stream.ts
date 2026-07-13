@@ -40,7 +40,15 @@ export function applyCanvasHtml(container: HTMLElement, html: string, opts: { fi
   const doc = new DOMParser().parseFromString(clean, "text/html");
   // Never execute half-written scripts against a mid-stream DOM.
   if (!opts.final) doc.querySelectorAll("script").forEach((s) => s.remove());
-  morphdom(container, doc.body, {
+  // UNWRAP a stray `.takt-page` the model sometimes emits: the container already
+  // IS the .takt-page grid, so a nested one re-establishes its own container-query
+  // context and collapses the whole page into a narrow ~200px column. Morph against
+  // the wrapper's children instead so blocks land as direct grid items.
+  let src: HTMLElement = doc.body;
+  while (src.children.length === 1 && (src.children[0] as HTMLElement).classList?.contains("takt-page")) {
+    src = src.children[0] as HTMLElement;
+  }
+  morphdom(container, src, {
     childrenOnly: true,
     onBeforeElUpdated: (a, b) => {
       // Islands (takt-*) render their OWN internal DOM (an <img>, a <video>, a 3D

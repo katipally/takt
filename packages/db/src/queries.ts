@@ -7,8 +7,14 @@ import type {
 import { isReservedSlug } from "@takt/shared";
 import { getDb } from "./connection";
 import { encryptSecret, decryptSecret } from "./crypto";
+import { replaceProductGraph } from "./graph";
+import { DATA_DIR, PAGES_DIR, PRODUCTS_DIR, HERO_DIR } from "./paths";
+import { rmSync } from "node:fs";
+import { resolve } from "node:path";
 
 const db = () => getDb();
+
+const rmSafe = (p: string) => { try { rmSync(p, { recursive: true, force: true }); } catch { /* already gone */ } };
 
 // ─── Products ──────────────────────────────────────────────────────────────
 export function listProducts(): Product[] {
@@ -46,6 +52,57 @@ export function upsertProduct(p: {
     `INSERT INTO products (id, slug, name, manufacturer, summary, hero_path) VALUES (?,?,?,?,?,?)`,
   ).run(id, p.slug, p.name, p.manufacturer ?? null, p.summary ?? null, p.heroPath ?? null);
   return getProductBySlug(p.slug)!;
+}
+
+/** Set (or clear) a product's hero image path — used by ingest to auto-pick a
+ *  hero when none was uploaded, so no product shows an empty hero. */
+export function setProductHero(productId: string, heroPath: string | null): void {
+  db().prepare(`UPDATE products SET hero_path = ? WHERE id = ?`).run(heroPath, productId);
+}
+
+/** Delete a product and EVERYTHING it owns — DB rows (graph, manuals, page images,
+ *  chats/messages via FK cascade) + on-disk assets (PDFs, page PNGs, media bundle,
+ *  hero). Idempotent: returns false if the slug doesn't exist. */
+export function deleteProduct(slug: string): boolean {
+  const prod = getProductBySlug(slug);
+  if (!prod) return false;
+  const manuals = getManualsByProduct(prod.id);
+  // Clear the KG (entities/edges/chunks/media + their FTS rows + vector cache).
+  replaceProductGraph(prod.id, { entities: [], edges: [], chunks: [], media: [] });
+  // Delete the product row — cascades manuals, page_images, chats, messages
+  // (foreign_keys is ON). Do this BEFORE touching files so a crash can't orphan rows.
+  db().prepare(`DELETE FROM products WHERE id = ?`).run(prod.id);
+  db().prepare(`DELETE FROM settings WHERE key = ?`).run(`starters:${prod.id}`);
+
+  // Files. A PDF path is only removed if no OTHER product's manual still points at
+  // it (PDFs share one flat dir), and only real file paths (source manuals store a
+  // URL in pdf_path — never a file — so `pdfs/` guards that).
+  for (const m of manuals) {
+    if (m.pdfPath?.startsWith("pdfs/")) {
+      const shared = db().prepare(`SELECT 1 FROM manuals WHERE pdf_path = ? LIMIT 1`).get(m.pdfPath);
+      if (!shared) rmSafe(resolve(DATA_DIR, m.pdfPath));
+    }
+    rmSafe(resolve(PAGES_DIR, m.id)); // pages/<manualId>/
+  }
+  rmSafe(resolve(PRODUCTS_DIR, slug)); // products/<slug>/ (markdown + media bundle)
+  for (const ext of [".png", ".jpg", ".jpeg", ".webp", ".gif"]) rmSafe(resolve(HERO_DIR, `${slug}${ext}`));
+  return true;
+}
+
+/** Delete EVERY product + its data. For starting the catalog fresh. Returns the
+ *  count removed. Destructive — call intentionally. */
+export function resetCatalog(): number {
+  const slugs = listProducts().map((p) => p.slug);
+  for (const s of slugs) deleteProduct(s);
+  return slugs.length;
+}
+
+/** Delete ALL chats + their messages, including master-mode (no-product) chats
+ *  that product deletion doesn't touch. Returns the count removed. */
+export function deleteAllChats(): number {
+  const n = (db().prepare(`SELECT COUNT(*) AS n FROM chats`).get() as { n: number }).n;
+  db().prepare(`DELETE FROM chats`).run(); // cascades messages
+  return n;
 }
 
 // ─── Manuals ───────────────────────────────────────────────────────────────

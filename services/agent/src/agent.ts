@@ -16,6 +16,21 @@ const MAX_STEPS = 16;
 const CONDITIONAL_SPEC = /\b\d[\d.,]*\s?(%|amps?|volts?|ipm|psi|lbs?|degrees?|°\s?[cf]|[av])(?![a-z])/i;
 export function hasConditionalSpec(s: string): boolean { return CONDITIONAL_SPEC.test(s); }
 
+// Deterministic hero: pick the strongest visual among the assets gathered THIS
+// turn — a 3D part beats a tight crop beats a loose photo. Returned to the canvas
+// worker as a mandate so the opening is consistent, not model-roulette. Pure.
+export function pickHero(figures: string[]): { url: string; tag: "model" | "figure" | "video" } | undefined {
+  const glb = figures.find((u) => /\.(glb|gltf)(\?|#|$)/i.test(u));
+  if (glb) return { url: glb, tag: "model" };
+  const vid = figures.find((u) => /\.(mp4|webm|mov)(\?|#|$)/i.test(u));
+  const crop = figures.find((u) => u.includes("/scratch/crops/"));
+  if (crop) return { url: crop, tag: "figure" };
+  const img = figures.find((u) => /\.(png|jpe?g|webp|gif)(\?|#|$)/i.test(u) && !u.includes("/assets/pages/"));
+  if (img) return { url: img, tag: "figure" };
+  if (vid) return { url: vid, tag: "video" };
+  return undefined;
+}
+
 function parseVerdict(raw: string): { ok: boolean; fix?: string } | null {
   try {
     const j = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1));
@@ -116,6 +131,7 @@ export async function runAgent(req: ChatRequest, emit: Emit, signal?: AbortSigna
       brief, question,
       facts: retrieved.join("\n---\n").slice(0, 8000),
       figures,
+      hero: pickHero(figures),
       images: gatheredImages,
       product, emit, signal: ac.signal,
     });
@@ -174,5 +190,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   a(!hasConditionalSpec("turn the tension knob clockwise"), "ignores a non-numeric answer");
   a(parseVerdict('{"ok":false,"fix":"115 A on 240 V"}')?.ok === false, "parses a not-ok verdict");
   a(parseVerdict("garbage") === null, "returns null on non-JSON");
+  // hero picker priority: 3D beats crop beats loose photo; full pages never lead.
+  a(pickHero(["/assets/products/x/media/gear.glb", "/assets/scratch/crops/a.png"])?.tag === "model", "3D wins the hero");
+  a(pickHero(["/assets/scratch/crops/a.png", "/assets/products/x/media/photo.jpg"])?.url.includes("/crops/") === true, "crop beats a loose photo");
+  a(pickHero(["/assets/pages/m/12.png"]) === undefined, "a full manual page is never the hero");
   console.log("agent verify self-check ok");
 }
