@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { streamProvider, catalogModels, type Message } from "@takt/harness";
+import { catalogModels, type Message } from "@takt/harness";
 import type { ChatRequest } from "@takt/shared";
-import { getProductBySlug, getManualsByProduct, listMessages } from "@takt/db";
+import { getProductBySlug, getManualsByProduct, getEntitiesByType, listMessages } from "@takt/db";
 import { buildTaktTools, type Emit } from "./tools.js";
 import { runTurnLoop } from "./turn-loop.js";
 import { runCanvasWorker } from "./canvas-worker.js";
@@ -10,11 +10,25 @@ import { resolveChat } from "./providers.js";
 
 const MAX_STEPS = 16;
 
-// A numeric spec whose value depends on a CONDITION (process, voltage, material,
-// mode) — the class of fact the model most often cross-wires. We fact-check ONLY
-// these against what was retrieved; casual/non-numeric answers skip it.
-const CONDITIONAL_SPEC = /\b\d[\d.,]*\s?(%|amps?|volts?|ipm|psi|lbs?|degrees?|°\s?[cf]|[av])(?![a-z])/i;
-export function hasConditionalSpec(s: string): boolean { return CONDITIONAL_SPEC.test(s); }
+// A final answer that PROMISES an action ("pulling the model now", "building the
+// page") is only valid when the turn actually composed something. A model that
+// narrates instead of acting poisons the chat history — every later turn imitates
+// the pattern — so we detect it and force one corrective pass.
+const PROMISE = /\b(build|building|making|creating|generating|composing|pulling|grabbing|preparing|putting)\b[\s\S]{0,80}?\b(now|canvas|page|sheet|viewer|3d|model|diagram|table|chart|for you)\b/i;
+export function promisesAction(s: string): boolean { return PROMISE.test(s); }
+
+// The product's measured spec values, one per line — deterministic ground truth
+// for the canvas fact-check (spec-check.ts). This is what lets an EDIT turn
+// (which re-gathers nothing) still verify every number against the graph.
+export function graphSpecFacts(productId: string | null | undefined): string {
+  if (!productId) return "";
+  try {
+    return getEntitiesByType(productId, "spec")
+      .filter((e) => e.attrs?.value != null)
+      .map((e) => `${e.name} = ${e.attrs.value}${e.attrs.unit ? ` ${e.attrs.unit}` : ""}${e.page ? ` (p.${e.page})` : ""}`)
+      .join("\n");
+  } catch { return ""; }
+}
 
 // Deterministic hero: pick the strongest visual among the assets gathered THIS
 // turn — a 3D part beats a tight crop beats a loose photo. Returned to the canvas
@@ -31,39 +45,11 @@ export function pickHero(figures: string[]): { url: string; tag: "model" | "figu
   return undefined;
 }
 
-function parseVerdict(raw: string): { ok: boolean; fix?: string } | null {
-  try {
-    const j = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1));
-    if (typeof j?.ok === "boolean") return { ok: j.ok, fix: typeof j.fix === "string" ? j.fix : undefined };
-  } catch { /* not JSON */ }
-  return null;
-}
-
-// Narrow, cheap fact-check: only when the final answer states a conditional spec
-// AND the turn retrieved sources. Runs on the CHAT model (minimal reasoning), reads
-// only what was retrieved, and on a same-condition mismatch appends ONE grounded
-// correction line. Never blocks a normal answer.
-async function verifyConditionalSpec(answer: string, retrieved: string[], emit: Emit, signal: AbortSignal): Promise<void> {
-  if (signal.aborted || !answer || !retrieved.length || !hasConditionalSpec(answer)) return;
-  const { provider, model, apiKey } = resolveChat();
-  if (!model || (!apiKey && !provider.keyless)) return;
-  const facts = retrieved.join("\n---\n").slice(0, 6000);
-  const prompt = `A product-support answer may state a spec that depends on a condition (process, input voltage, material, mode). Check ONLY the numeric specs.
-ANSWER: ${answer}
-RETRIEVED FACTS (the only ground truth): ${facts}
-Does every numeric spec in ANSWER match a RETRIEVED fact FOR THE SAME CONDITION? A value matching a DIFFERENT condition's number is wrong.
-Return ONLY JSON: {"ok":true} or {"ok":false,"fix":"<one short corrected sentence with the right value and its condition>"}`;
-  let raw = "";
-  try {
-    for await (const ev of streamProvider(provider, apiKey ?? undefined, { model, messages: [{ role: "user", text: prompt }], tools: [], maxTokens: 300, reasoningEffort: "minimal" }, signal)) {
-      if (ev.type === "text") raw += ev.delta;
-    }
-  } catch { return; }
-  const v = parseVerdict(raw);
-  if (v && v.ok === false && v.fix?.trim() && !signal.aborted) {
-    await emit({ type: "text_delta", text: `\n\n— Correction: ${v.fix.trim()}` });
-  }
-}
+// NOTE: the old LLM-judged spec verifier (verifyConditionalSpec) is gone — in
+// testing it hallucinated corrections against values that WERE in the retrieved
+// facts, contradicting the deterministic graph check shown on the same screen.
+// Fact verification is now fully deterministic: spec-check.ts diffs every
+// number+unit on the canvas against the gathered facts + the product graph.
 
 async function modelCost(provider: any, model: string): Promise<{ input: number; output: number }> {
   try {
@@ -122,6 +108,8 @@ export async function runAgent(req: ChatRequest, emit: Emit, signal?: AbortSigna
 
   // build_canvas: compose the full page (title included) and stream it directly —
   // no title shell to wipe. The worker opens the canvas and paints it in place.
+  const graphFacts = graphSpecFacts(product?.id);
+
   const compose = async (brief: string, canvasId?: string): Promise<boolean> => {
     if (ac.signal.aborted) return false;
     const figures = [...allowedAssets].filter((u) => !u.includes("/assets/pages/")); // embeddable crops/meshes/video
@@ -130,6 +118,7 @@ export async function runAgent(req: ChatRequest, emit: Emit, signal?: AbortSigna
       canvasId: canvasId ?? randomUUID().slice(0, 8),
       brief, question,
       facts: retrieved.join("\n---\n").slice(0, 8000),
+      graphFacts,
       figures,
       hero: pickHero(figures),
       images: gatheredImages,
@@ -152,6 +141,7 @@ export async function runAgent(req: ChatRequest, emit: Emit, signal?: AbortSigna
     if (!cur) return false;
     const ok = await runCanvasWorker({
       mode: "edit", canvasId: canvasId ?? cur.canvasId, currentHtml: cur.html, target, brief,
+      graphFacts, // edits re-gather nothing — the graph is their ground truth
       product, emit, signal: ac.signal,
     });
     if (ok) composedThisTurn = true;
@@ -162,22 +152,34 @@ export async function runAgent(req: ChatRequest, emit: Emit, signal?: AbortSigna
   const cost = await modelCost(provider, model);
 
   try {
-    const { text: finalAnswer } = await runTurnLoop({
+    const loopOpts = {
       provider, apiKey: apiKey ?? undefined, model, maxTokens: 8192,
       messages, tools, emit, signal: ac.signal, maxSteps: MAX_STEPS, cost,
-      deferLast: (n) => n === "build_canvas" || n === "edit_canvas" || n === "ask_user",
-      onResult: (_name, res) => {
+      deferLast: (n: string) => n === "build_canvas" || n === "edit_canvas" || n === "ask_user",
+      onResult: (_name: string, res: { output?: string; images?: unknown[] }) => {
         for (const m of (res.output || "").matchAll(/\/assets\/[^\s"'?)]+/g)) allowedAssets.add(m[0]);
-        if (res.images?.length && gatheredImages.length < 4) gatheredImages.push(...res.images);
+        if (res.images?.length && gatheredImages.length < 4) gatheredImages.push(...(res.images as typeof gatheredImages));
         if (res.output) retrieved.push(res.output);
       },
-    });
+    };
+    const { text: finalAnswer } = await runTurnLoop(loopOpts);
+
+    // PROMISE GUARDRAIL: the model narrated an action ("building the page now")
+    // without composing anything. Left alone, this broken turn poisons the chat —
+    // later turns imitate it. Force ONE corrective pass that must actually act.
+    if (!composedThisTurn && !ac.signal.aborted && promisesAction(finalAnswer)) {
+      console.error("[agent] final text promises an action but nothing was composed → corrective pass");
+      messages.push({
+        role: "user",
+        text: "SYSTEM CHECK: you said you would build/show something but made no tool call, so nothing happened. Do it NOW — gather what you need and call build_canvas. Act; do not narrate.",
+      });
+      await runTurnLoop({ ...loopOpts, maxSteps: 8 });
+    }
 
     // GUARANTEED CANVAS: gathered real material but never composed → build one now.
     if (!composedThisTurn && !ac.signal.aborted && retrieved.length > 0 && question) {
       try { await compose(`Answer this on the canvas as a designed page from the gathered facts and media: ${question}`); } catch { /* non-fatal */ }
     }
-    await verifyConditionalSpec(finalAnswer, retrieved, emit, ac.signal);
     await emit({ type: "done" });
   } catch (err: any) {
     if (ac.signal.aborted || err?.name === "AbortError") return;
@@ -192,11 +194,11 @@ export async function runAgent(req: ChatRequest, emit: Emit, signal?: AbortSigna
 // ── self-check: `tsx src/agent.ts` ──────────────────────────────────────────
 if (import.meta.url === `file://${process.argv[1]}`) {
   const a = (c: boolean, m: string) => { if (!c) { console.error("FAIL:", m); process.exit(1); } };
-  a(hasConditionalSpec("115A on 240V"), "detects an amperage/voltage spec");
-  a(hasConditionalSpec("the duty cycle is 25%"), "detects a percentage spec");
-  a(!hasConditionalSpec("turn the tension knob clockwise"), "ignores a non-numeric answer");
-  a(parseVerdict('{"ok":false,"fix":"115 A on 240 V"}')?.ok === false, "parses a not-ok verdict");
-  a(parseVerdict("garbage") === null, "returns null on non-JSON");
+  // promise guardrail: narrated actions are detected; answers and questions are not.
+  a(promisesAction("Pulling the Nextruder fan model now.Building the 3D viewer for you now."), "detects a narrated build");
+  a(promisesAction("Cheat sheet time — building the temp cheat sheet now."), "detects a narrated sheet build");
+  a(!promisesAction("215 °C nozzle, 50–60 °C bed — full PLA profile on the canvas."), "ignores a delivered answer");
+  a(!promisesAction("Turn the tension knob clockwise until it clicks."), "ignores an instruction");
   // hero picker priority: 3D beats crop beats loose photo; full pages never lead.
   a(pickHero(["/assets/products/x/media/gear.glb", "/assets/scratch/crops/a.png"])?.tag === "model", "3D wins the hero");
   a(pickHero(["/assets/scratch/crops/a.png", "/assets/products/x/media/photo.jpg"])?.url.includes("/crops/") === true, "crop beats a loose photo");

@@ -9,7 +9,7 @@ import type { Message } from "@takt/harness";
 import type { Emit, TaktTool } from "../tools.js";
 import { foldBlock } from "../block-emit.js";
 import { runCanvasWorker } from "../canvas-worker.js";
-import { pickHero } from "../agent.js";
+import { pickHero, graphSpecFacts } from "../agent.js";
 import { LiveTurnRunner, type SpawnBuild } from "./turn-runner.js";
 
 type Frame = { data: string; mime: string };
@@ -274,7 +274,7 @@ export class LiveSession {
       const frame = frames.length ? this.persistFrame(frames[frames.length - 1]!) : undefined;
       void runCanvasWorker({
         mode: "build", canvasId: randomUUID().slice(0, 8), brief, question: text,
-        facts: ctx?.facts, figures: ctx?.figures, hero: pickHero(ctx?.figures ?? []),
+        facts: ctx?.facts, graphFacts: graphSpecFacts(this.product?.id), figures: ctx?.figures, hero: pickHero(ctx?.figures ?? []),
         product: this.product, frame,
         emit: this.blockEmit(blocks, new AbortController().signal), signal: new AbortController().signal,
       }).then(() => {

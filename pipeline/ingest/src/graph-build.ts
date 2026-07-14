@@ -56,8 +56,15 @@ export function buildGraphInput(input: GraphBuildInput): GraphInput {
   const addEntity = (type: EntityType, item: ParsedItem, page: number, manualId: string | null): string => {
     const id = eid(type, item.name);
     const attrs: Record<string, unknown> = {};
-    if (item.value != null) attrs.value = item.value;
-    if (item.unit != null) attrs.unit = item.unit;
+    // A measured value must contain a digit. The vision pass sometimes returns
+    // qualitative fills ("very high", "increased") — storing those as spec
+    // values pollutes grounding and the deterministic fact-check, so drop them
+    // (the entity keeps its summary; only the fake measurement goes).
+    const measured = item.value != null && /\d/.test(String(item.value));
+    if (measured) {
+      attrs.value = item.value;
+      if (item.unit != null) attrs.unit = item.unit;
+    }
     const existing = entities.get(id);
     if (existing) {
       // merge: union aliases, keep first (longest-name canonical), fill summary

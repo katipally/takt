@@ -95,6 +95,9 @@ export interface CanvasWorkerOpts {
   /** build: the user's question + gathered material */
   question?: string;
   facts?: string;
+  /** the product graph's measured spec values — deterministic ground truth for
+   *  the post-build fact-check (covers edits, which re-gather nothing) */
+  graphFacts?: string;
   mediaHints?: string;
   figures?: string[]; // real /assets URLs the page may embed
   hero?: { url: string; tag: "model" | "figure" | "video" }; // deterministic hero the page MUST lead with
@@ -240,9 +243,11 @@ export async function runCanvasWorker(o: CanvasWorkerOpts): Promise<boolean> {
       }
       if (!hasContent) break; // second empty attempt → give up (emitted stays false)
       // Deterministic fact-check: every number+unit on the page must exist in
-      // the gathered facts. One repair round; then ship with the result attached
-      // (the client shows it as a verified/unverified badge).
-      const ground = o.mode === "build" ? `${o.facts ?? ""}\n${o.mediaHints ?? ""}` : "";
+      // the gathered facts or the product graph. Runs on BUILDS and EDITS (an
+      // edit re-gathers nothing, so the graph is its ground truth — exactly the
+      // path where invented values used to slip through). One repair round; then
+      // ship with the result attached (the client shows a verified badge).
+      const ground = `${o.facts ?? ""}\n${o.mediaHints ?? ""}\n${o.graphFacts ?? ""}`;
       const spec = ground.trim() ? checkSpecValues(clean, ground) : undefined;
       if (spec?.flagged.length && !specFixedOnce) {
         specFixedOnce = true;
