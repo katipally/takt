@@ -12,12 +12,15 @@ import { Wordmark } from "@/components/brand/Wordmark";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 
 export function Sidebar({
-  currentSlug, onNewChat, onSelectChat, activeChatId,
+  currentSlug, onNewChat, onSelectChat, activeChatId, onClose,
 }: {
   currentSlug: string | null;
   onNewChat: () => void;
   onSelectChat: (id: string) => void;
   activeChatId: string;
+  /** In the mobile drawer the collapse button must close the DRAWER — the
+   *  default toggles the (hidden) desktop sidebar and looks like a dead button. */
+  onClose?: () => void;
 }) {
   // null slug = master mode → the no-product chat list (server maps "master").
   const chatKey = currentSlug ?? "master";
@@ -40,7 +43,7 @@ export function Sidebar({
         <Link href="/" title="All products" className="flex items-center gap-2 rounded-lg px-1 py-0.5 transition hover:opacity-70">
           <Wordmark size="sm" />
         </Link>
-        <button onClick={toggleSidebar} title="Collapse sidebar" className="ml-auto grid size-7 place-items-center rounded-full text-muted-foreground transition hover:bg-foreground/10 hover:text-foreground">
+        <button onClick={onClose ?? toggleSidebar} title="Collapse sidebar" aria-label="Collapse sidebar" className="ml-auto grid size-7 place-items-center rounded-full text-muted-foreground transition hover:bg-foreground/10 hover:text-foreground">
           <PanelLeftClose className="size-4" />
         </button>
       </div>

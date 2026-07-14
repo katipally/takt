@@ -147,8 +147,8 @@ function Showcase({ products, active, setActive, product }: {
         </Link>
       </div>
 
-      {/* Eyebrow + title */}
-      <div data-reveal className="mt-4 flex items-baseline gap-3">
+      {/* Eyebrow + title — stacked on phones, inline on wider screens. */}
+      <div data-reveal className="mt-4 flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-3">
         {product.manufacturer && <span className="text-[11px] uppercase tracking-[0.14em] text-faint">{product.manufacturer}</span>}
         <h1 className="text-[22px] font-semibold tracking-tight">{product.name}</h1>
       </div>

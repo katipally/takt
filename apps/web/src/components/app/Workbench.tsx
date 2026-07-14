@@ -288,7 +288,7 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
             <div className="absolute inset-0 bg-black/50" onClick={() => setDrawerOpen(false)} />
             <motion.div initial={{ x: "-100%" }} animate={{ x: 0 }} exit={{ x: "-100%" }} transition={{ type: "spring", stiffness: 380, damping: 40 }}
               className="absolute left-0 top-0 h-full w-[82%] max-w-[320px] border-r border-border bg-background shadow-2xl">
-              <Sidebar currentSlug={slug} onNewChat={() => { newChat(); setDrawerOpen(false); }} onSelectChat={(id) => { selectChat(id); setDrawerOpen(false); }} activeChatId={wb.chatId} />
+              <Sidebar currentSlug={slug} onClose={() => setDrawerOpen(false)} onNewChat={() => { newChat(); setDrawerOpen(false); }} onSelectChat={(id) => { selectChat(id); setDrawerOpen(false); }} activeChatId={wb.chatId} />
             </motion.div>
           </motion.div>
         )}

@@ -338,15 +338,17 @@ export function KnowledgeGraph({ slug }: { slug: string }) {
         read what's on it and hop through its connections. This is the graph every answer walks.
       </p>
 
-      <div className="mt-3 flex gap-3">
+      {/* Panel sits beside the canvas on wide screens, stacks under it on
+          mobile — a fixed side panel would crush the canvas at phone widths. */}
+      <div className="mt-3 flex flex-col gap-3 md:flex-row">
         <div className="relative min-w-0 flex-1">
-          <canvas ref={canvasRef} className="h-[440px] w-full cursor-grab rounded-lg border border-border bg-surface text-muted-foreground" />
+          <canvas ref={canvasRef} className="h-[340px] w-full cursor-grab rounded-lg border border-border bg-surface text-muted-foreground md:h-[440px]" />
         </div>
 
         {/* Detail panel — the SELECTED entity, verbatim from the store, with its
             connections as click-through hops. */}
         {selected && (
-          <aside className="takt-scroll w-72 shrink-0 overflow-y-auto rounded-lg border border-border bg-surface p-3" style={{ maxHeight: 440 }}>
+          <aside className="takt-scroll max-h-72 w-full shrink-0 overflow-y-auto rounded-lg border border-border bg-surface p-3 md:max-h-[440px] md:w-72">
             <div className="flex items-start justify-between gap-2">
               <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide" style={{ color: color(selected.type) }}>
                 <span className="size-2 rounded-full" style={{ background: color(selected.type) }} /> {selected.type.replace("_", " ")}

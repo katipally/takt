@@ -64,7 +64,7 @@ export function PreCall({ mics, cams, micId, camId, onMic, onCam, error, modelsD
   refreshDevices: () => Promise<void>; onDownload: () => void; onStart: () => void; onOpenSettings: () => void;
 }) {
   return (
-    <div className="relative z-10 flex flex-1 flex-col overflow-y-auto">
+    <div className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div className="m-auto flex w-full max-w-sm flex-col items-center gap-4 px-6 py-6 text-center">
         <div className="space-y-1">
           <h2 className="text-[18px] font-semibold tracking-tight">Talk with Takt</h2>
