@@ -49,6 +49,7 @@ const AR_MODES = "webxr scene-viewer quick-look";
 // ── floating card (above the stage) ─────────────────────────────────────────
 export function OverlayLayer() {
   const overlay = useLiveStore((s) => s.overlay);
+  const cameraOn = useLiveStore((s) => s.cameraOn);
   const set = useLiveStore((s) => s.set);
   const reduce = useReducedMotion();
   const mvReady = useModelViewer(overlay?.kind === "model");
@@ -57,8 +58,11 @@ export function OverlayLayer() {
   // card floats over the whole app, independent of the camera PiP.
   const wrapRef = useRef<HTMLDivElement>(null);
   const drag = useDragControls();
-  // In-feed placements render inside CameraPiP (FeedOverlay), not here.
-  const card = overlay && (overlay.kind === "video" || ((overlay.kind === "model" || overlay.kind === "figure") && !overlay.anchor))
+  // With the camera ON, 3D parts and figures float INSIDE the camera frame
+  // (FeedOverlay, in CameraPiP) so they sit on the live view. This big card is
+  // for video, and the camera-OFF fallback for a model/figure (no frame to put
+  // it in).
+  const card = overlay && (overlay.kind === "video" || ((overlay.kind === "model" || overlay.kind === "figure") && !cameraOn))
     ? overlay : null;
 
   return (
@@ -151,7 +155,7 @@ export function FeedOverlay({ overlay, videoDim }: { overlay: LiveOverlay | null
     setDim({ w: el.clientWidth, h: el.clientHeight });
     return () => ro.disconnect();
   }, []);
-  const mvReady = useModelViewer(!!overlay && overlay.kind === "model" && !!overlay.anchor);
+  const mvReady = useModelViewer(!!overlay && overlay.kind === "model");
 
   // Let the user drag a pinned model/figure off the thing it's covering. Once
   // dragged it stops tracking the object and stays put (manual position, in tile
@@ -168,9 +172,11 @@ export function FeedOverlay({ overlay, videoDim }: { overlay: LiveOverlay | null
     window.addEventListener("pointerup", up);
   };
 
+  // model/figure float INSIDE the frame (with or without an anchor); marks/notes
+  // draw on it. Everything on-feed here; the big card is video / camera-off only.
   const onFeed = overlay && (
     overlay.kind === "marks" || overlay.kind === "note" ||
-    ((overlay.kind === "model" || overlay.kind === "figure") && !!overlay.anchor)
+    overlay.kind === "model" || overlay.kind === "figure"
   ) ? overlay : null;
 
   // object-cover mapping: frame (0–1) → tile pixels. Without video dimensions
@@ -182,6 +188,12 @@ export function FeedOverlay({ overlay, videoDim }: { overlay: LiveOverlay | null
   const ox = (w - dw) / 2, oy = (h - dh) / 2;
   const px = (p: { x: number; y: number }) => ({ x: ox + p.x * dw, y: oy + p.y * dh });
   const minDim = Math.min(dw, dh) || 1;
+
+  // A pinned model/figure: anchored → tracks its object (pin points at it);
+  // un-anchored or dragged → floats at a fixed spot in the frame.
+  const isPin = onFeed?.kind === "model" || onFeed?.kind === "figure";
+  const pinAnchored = isPin && !!onFeed?.anchor && !manual;
+  const pinBase = isPin ? (manual ?? (onFeed?.anchor ? px(onFeed.anchor) : { x: w * 0.74, y: h * 0.36 })) : { x: 0, y: 0 };
 
   return (
     <div ref={boxRef} className="pointer-events-none absolute inset-0 z-20">
@@ -219,12 +231,14 @@ export function FeedOverlay({ overlay, videoDim }: { overlay: LiveOverlay | null
               <Bubble at={px(onFeed.anchor ?? { x: 0.5, y: 0.5 })} text={onFeed.caption ?? ""} onDismiss={() => set({ overlay: null })} dot />
             )}
 
-            {/* model / figure pinned in-feed — tracks its object until the user
-                drags the handle, then stays where they put it */}
-            {(onFeed.kind === "model" || onFeed.kind === "figure") && onFeed.anchor && (
-              <motion.div data-overlay-interactive className="pointer-events-auto absolute touch-none" style={{ transform: "translate(-50%, -104%)" }}
-                animate={{ left: (manual ?? px(onFeed.anchor)).x, top: (manual ?? px(onFeed.anchor)).y }}
-                transition={manual ? { duration: 0 } : GLIDE}>
+            {/* model / figure floating IN the frame. Anchored → sits above the
+                object and tracks it (pin points at it); un-anchored → floats at a
+                default spot. Dragging the handle detaches it to a fixed spot. */}
+            {isPin && (
+              <motion.div data-overlay-interactive className="pointer-events-auto absolute touch-none"
+                style={{ transform: pinAnchored ? "translate(-50%, -104%)" : "translate(-50%, -50%)" }}
+                animate={{ left: pinBase.x, top: pinBase.y }}
+                transition={pinAnchored ? GLIDE : { duration: 0 }}>
                 <div className="overflow-hidden rounded-xl border border-white/25 bg-black/55 shadow-xl backdrop-blur-sm">
                   {/* drag handle — move the pin off what it's covering */}
                   <div onPointerDown={startPinDrag} title="Drag to move"
@@ -244,7 +258,7 @@ export function FeedOverlay({ overlay, videoDim }: { overlay: LiveOverlay | null
                   <button onClick={() => set({ overlay: null })} aria-label="Dismiss"
                     className="absolute right-1 top-1 rounded-full bg-black/50 p-1 text-white/80 hover:text-white"><X size={10} /></button>
                 </div>
-                {!manual && <div className="mx-auto mt-1 h-2.5 w-2.5 rounded-full border-2 border-white bg-accent shadow" />}
+                {pinAnchored && <div className="mx-auto mt-1 h-2.5 w-2.5 rounded-full border-2 border-white bg-accent shadow" />}
               </motion.div>
             )}
 
