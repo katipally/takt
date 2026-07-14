@@ -125,8 +125,8 @@ export async function runAgent(req: ChatRequest, emit: Emit, signal?: AbortSigna
   const compose = async (brief: string, canvasId?: string): Promise<boolean> => {
     if (ac.signal.aborted) return false;
     const figures = [...allowedAssets].filter((u) => !u.includes("/assets/pages/")); // embeddable crops/meshes/video
-    const ok = await runCanvasWorker({
-      mode: "build",
+    const opts = {
+      mode: "build" as const,
       canvasId: canvasId ?? randomUUID().slice(0, 8),
       brief, question,
       facts: retrieved.join("\n---\n").slice(0, 8000),
@@ -134,7 +134,14 @@ export async function runAgent(req: ChatRequest, emit: Emit, signal?: AbortSigna
       hero: pickHero(figures),
       images: gatheredImages,
       product, emit, signal: ac.signal,
-    });
+    };
+    let ok = await runCanvasWorker(opts);
+    // A total build failure (no markers / empty page) is usually a model flake —
+    // one fresh-context retry recovers it far more often than not.
+    if (!ok && !ac.signal.aborted) {
+      console.error("[canvas] build produced no page → one retry");
+      ok = await runCanvasWorker(opts);
+    }
     if (ok) composedThisTurn = true;
     return ok;
   };

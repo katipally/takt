@@ -12,6 +12,7 @@ export const DESIGN_MODULES: Record<string, { blurb: string; body: string }> = {
 • The design system routes plain prose (\`<p>/<h2>/<ol>\`) to a readable center column and BREAKS OUT grids/tables/figures wider — so USE grids to fill the width; don't force prose wide.
 • HERO = a PAIR. Open with \`<div class="takt-grid takt-split" data-takt-id="hero">\`: one child is the eyebrow + serif \`<h1>\` + \`.takt-lead\` + a \`.takt-chips\` row; the OTHER child is JUST the key figure / 3D / video + a ONE-LINE caption — nothing else. Do NOT stuff extra headings, paragraphs, or "where it lives" prose into the media cell; that overloads one column and leaves the other empty (the classic dead-space bug). Supporting detail goes in the NEXT row, full width. The two columns are auto-centered, so keep them close in height.
 • FILL EACH ROW with \`takt-split\` / \`takt-cols-2\` / \`takt-cols-3\` / \`takt-cols-4\`. A lone card in a wide row is dead space — give it a sibling (the figure, a stat, the next cause). Figures live BESIDE the text they explain (the figure for step 2 sits in step 2's row).
+• GRID vs SEQUENCE — the #1 layout mistake: a multi-column grid is ONLY for PARALLEL items of SIMILAR length (a comparison, a set of causes, option cards). NEVER lay out numbered/sequential steps or a decision flow ("walk me through", "step 1→5") as a multi-column grid of cards — the reading order goes wrong AND the steps differ in length so cards sit half-empty beside tall ones. Sequential steps are a SINGLE column: full-width step rows (each step \`data-takt-id="step-1"\`, a full-width \`.takt-card\` or a numbered \`<ol>\`), read straight top-to-bottom. Columns are stretched to equal height, so two cards of very different content length look unbalanced (one mostly empty) — only pair items whose content is comparable.
 • BREATHABLE: generous space BETWEEN sections, tight WITHIN a card; vary the rhythm (a dense row next to an airy one). No orphan images, no half-empty rows, no wall of centered prose. If a row would leave one side empty, either give it a sibling or let that block run full width — never a tall column beside a short one.
 • ARCHETYPE — pick the shape that fits the question (you have creative freedom to adapt):
   – part-explainer ("show me the X"): hero(figure + what-it-is) → anatomy (annotated figure or legend) → how-to (steps beside a figure) → a tip callout.
@@ -41,11 +42,11 @@ export const DESIGN_MODULES: Record<string, { blurb: string; body: string }> = {
   },
   chart: {
     blurb: "data visualization drawn as inline SVG — bar, range, comparison, line",
-    body: `CHART — draw an inline \`<svg>\` to VISUALIZE numbers the manual doesn't already picture (a range, a comparison, a curve). If the manual pictures it, crop that figure instead.
+    body: `CHART — draw an inline \`<svg>\` to VISUALIZE numbers the manual doesn't already picture (a range, a comparison, a curve). If the manual pictures it, crop that figure instead. First ask: is it even a chart? ONE value → a \`.takt-stat\` tile, not a one-bar chart; a ratio → a meter, not a 2-slice pie.
 • Frame: \`<svg width="100%" viewBox="0 0 680 H">\` — 680 wide; compute H from the lowest element + 40; content between x=40 and x=640. Background TRANSPARENT (never a solid/black <rect>).
-• Color from tokens only: text \`fill="var(--takt-fg)"\`, axes/muted \`stroke="var(--takt-muted)"\`, primary \`var(--takt-accent)"\`, 2nd series \`var(--takt-arc)"\`. Two colors max = meaning, not decoration.
-• Every line/path needs \`fill="none"\`; every \`<text>\` an explicit fill; two font sizes (14 label / 12 sub); \`text-anchor="middle"\` to center.
-• Shapes: horizontal bars for a comparison, a labeled range bar for min–max, points+line for a trend. Label each value directly (no separate legend when you can put the number on the bar).`,
+• COLOR IS PRE-VALIDATED — NEVER pick your own chart hex. Series N always gets \`var(--takt-cat-N)\` in fixed order (series 1 → cat-1, 2 → cat-2, …), never cycled, never reordered; >6 series → fold the rest into an "Other". A light→dark ramp (heat, depth, intensity) uses \`var(--takt-seq-1..5)\` in order. Status meaning uses \`var(--takt-ok/--takt-warn/--takt-danger)\` + an icon/label, never color alone. Text is \`fill="var(--takt-fg)"\`, axes/muted \`stroke="var(--takt-muted)"\` — text NEVER wears a series color.
+• ONE axis, never dual-axis. ≤7 evenly-spaced round-number ticks — NEVER a tick at every data value (they crowd and collide). Bars ≤24px thick; lines 2px with \`fill="none"\`; every \`<text>\` an explicit fill; two font sizes (14 label / 12 sub); \`text-anchor="middle"\` to center; digits tabular-nums.
+• Shapes: horizontal bars for a comparison, a labeled range bar for min–max, points+line for a trend. Label each value DIRECTLY on/next to its mark (mandatory — the palette relies on labels as the second encoding; no separate legend when the number fits on the bar).`,
   },
   diagram: {
     blurb: "hand-drawn SVG diagrams — flowchart, how-it-works, architecture, exploded/anatomy",
@@ -66,7 +67,8 @@ flowchart TD
   D -- Yes --> F[Reload from LCD menu]
 </takt-mermaid>\`
 • Keep node labels SHORT and plain — avoid \`()[]{}\` and punctuation inside the label text (the parser chokes); use quotes if you must: \`A["Heat to 215 C"]\`.
-• Good for: troubleshooting decision trees, load/unload sequences, calibration state flow. It renders + themes automatically and fits the column width.`,
+• Good for: troubleshooting decision trees, load/unload sequences, calibration state flow. It renders + themes automatically and fits the column width.
+• It renders in strict mode: no HTML, no \`click\` handlers, no \`<br>\` in labels. Keep each label a short plain phrase; put units without symbols that fight the parser (\`A["Heat to 215C"]\`). Keep it under ~10 nodes — beyond that, split into two diagrams or switch to the diagram module.`,
   },
   workflows: {
     blurb: "Prox product workflows — troubleshooter, product card, selector, sizing calculator, step guide, kit builder",
@@ -79,12 +81,34 @@ flowchart TD
 • KIT BUILDER — the goal → \`takt-cols-2/3\` of required parts (each a card: part name, number, qty, a \`<takt-model>\`/figure) → a running "what you need" \`<table>\` with quantities → total count. Use \`<takt-action>\` to let the user confirm/adjust a part.`,
   },
   interactive: {
-    blurb: "in-canvas calculators, selectors, toggles — real <input>/<select>/<button> + <script>",
-    body: `INTERACTIVE — make the answer a TOOL when it helps (a settings picker, a unit/temp calculator, a symptom selector). Write plain \`<input>\`/\`<select>\`/\`<button>\` PLUS a \`<script>\` (streamed LAST) that reads them and updates the DOM. It runs sandboxed in the canvas — no round-trip.
-• Compute a sensible DEFAULT on load so nothing shows a bare "—".
-• Read values, write results into elements you gave ids; keep it dependency-free vanilla JS.
-• Example shape: a \`<select id="mat">\` of materials → on change, update \`.takt-stat\` nozzle/bed numbers + a notes line from a small JS lookup table built from the cited manual values.
-• Use \`<takt-action id="…" value="…">Label</takt-action>\` ONLY to send a value back to Takt to continue the conversation — not for local math.`,
+    blurb: "in-canvas calculators, selectors, sliders, toggles — real <input>/<select>/<button> + <script>",
+    body: `INTERACTIVE — make the answer a TOOL when it helps (a settings picker, a unit/temp calculator, a symptom selector). Write plain \`<input>\`/\`<select>\`/\`<button>\` PLUS a \`<script>\` (streamed LAST) that reads them and updates the DOM. It runs sandboxed in the canvas — no round-trip. The design system already styles every native control to the page's tokens — never write your own control CSS.
+• Compute a sensible DEFAULT on load so nothing shows a bare "—". Read values, write results into elements you gave ids; dependency-free vanilla JS; wire BOTH \`input\` and \`change\` events.
+• CONTROLS ROW — lay every control out with these two classes (they handle labels, wrap, and sizing):
+  \`<div class="takt-controls">
+    <label class="takt-field"><span>Material</span><select id="mat"><option>PLA</option>…</select></label>
+    <label class="takt-field"><span>Weight — <output id="wOut">120</output> g</span><input type="range" id="w" min="10" max="1000" value="120"></label>
+    <label class="takt-field"><span>Infill %</span><input type="number" id="fill" value="15" min="0" max="100"></label>
+  </div>\`
+  A slider ALWAYS pairs with an \`<output>\` in its label showing the live value.
+• SEGMENTED CHOICE — a row of \`<button aria-pressed="true|false">\` for 2–5 presets (e.g. draft/normal/detail); the script flips \`aria-pressed\` (the system styles the pressed state) and recomputes.
+• RESULTS — write into \`.takt-stat\` tiles in a \`takt-cols-3\` row (\`<span class="n" id="res">…\`), plus one quiet \`.takt-mediacap\` line naming the cited manual rule the math comes from.
+• Use \`<takt-action id="…" value="…">Label</takt-action>\` ONLY to send a value back to Takt to continue the conversation (it asks Takt, not local math) — e.g. "Ask Takt about PETG stringing".
+• STARTER — open every \`<script>\` with these guards so JS-drawn visuals stay token-true, smooth, and reduced-motion-safe (from the reference artifacts). Drop what you don't need:
+\`<script>(function(){"use strict";
+  var reduce=matchMedia("(prefers-reduced-motion:reduce)").matches;      // gate EVERY animation on this
+  var $=function(s,r){return (r||document).querySelector(s)}, $$=function(s,r){return [].slice.call((r||document).querySelectorAll(s))};
+  var css=function(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()};  // read --takt-* tokens into JS so canvas/SVG match the page (single source of truth)
+  // canvas: cap DPR at 2 so retina doesn't blow up cost —
+  //   var DPR=Math.min(devicePixelRatio||1,2); cv.width=W*DPR; cv.height=H*DPR; ctx.setTransform(DPR,0,0,DPR,0,0);
+  // only animate when on-screen —
+  //   new IntersectionObserver(function(es){es.forEach(function(e){ if(e.isIntersecting) start(); })}).observe(cv);
+  // stable "random" layout across reloads —
+  //   var _s=1; function rnd(){_s=(_s*1103515245+12345)&0x7fffffff; return _s/0x7fffffff;}
+  // tooltip that never spills the viewport —
+  //   tip.style.left=Math.min(e.clientX+12, innerWidth-tip.offsetWidth-8)+"px";
+})();</script>\`
+The accent for a bar/point is \`css("--takt-accent")\`; text is \`css("--takt-fg")\`; muted axes \`css("--takt-muted")\`. If \`reduce\` is set, paint the FINAL state once and skip the loop.`,
   },
 };
 

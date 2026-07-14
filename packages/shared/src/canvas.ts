@@ -1,54 +1,62 @@
-// The canvas is streamed as a single HTML string inside a `create_canvas({html})`
-// tool call. The provider streams the tool ARGUMENTS token-by-token as a partial
-// JSON string; this decoder pulls the decoded HTML out of that partial JSON so
-// the client can morphdom the page in live ("types itself in") — the same trick
-// claude.ai's generative UI uses. It tolerates a chunk boundary mid-escape.
+// The canvas travels as PLAIN TEXT between markers — the model streams
+//   ...optional plan prose...
+//   <takt:canvas title="...">
+//   <style>…</style> …page html… <script>…</script>
+//   </takt:canvas>
+// No JSON escaping, so weak models can't botch it, streaming preview is a plain
+// substring, and a max_tokens truncation is simply an unclosed marker the worker
+// can ask the model to continue. (Same shape as Claude's write-a-file contract.)
 
-/** Extract the decoded value of the top-level `"html"` string from a (possibly
- *  incomplete) JSON args string. Returns "" until the key/opening-quote appears,
- *  then the HTML decoded so far. Stops cleanly at an incomplete trailing escape. */
-export function decodeStreamingHtml(args: string): string {
-  const ki = args.indexOf('"html"');
-  if (ki === -1) return "";
-  let i = args.indexOf(":", ki + 6);
-  if (i === -1) return "";
-  i++;
-  while (i < args.length && /\s/.test(args[i]!)) i++;
-  if (args[i] !== '"') return "";
-  i++; // past opening quote
-  let out = "";
-  while (i < args.length) {
-    const c = args[i]!;
-    if (c === '"') break; // closing quote → value complete
-    if (c === "\\") {
-      const n = args[i + 1];
-      if (n === undefined) break; // escape split across chunks — resume next delta
-      if (n === "u") {
-        if (i + 6 > args.length) break; // incomplete \uXXXX
-        out += String.fromCharCode(parseInt(args.slice(i + 2, i + 6), 16));
-        i += 6;
-        continue;
-      }
-      out += ({ '"': '"', "\\": "\\", "/": "/", n: "\n", t: "\t", r: "\r", b: "\b", f: "\f" } as Record<string, string>)[n] ?? n;
-      i += 2;
-      continue;
-    }
-    out += c;
-    i++;
-  }
-  return out;
+const OPEN = /<takt:canvas\b([^>]*)>/i;
+const CLOSE = /<\/takt:canvas\s*>/i;
+
+/** HTML streamed so far: everything after the opening marker (streaming preview).
+ *  "" until the marker appears. Trailing ``` fences and a partial closing marker
+ *  are trimmed so the preview never flashes marker debris. */
+export function extractCanvasStream(text: string): string {
+  const m = OPEN.exec(text);
+  if (!m) return "";
+  let html = text.slice(m.index + m[0].length);
+  const c = CLOSE.exec(html);
+  if (c) html = html.slice(0, c.index);
+  // trim a partially-streamed closing marker / fence at the tail
+  return html.replace(/<\/?t?a?k?t?:?c?a?n?v?a?s?$|```\w*\s*$/i, "");
+}
+
+export interface CanvasBlock {
+  html: string;
+  title?: string;
+  /** false = the closing marker never arrived (truncated output) */
+  closed: boolean;
+}
+
+/** Parse the finished (or truncated) canvas block out of the model's text.
+ *  Returns null until the opening marker exists. */
+export function extractCanvas(text: string): CanvasBlock | null {
+  const m = OPEN.exec(text);
+  if (!m) return null;
+  const title = m[1]?.match(/title\s*=\s*"([^"]*)"/i)?.[1] || m[1]?.match(/title\s*=\s*'([^']*)'/i)?.[1];
+  const rest = text.slice(m.index + m[0].length);
+  const c = CLOSE.exec(rest);
+  const html = (c ? rest.slice(0, c.index) : rest).replace(/^\s*```\w*\s*/i, "").replace(/```\s*$/i, "").trim();
+  return { html, title: title || undefined, closed: !!c };
 }
 
 // ── self-check: `tsx src/canvas.ts` ──────────────────────────────────────────
 if (import.meta.url === `file://${process.argv[1]}`) {
   const assert = (c: boolean, m: string) => { if (!c) { console.error("FAIL:", m); process.exit(1); } };
-  assert(decodeStreamingHtml('{"html":"<h1>Hi</h1>') === "<h1>Hi</h1>", "partial (no closing quote)");
-  assert(decodeStreamingHtml('{"html":"<p>a\\nb"}') === "<p>a\nb", "escaped newline");
-  assert(decodeStreamingHtml('{"html":"say \\"hi\\""}') === 'say "hi"', "escaped quotes → value ends at real close");
-  assert(decodeStreamingHtml('{"html":"2\\u00b0C"}') === "2°C", "unicode escape");
-  assert(decodeStreamingHtml('{"html":"a\\') === "a", "incomplete escape at chunk end");
-  assert(decodeStreamingHtml('{"html":"a\\u00') === "a", "incomplete unicode at chunk end");
-  assert(decodeStreamingHtml('{"title":"x"}') === "", "no html key yet");
-  assert(decodeStreamingHtml('{"html"') === "", "key but no value yet");
-  console.log("canvas decoder self-check ok");
+  const full = 'Plan: blue, serif.\n<takt:canvas title="Nozzle Guide">\n<style>.takt-page{}</style><h1>Hi</h1>\n</takt:canvas>\nDone.';
+  assert(extractCanvas(full)?.title === "Nozzle Guide", "title parsed");
+  assert(extractCanvas(full)?.closed === true, "closed block detected");
+  assert(extractCanvas(full)!.html.includes("<h1>Hi</h1>") && !extractCanvas(full)!.html.includes("Plan:"), "html between markers only");
+  const trunc = '<takt:canvas title="X"><h1>Hi</h1><p>cut of';
+  assert(extractCanvas(trunc)?.closed === false, "truncation = unclosed");
+  assert(extractCanvas(trunc)!.html.includes("cut of"), "truncated html kept");
+  assert(extractCanvas("no marker here") === null, "no marker → null");
+  assert(extractCanvasStream("before <takt:canvas><h1>A</h1>") === "<h1>A</h1>", "stream after marker");
+  assert(extractCanvasStream("<takt:canvas><h1>A</h1></takt:can") === "<h1>A</h1>", "partial close trimmed");
+  assert(extractCanvasStream("nothing yet") === "", "empty before marker");
+  const fenced = '<takt:canvas>\n```html\n<h1>F</h1>\n```\n</takt:canvas>';
+  assert(extractCanvas(fenced)!.html === "<h1>F</h1>", "code fences stripped");
+  console.log("canvas marker self-check ok");
 }

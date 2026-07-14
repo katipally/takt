@@ -6,16 +6,16 @@ import { X } from "lucide-react";
 import { chatStore, type CanvasPart, type SourcePart } from "@/lib/chatStore";
 import { api } from "@/lib/api";
 import { useUi } from "@/lib/uiStore";
-import { registerIslands, highlightBlock } from "@/lib/canvas/islands";
-import { applyCanvasHtml } from "@/lib/canvas/stream";
+import { buildFrameSrcdoc, prepareCanvasHtml, FRAME_MSG } from "@/lib/canvas/frame";
 
-// The canvas: the streamed HTML page rendered DIRECTLY into the app document
-// (morphdom, no iframe). It shares the app's stylesheet + .dark toggle, so the
-// design system and theme "just work". The island custom elements dispatch
-// bubbling CustomEvents which we bridge here into the app: citations open the
-// source modal, figures open a lightbox, actions are acked (TODO), and block
-// selection bubbles to the Workbench. 3D parts (<takt-model>) render inline in
-// the island itself (model-viewer), so they need no bridge here.
+// The canvas renders inside a SANDBOXED IFRAME (sandbox="allow-scripts allow-modals",
+// no allow-same-origin → opaque origin, no cookies/storage/parent access). The frame
+// owns its whole document, so the model's CSS/JS can never collide with the app, the
+// container-query grid can't collapse, and islands can't be wiped — the failures of
+// the old direct-DOM/morphdom renderer. We set srcdoc ONCE, when the turn's stream
+// has stopped (the finished page), and never paint the partial stream. The in-frame
+// runtime posts island clicks (cite/lightbox/action/select) + its content height back
+// up here; we bridge them into the app and push theme down.
 
 export function Canvas({ part, chatId, productSlug, streaming }: {
   part: CanvasPart;
@@ -23,50 +23,102 @@ export function Canvas({ part, chatId, productSlug, streaming }: {
   productSlug: string | null;
   streaming: boolean;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
+  const frameRef = useRef<HTMLIFrameElement>(null);
   const [lightbox, setLightbox] = useState<{ src: string; caption: string } | null>(null);
+  const [height, setHeight] = useState(320);
   const highlight = useUi((s) => s.canvasHighlight);
 
-  useEffect(() => { registerIslands(); }, []);
+  const ready = !streaming && !!part.html;
 
-  // Render / diff the HTML on every change; final (sanitized + scripts) once the
-  // stream for this turn has stopped.
+  // Build + inject the finished document once the stream stops. Re-inject on html
+  // change (an edit/verify-fix pass produces a new final html for the same part).
   useEffect(() => {
-    const el = ref.current; if (!el) return;
-    applyCanvasHtml(el, part.html, { final: !streaming });
-  }, [part.html, streaming]);
+    if (!frameRef.current || !ready) return;
+    let cancelled = false;
+    const dark = document.documentElement.classList.contains("dark");
+    // Pre-render mermaid (async) in the parent, then inject the finished document.
+    prepareCanvasHtml(part.html, { dark })
+      .then((h) => buildFrameSrcdoc(h, { dark }))
+      .then((doc) => {
+        if (!cancelled && frameRef.current) frameRef.current.srcdoc = doc;
+      });
+    return () => { cancelled = true; };
+  }, [ready, part.html]);
 
-  // Agent-driven highlight (select_canvas → canvas_highlight): ring + scroll.
+  // Bridge messages FROM the frame. Validate the source is our frame's window.
   useEffect(() => {
-    const el = ref.current; if (!el) return;
-    highlightBlock(el, highlight.id);
-  }, [highlight.id, highlight.nonce]);
-
-  // Bridge island events. takt:select bubbles past us to document (the Workbench
-  // listens there to scope the next message).
-  useEffect(() => {
-    const el = ref.current; if (!el) return;
-    const onCite = (e: Event) => { const d = (e as CustomEvent).detail; openCite(chatId, productSlug, d.page, d.product); };
-    const onLightbox = (e: Event) => setLightbox((e as CustomEvent).detail);
-    const onAction = (e: Event) => { /* TODO: continue the turn with the action value */ void (e as CustomEvent).detail; };
-    el.addEventListener("takt:cite", onCite);
-    el.addEventListener("takt:lightbox", onLightbox);
-    el.addEventListener("takt:action", onAction);
-    return () => {
-      el.removeEventListener("takt:cite", onCite);
-      el.removeEventListener("takt:lightbox", onLightbox);
-      el.removeEventListener("takt:action", onAction);
+    const onMsg = (e: MessageEvent) => {
+      const f = frameRef.current;
+      if (!f || e.source !== f.contentWindow) return;
+      const d = e.data;
+      if (!d || d.__takt !== 1) return;
+      switch (d.type) {
+        case FRAME_MSG.ready:
+          postTheme();
+          break;
+        case FRAME_MSG.size:
+          if (typeof d.h === "number") setHeight(Math.max(120, Math.ceil(d.h)));
+          break;
+        case FRAME_MSG.cite:
+          openCite(chatId, productSlug, d.page, d.product);
+          break;
+        case FRAME_MSG.lightbox:
+          setLightbox({ src: d.src, caption: d.caption || "" });
+          break;
+        case FRAME_MSG.action:
+          // A <takt-action> button continues the conversation with its value.
+          chatStore.send(chatId, productSlug, String(d.value ?? d.id ?? "").trim(), undefined);
+          break;
+        case FRAME_MSG.select:
+          // Re-dispatch as the CustomEvent the Workbench already listens for.
+          document.dispatchEvent(new CustomEvent("takt:select", { detail: { id: d.id, text: d.text } }));
+          break;
+        case FRAME_MSG.wheel: {
+          // The frame forwards wheel deltas it can't consume (its document never
+          // scrolls — auto-height). Scroll the nearest scrollable ancestor, else
+          // scrolling dies whenever the pointer is over the canvas.
+          let el: HTMLElement | null = frameRef.current;
+          while (el && !(el.scrollHeight > el.clientHeight + 1 && /(auto|scroll)/.test(getComputedStyle(el).overflowY))) el = el.parentElement;
+          (el ?? (document.scrollingElement as HTMLElement | null))?.scrollBy({ top: d.dy || 0, left: d.dx || 0 });
+          break;
+        }
+      }
     };
+    window.addEventListener("message", onMsg);
+    return () => window.removeEventListener("message", onMsg);
   }, [chatId, productSlug]);
+
+  // Push theme down whenever the app theme flips (next-themes toggles .dark).
+  const postTheme = () => {
+    const f = frameRef.current;
+    f?.contentWindow?.postMessage({ type: FRAME_MSG.theme, dark: document.documentElement.classList.contains("dark") }, "*");
+  };
+  useEffect(() => {
+    const obs = new MutationObserver(() => postTheme());
+    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+    return () => obs.disconnect();
+  }, []);
+
+  // Agent-driven highlight (select_canvas → canvas_highlight): ring + scroll inside
+  // the frame.
+  useEffect(() => {
+    frameRef.current?.contentWindow?.postMessage({ type: FRAME_MSG.highlight, id: highlight.id }, "*");
+  }, [highlight.id, highlight.nonce]);
 
   return (
     <>
-      <div ref={ref} className="takt-page" />
-      {/* Build frontier — a shimmer skeleton at the growing edge while the page
-          streams, so the user SEES it's still composing (not a frozen title).
-          Sits outside the morphdom container so it animates smoothly. */}
-      {streaming && (
-        <div className="takt-building mx-auto w-full max-w-[68ch] px-[clamp(16px,4cqi,56px)] pb-12" aria-hidden>
+      {ready ? (
+        <iframe
+          ref={frameRef}
+          title="Canvas"
+          sandbox="allow-scripts allow-modals"
+          className="block w-full border-0"
+          style={{ height, background: "transparent" }}
+        />
+      ) : (
+        // Build frontier — shimmer skeleton while the page composes (we never paint
+        // the partial stream; the finished document swaps in once the stream stops).
+        <div className="takt-building mx-auto w-full max-w-[68ch] px-[clamp(16px,4cqi,56px)] py-10" aria-hidden>
           <div className="sk sk-line" style={{ width: "38%" }} />
           <div className="sk sk-block" />
           <div className="sk sk-line" style={{ width: "86%" }} />
@@ -113,4 +165,3 @@ function Lightbox({ src, caption, onClose }: { src: string; caption: string; onC
     document.body,
   );
 }
-

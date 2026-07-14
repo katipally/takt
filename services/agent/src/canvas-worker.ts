@@ -1,28 +1,46 @@
 import { streamProvider, type Message } from "@takt/harness";
-import { decodeStreamingHtml, type Product, type SseEvent } from "@takt/shared";
+import { extractCanvas, extractCanvasStream, type Product, type SseEvent } from "@takt/shared";
 import { collectTurn, type Emit } from "./turn.js";
 import { safeParseArgs } from "./turn-loop.js";
 import { resolveBuild } from "./providers.js";
 import { moduleIndex, readDesign } from "./design-catalog.js";
 import { lintCanvas, p0, lintFeedback } from "./lint-canvas.js";
+import { CRAFT_CORE, TEMPLATES } from "./design-standard.js";
 
 const MAX_STEPS = 4;
+// Extra rounds allowed to finish a page the token cap cut mid-stream.
+const MAX_CONTINUE = 2;
 
 // The ONE canvas composer, used by BOTH text chat (build_canvas/edit_canvas) and
 // live voice (fire-and-forget). It runs a clean-context BUILD model that loads the
-// design modules it needs (read_design) then streams ONE `create_canvas({html})`
-// page in live (canvas_delta), sanitizes + lints it, and emits canvas_end.
+// design modules it needs (read_design), writes a short token PLAN as prose, then
+// streams the page as PLAIN TEXT between <takt:canvas> markers — no JSON escaping,
+// so any model can emit it, and a max_tokens truncation is just an unclosed marker
+// we ask the model to continue. Quality lives UPSTREAM (plan, blessed skeletons,
+// craft law, lint) — there is no post-render verify loop; that's Claude's trade.
 
-// Slim base prompt — the bulk lives in the on-demand design catalog so the system
-// prompt stays lean and the catalog can grow without bloating every call.
 function canvasSystemPrompt(): string {
-  return `You are Takt's canvas composer for AI TECHNICAL SUPPORT. Compose ONE self-contained HTML page (no <html>/<head>/<body>) that answers the brief, then call create_canvas exactly once. You never write prose to the user.
+  return `You are Takt's canvas composer and DESIGN LEAD for AI TECHNICAL SUPPORT. For each answer you design ONE self-contained HTML page (no <html>/<head>/<body>). You never write prose to the user — your text output is consumed by the pipeline.
 
-STREAM IN ORDER: any <style> first → the HTML → any <script> LAST. The design system (fonts, colors, .takt-* classes, the page grid) is ALREADY loaded — use its classes + \`var(--takt-*)\` tokens; never redeclare colors/fonts. Do NOT wrap your output in a \`.takt-page\` div — that wrapper is already applied; emit the blocks directly. LOOK: clean, editorial, precise, technical; make full use of the canvas WITH breathable space; NO gradients, drop shadows, blur, emoji, or marketing filler; headlines are light-weight serif.
+OUTPUT CONTRACT — one response, two parts, in order:
+1. PLAN (plain text, ≤6 short lines): Skeleton: <explainer|step-guide|troubleshooter|calculator|spec-compare|freeform>. Color: 4–6 named hex (accent from the subject's world). Type: display + body roles. Layout: 1–2 sentences. Derive every decision in the page from this plan.
+2. THE PAGE between markers, nothing after the closing one, never inside code fences:
+<takt:canvas title="Short title">
+<style>.takt-page{--takt-accent:…}</style>  ← identity FIRST, from your plan
+…the HTML, structure from the skeleton…
+<script>…</script>                          ← any script LAST
+</takt:canvas>
+If your output is ever cut off, you will be asked to continue — resume EXACTLY where you stopped, no repetition.
 
-SHOW, don't tell — pull at least one real manual figure / 3D part / video / diagram to carry the answer (use ONLY real /assets URLs a tool returned this turn; never invent one). Give each top-level block a stable \`data-takt-id\`.
+DESIGN THE IDENTITY FIRST — a Prusa printer, a filament spec, and a wiring fault should NOT look identical. The identity <style> sets palette + type for THIS subject on .takt-page (plus a .dark .takt-page override if an accent needs it); the whole page inherits those tokens. Then compose the STRUCTURE from the blessed skeleton with the reliable classes (.takt-grid/.takt-split/.takt-cols-*, .takt-card/.takt-panel/.takt-callout/.takt-stat/.takt-chips, <table>, the islands) — the page grid already routes prose to a readable column and breaks grids/tables/figures wider. Do NOT wrap your output in a .takt-page div — that wrapper is already applied. No blur or marketing filler; gradients/shadows only if the subject genuinely calls for it; no emoji as decoration.
 
-DESIGN MODULES — before composing, call read_design ONCE with the 2–4 modules that fit THIS answer (ALWAYS include \`workflows\` for a product-support answer — it names the right format), then build from what it returns:
+SHOW, don't tell — lead with a real manual figure / 3D part / video / diagram (use ONLY real /assets URLs given this turn; never invent one; compose it IN, don't drop it in a box). Give each top-level block a stable data-takt-id.
+
+${TEMPLATES}
+
+${CRAFT_CORE}
+
+DESIGN MODULES — before your plan, call read_design ONCE with the 2–4 modules that fit THIS answer (ALWAYS include \`workflows\` for a product-support answer — it names the right format), then build from what it returns:
 ${moduleIndex()}
 e.g. a diagnosis ("why won't it feed") → [workflows, layout, mermaid, figures]; "show me the part" → [workflows, figures, components]; a spec/product card → [workflows, components, chart]; "which one should I use" / a sizing question → [workflows, interactive, components].`;
 }
@@ -37,18 +55,7 @@ const READ_DESIGN_TOOL = {
   },
 };
 
-const CREATE_CANVAS_TOOL = {
-  name: "create_canvas",
-  description: "Emit the finished canvas: ONE self-contained HTML fragment (no <html>/<head>/<body>) that fills the page. Stream style first, then the HTML, then any <script> last. Call it exactly once when the page is ready.",
-  parameters: {
-    type: "object",
-    properties: {
-      html: { type: "string", description: "The full HTML fragment for the page." },
-      title: { type: "string", description: "A short title for this canvas." },
-    },
-    required: ["html"],
-  },
-};
+const CONTINUE_MSG = "Your output hit the token limit mid-page. Continue EXACTLY where you stopped — output ONLY the remaining HTML (no preamble, repeat nothing already sent) and finish with </takt:canvas>.";
 
 // Strip media whose /assets src wasn't gathered this turn (invented → 404), and
 // neutralize obvious injection vectors. The client re-sanitizes with DOMPurify
@@ -60,11 +67,20 @@ function sanitizeCanvasHtml(html: string, allowed: Set<string>): string {
     const p = s ? assetPath(s) : null;
     return p ? !allowed.has(p) : false; // only judge /assets srcs; leave data:/others
   };
-  return html
-    .replace(/<(takt-figure|takt-model|takt-video)\b[^>]*>[\s\S]*?<\/\1>/gi, (m) => (badSrc(m) ? "" : m))
-    .replace(/<(?:takt-figure|takt-model|takt-video|img)\b[^>]*?\/?>/gi, (m) => (badSrc(m) ? "" : m))
-    .replace(/\son\w+=("[^"]*"|'[^']*'|[^\s>]+)/gi, "") // inline event handlers
-    .replace(/javascript:/gi, "");
+  // Split out scripts first so text-level fixes never touch code.
+  const parts = html.split(/(<script[\s\S]*?<\/script>)/gi);
+  const fixed = parts.map((p, i) => {
+    if (i % 2 === 1) return p; // a <script> block — leave verbatim
+    return p
+      .replace(/<(takt-figure|takt-model|takt-video)\b[^>]*>[\s\S]*?<\/\1>/gi, (m) => (badSrc(m) ? "" : m))
+      .replace(/<(?:takt-figure|takt-model|takt-video|img)\b[^>]*?\/?>/gi, (m) => (badSrc(m) ? "" : m))
+      .replace(/\son\w+=("[^"]*"|'[^']*'|[^\s>]+)/gi, "") // inline event handlers
+      .replace(/javascript:/gi, "")
+      // "…<strong>PLA sheet advice</strong>Use a clean…" — a missing space after an
+      // inline-emphasis close is a recurring weak-model tell; fix it deterministically.
+      .replace(/<\/(strong|b|em)>(?=[A-Za-z0-9(])/gi, "</$1> ");
+  });
+  return fixed.join("");
 }
 
 export interface CanvasWorkerOpts {
@@ -90,7 +106,7 @@ export interface CanvasWorkerOpts {
 
 function buildUserMessage(o: CanvasWorkerOpts): string {
   if (o.mode === "edit") {
-    return `You are EDITING an existing canvas page. Return the FULL updated page, keeping everything you don't change byte-identical and reusing the exact same /assets URLs — never invent one. Preserve every block's \`data-takt-id\`.
+    return `You are EDITING an existing canvas page. Return the FULL updated page between <takt:canvas> markers, keeping everything you don't change byte-identical and reusing the exact same /assets URLs — never invent one. Preserve every block's \`data-takt-id\`.
 
 EDIT INSTRUCTION: ${o.brief}
 ${o.target ? `Change ONLY the block with data-takt-id="${o.target}"; leave every other block exactly as-is.` : "Apply the change where it belongs; leave unrelated blocks as-is."}
@@ -105,7 +121,7 @@ ${o.currentHtml ?? ""}`;
   // part beats a crop beats a photo). The worker MUST lead with it in the hero
   // pair — this is what makes the opening consistent instead of model-roulette.
   const heroMandate = o.hero
-    ? `\nHERO MANDATE: open the page with \`<div class="takt-grid takt-split" data-takt-id="hero">\` whose media child is <takt-${o.hero.tag} src="${o.hero.url}" caption="…"> paired with the eyebrow + serif <h1> + .takt-lead. Do NOT bury this visual lower down.\n`
+    ? `\nHERO: open the page leading with this key visual — <takt-${o.hero.tag} src="${o.hero.url}" caption="…"> — paired with the eyebrow + display <h1> + lead. DESIGN the opening composition to suit the subject (a two-column split, or a full-bleed lead figure with the title beside/over it via \`data-variant="lead"\`) — just don't bury the visual lower down or leave the hero a lonely headline. Keep the paired columns close in height.\n`
     : "";
   return `QUESTION: ${o.question ?? o.brief}
 BRIEF: ${o.brief}
@@ -117,7 +133,7 @@ ${o.mediaHints || figs}
 GATHERED FACTS (ground truth — cite manual pages with <takt-cite page="N">, never invent a number):
 ${o.facts || "(none — build from the brief)"}
 
-Give EACH top-level block a stable \`data-takt-id\` (e.g. "lead", "step-1", "safety", "specs") so the user can select and edit it later. Compose the page with the layout archetype that fits, then call create_canvas ONCE.`;
+Give EACH top-level block a stable \`data-takt-id\` (e.g. "lead", "step-1", "safety", "specs") so the user can select and edit it later. Call read_design, write your PLAN, then the page between <takt:canvas> markers.`;
 }
 
 /** Compose (or edit) the canvas. Returns true if a page was emitted. */
@@ -138,67 +154,85 @@ export async function runCanvasWorker(o: CanvasWorkerOpts): Promise<boolean> {
 
   await o.emit({ type: "canvas_start", canvasId: o.canvasId, title: o.title });
 
+  // Text accumulated across a step's turns (incl. continuations). The stream
+  // handler pulls the page out of it live and emits throttled canvas_delta.
+  let soFar = "";
+  let lastLen = 0;
+  const workerEmit = async (e: SseEvent) => {
+    if (e.type === "reasoning_delta") return; // never shown
+    if (e.type === "text_delta") {
+      soFar += e.text;
+      const html = extractCanvasStream(soFar);
+      if (html && html.length - lastLen >= 120) {
+        lastLen = html.length;
+        await o.emit({ type: "canvas_delta", canvasId: o.canvasId, html });
+      }
+      return;
+    }
+    return o.emit(e);
+  };
+
+  // Build reasoning: ON for providers whose reasoning is FAST (OpenAI Responses,
+  // Anthropic) — it plans a stronger, well-formed spread. OFF for MiniMax, whose
+  // adaptive thinking runs for minutes on a design-heavy prompt; its quality
+  // comes from the plan step + blessed skeletons instead.
+  const buildEffort = provider.id === "minimax" ? undefined : (effort ?? "medium");
+  const stream = () => streamProvider(provider, apiKey ?? undefined, { model, messages, tools: [READ_DESIGN_TOOL], effort: buildEffort, maxTokens: 20000 }, o.signal);
+
   let emitted = false;
   let rejectedOnce = false;
   try {
     for (let step = 0; step < MAX_STEPS && !emitted && !o.signal.aborted; step++) {
-      let lastLen = 0;
-      // Stream the html arg → decoded HTML → throttled canvas_delta (full-so-far).
-      const onArgDelta: (name: string, args: string) => Promise<void> = async (name, args) => {
-        if (name !== "create_canvas") return;
-        const html = decodeStreamingHtml(args);
-        if (html.length - lastLen < 120) return;
-        lastLen = html.length;
-        await o.emit({ type: "canvas_delta", canvasId: o.canvasId, html });
-      };
-      // PLAN THEN PAINT. A brief think lets the model compose a real spread (which
-      // archetype, what fills each row) instead of dumping generic blocks — the fix
-      // for "artifacts feel generic". "low" keeps the pause short so the page still
-      // visibly PAINTS itself token-by-token once create_canvas starts streaming.
-      // (reasoningEffort → OpenAI; effort stays off so Anthropic/MiniMax send no
-      // thinking params either.)
-      void effort;
-      const turn = await collectTurn(
-        streamProvider(provider, apiKey ?? undefined, { model, messages, tools: [READ_DESIGN_TOOL, CREATE_CANVAS_TOOL], reasoningEffort: "low", maxTokens: 16000 }, o.signal),
-        // swallow the worker's prose/reasoning — only the canvas reaches the user
-        (e: SseEvent) => { if (e.type !== "text_delta" && e.type !== "reasoning_delta") return o.emit(e); },
-        onArgDelta,
-      );
+      soFar = ""; lastLen = 0;
+      let turn = await collectTurn(stream(), workerEmit);
       messages.push({ role: "assistant", text: turn.text, toolCalls: turn.toolCalls.length ? turn.toolCalls : undefined });
-      const call = turn.toolCalls.find((t) => t.name === "create_canvas");
-      if (!call) {
-        // read_design → hand back the modules and let it compose next turn.
-        const designCalls = turn.toolCalls.filter((t) => t.name === "read_design");
-        if (designCalls.length) {
-          for (const dc of designCalls) {
-            const mods = safeParseArgs(dc.arguments).modules;
-            messages.push({ role: "tool", callId: dc.id, name: "read_design", result: readDesign(Array.isArray(mods) ? mods.map(String) : []) });
-          }
-          continue;
-        }
-        // wrote prose instead of a tool call — nudge once, else stop
-        if (step < 2) { messages.push({ role: "user", text: "Call read_design for the modules you need, then create_canvas with the finished page." }); continue; }
+
+      // read_design → hand back the modules (always answer tool calls, or the
+      // next request is rejected for a dangling tool_use).
+      const designCalls = turn.toolCalls.filter((t) => t.name === "read_design");
+      for (const dc of designCalls) {
+        const mods = safeParseArgs(dc.arguments).modules;
+        messages.push({ role: "tool", callId: dc.id, name: "read_design", result: readDesign(Array.isArray(mods) ? mods.map(String) : []) });
+      }
+
+      // Truncated mid-page? Ask it to continue, bounded. The continuation streams
+      // into the same soFar, so the preview and the final extraction just work.
+      for (let c = 0; c < MAX_CONTINUE; c++) {
+        const b = extractCanvas(soFar);
+        if (turn.stopReason !== "max_tokens" || !b || b.closed || o.signal.aborted) break;
+        console.error(`[canvas] output truncated at ${soFar.length} chars → continuing (${c + 1}/${MAX_CONTINUE})`);
+        messages.push({ role: "user", text: CONTINUE_MSG });
+        turn = await collectTurn(stream(), workerEmit);
+        messages.push({ role: "assistant", text: turn.text || "…" });
+      }
+
+      const block = extractCanvas(soFar);
+      if (!block) {
+        if (designCalls.length) continue; // modules loaded → compose next turn
+        // wrote prose without the page — nudge once, else stop
+        if (step < 2) { messages.push({ role: "user", text: "Output the page now: your short PLAN, then the full HTML between <takt:canvas title=\"…\"> and </takt:canvas>." }); continue; }
         break;
       }
-      const rawHtml = String(safeParseArgs(call.arguments).html ?? "");
-      const clean = sanitizeCanvasHtml(rawHtml, allowed);
+      if (!block.closed) console.error("[canvas] page still unclosed after continuation budget — shipping what arrived (frame normalizes tags)");
+
+      const clean = sanitizeCanvasHtml(block.html, allowed);
       // A page must carry real content — text or a visual element. An empty or
-      // markup-only `html` (a common failure with some models) must NEVER be
-      // reported as a built canvas, or the user is told "it's on the canvas"
-      // while the stage sits blank.
+      // markup-only page (a common failure with some models) must NEVER be
+      // reported as built, or the user is told "it's on the canvas" while the
+      // stage sits blank.
       const hasContent = clean.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<[^>]+>/g, "").trim().length > 10
         || /<(takt-|img|svg|table|input|button)/i.test(clean);
       const findings = p0(lintCanvas(clean));
       if ((findings.length || !hasContent) && !rejectedOnce) {
         rejectedOnce = true;
         const feedback = !hasContent
-          ? "create_canvas received empty or content-less HTML. Put the COMPLETE page — a <style> then the visible HTML (headings, text, and at least one figure/3D/table) — in the `html` argument, then call create_canvas once."
+          ? "The canvas block was empty or content-less. Write the COMPLETE page — a <style> then the visible HTML (headings, text, and at least one figure/3D/table) — between the <takt:canvas> markers."
           : lintFeedback(findings);
-        messages.push({ role: "tool", callId: call.id, name: "create_canvas", result: feedback, isError: true });
+        messages.push({ role: "user", text: feedback });
         continue;
       }
       if (!hasContent) break; // second empty attempt → give up (emitted stays false)
-      await o.emit({ type: "canvas_end", canvasId: o.canvasId, html: clean, title: o.title });
+      await o.emit({ type: "canvas_end", canvasId: o.canvasId, html: clean, title: block.title ?? o.title });
       emitted = true;
     }
   } catch (e: any) {

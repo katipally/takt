@@ -1,0 +1,31 @@
+<!--
+  published-wrapper-REAL.html — GROUND TRUTH, not extracted from the binary but
+  captured empirically: published a probe artifact and fetched it back via WebFetch.
+  Probe URL: https://claude.ai/code/artifact/db750b6d-90f2-4670-9ba0-4da11f99f6fe (private, owned by me)
+
+  This is EXACTLY what claude.ai wraps your file in when you publish an .html artifact.
+  Everything from <!doctype html> through <body> is server-injected; your file's bytes
+  are placed verbatim after <body> (see PROBE_MARKER_START/END below).
+
+  Corrections to earlier claims:
+   - The head skeleton `<!doctype html><html><head>…${fkm}</head><body>` IS in the binary
+     (fkm = the CSS reset near the bottom). It is NOT purely server-side.
+   - What IS server-injected (not in the binary): the <!-- frame-runtime --> <script> block
+     and the __FRAME_PREAMBLE — a sandbox runtime added at publish time.
+   - No <base href> or CSP <meta> appeared in this single-file probe. The CSP the tool
+     prompt describes is enforced as an HTTP RESPONSE HEADER (not visible via WebFetch,
+     which strips headers). The binary's read-back code strips a server-injected
+     `<base href="/_f/…">` and `data-frame-runtime="…"`, so those appear on some frames.
+-->
+<!doctype html><html><head><!-- frame-runtime --><script>window.__FRAME_PREAMBLE={"capabilities":{"downloads":"downloads.DUzXFHNF.js","mcp":"mcp.Ck9tCTU-.js","permissions":"permissions.C9OCnDjh.js","self":"self.DqF_PxOe.js"},"transforms":"_transforms.DYk1Ltlh.js","comments":"_comments.CTmG5kkF.js"}</script><script>/* ~7KB frame sandbox runtime — full source captured in frame-runtime.js in this folder */</script><!-- /frame-runtime --><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}</style></head><body>
+<!-- === YOUR FILE'S BYTES ARE PLACED HERE, VERBATIM === -->
+<title>ARTIFACT-PROBE-7c9</title>
+<!-- PROBE_MARKER_START -->
+<main id="probe">
+  <h1>probe 7c9</h1>
+  <p>Body content only — no doctype/html/head/body tags authored.</p>
+</main>
+<!-- PROBE_MARKER_END -->
+<style>#probe{font-family:system-ui}</style>
+<!-- === END YOUR BYTES === -->
+</body></html>

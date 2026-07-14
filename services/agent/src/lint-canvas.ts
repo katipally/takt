@@ -22,11 +22,14 @@ const STRUCTURE = /<(table|ol|ul|svg|h2|h3|takt-figure|takt-model|takt-video|tak
 const VISUAL = /<(svg|table|takt-figure|takt-model|takt-video|takt-mermaid|img)\b/i;
 const SVG_DARK_FILL = /<rect\b[^>]*\bfill=(["'])(#000(000)?|black)\1/i;
 
-// A connector <path> (arrow marker) with no fill:none renders as a black blob.
+// A connector <path> with no fill renders as a black blob: SVG's default fill is
+// black, so an open stroked curve (arrow-marked or not) becomes a filled wedge.
 function svgConnectorBlob(html: string): boolean {
   for (const m of html.matchAll(/<path\b[^>]*>/gi)) {
     const tag = m[0];
+    const hasFill = /fill=/i.test(tag) || /fill:/i.test(tag);
     if (/marker-(end|start)=/i.test(tag) && !/fill=(["'])none\1/i.test(tag) && !/fill:\s*none/i.test(tag)) return true;
+    if (/stroke[=:]/i.test(tag) && !hasFill) return true; // stroked line, black-filled by default
   }
   return false;
 }
@@ -52,6 +55,10 @@ export function lintCanvas(html: string): LintFinding[] {
     add("P0", "whole-page-img", "Embeds a whole manual PAGE as a raw <img>. Crop to the relevant region and use <takt-figure> instead.");
   if (html.length > 1400 && !STRUCTURE.test(html))
     add("P0", "wall-of-text", "This is a wall of text with no structure. Break it into a grid, cards, steps (<ol>), a spec <table>, and a figure — use the whole canvas.");
+  // "2Open the idler" / "3BFilament reached" — a step number jammed against the
+  // heading word. ("3D"/"2D"/unit letters like 24V don't match: needs Aa after.)
+  if (/<h[1-4][^>]*>\s*\d+[A-Z]?[A-Z][a-z]/.test(html))
+    add("P0", "step-number-jam", "A heading starts with a number jammed against its first word (e.g. \"2Open the door\"). Write it as \"2. Open the door\" — number, period, space — or drop the number.");
 
   // P0 — a drawn <svg> that will render visibly broken
   if (/<svg\b/i.test(html)) {
@@ -72,6 +79,12 @@ export function lintCanvas(html: string): LintFinding[] {
     add("P1", "emoji", "Emoji used as icons/bullets read as AI slop. Drop them or use a real figure.");
   if (AI_VOCAB.test(html))
     add("P1", "ai-vocab", "Marketing/AI filler vocabulary (seamless, leverage, robust, delve…). Write plain, specific, factual copy.");
+  if (/text-align:\s*justify/i.test(html))
+    add("P1", "justify", "Justified body text opens ragged rivers of whitespace. Use left-aligned text.");
+  // outline:none kills the keyboard focus ring — an a11y failure unless a
+  // replacement (:focus-visible with a box-shadow/outline) is provided.
+  if (/outline:\s*(none|0)\b/i.test(html) && !/:focus-visible/i.test(html))
+    add("P1", "focus-ring", "Removes the focus outline without a :focus-visible replacement — keyboard users lose the focus ring. Keep a visible focus style.");
 
   return out;
 }
@@ -80,7 +93,7 @@ export const p0 = (findings: LintFinding[]) => findings.filter((f) => f.level ==
 
 /** Format findings as a self-correction instruction for the canvas worker. */
 export function lintFeedback(findings: LintFinding[]): string {
-  return `Design check found issues to fix before this page is good — revise and call create_canvas again:\n- ${findings.map((f) => `[${f.level}] ${f.message}`).join("\n- ")}`;
+  return `Design check found issues to fix before this page is good — revise and output the full corrected page between <takt:canvas> markers again:\n- ${findings.map((f) => `[${f.level}] ${f.message}`).join("\n- ")}`;
 }
 
 // ── self-check: `tsx src/lint-canvas.ts` ─────────────────────────────────────
@@ -89,12 +102,20 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   assert(lintCanvas("<h1>Hi</h1>").length === 0, "a clean short page has no findings");
   assert(p0(lintCanvas('<h1 style="color:#6366f1">Hi</h1>')).some((f) => f.rule === "slop-accent"), "flags the indigo slop accent");
   assert(p0(lintCanvas('<div><img src="/assets/pages/abc/1.png"></div>')).some((f) => f.rule === "whole-page-img"), "flags a whole manual page image");
+  assert(p0(lintCanvas("<h3>2Open the idler door</h3>")).some((f) => f.rule === "step-number-jam"), "flags a jammed step number");
+  assert(p0(lintCanvas("<h3>3BFilament reached the gear</h3>")).some((f) => f.rule === "step-number-jam"), "flags a jammed branch step number");
+  assert(lintCanvas("<h3>3D printing basics</h3><h3>24V PSU wiring</h3><h3>2. Open the door</h3>").every((f) => f.rule !== "step-number-jam"), "3D/24V/numbered headings pass");
   const wall = "<p>" + "the extruder feeds filament and it is important. ".repeat(40) + "</p>";
   assert(p0(lintCanvas(wall)).some((f) => f.rule === "wall-of-text"), "flags a long wall of text");
   assert(lintCanvas(wall + '<div class="takt-grid takt-cols-2"><div class="takt-card">x</div></div>').every((f) => f.rule !== "wall-of-text"), "structure clears wall-of-text");
   const svg = (inner: string) => `<h1>D</h1><svg width="100%" viewBox="0 0 680 100">${inner}</svg>`;
   assert(p0(lintCanvas(svg('<path d="M0 0L10 10" marker-end="url(#arrow)" stroke="#333"/>'))).some((f) => f.rule === "svg-blob"), "flags connector path missing fill=none");
   assert(lintCanvas(svg('<path d="M0 0L10 10" fill="none" marker-end="url(#arrow)" stroke="#333"/>')).every((f) => f.rule !== "svg-blob"), "fill=none clears blob");
+  assert(p0(lintCanvas(svg('<path d="M0 0C40 40 80 40 120 0" stroke="var(--takt-muted)"/>'))).some((f) => f.rule === "svg-blob"), "flags stroked markerless curve with no fill");
+  assert(lintCanvas(svg('<path d="M0 0h10v10z" fill="var(--takt-accent)"/>')).every((f) => f.rule !== "svg-blob"), "explicitly filled shape passes");
   assert(p0(lintCanvas(svg('<rect fill="#000" width="680" height="100"/>'))).some((f) => f.rule === "svg-dark-bg"), "flags black svg background");
+  assert(lintCanvas('<p style="text-align:justify">hi</p>').some((f) => f.rule === "justify"), "flags justified text");
+  assert(lintCanvas('<button style="outline:none">x</button>').some((f) => f.rule === "focus-ring"), "flags outline:none with no focus replacement");
+  assert(lintCanvas('<style>button{outline:none}button:focus-visible{outline:2px solid}</style>').every((f) => f.rule !== "focus-ring"), ":focus-visible clears the focus-ring finding");
   console.log("lint-canvas self-check ok");
 }

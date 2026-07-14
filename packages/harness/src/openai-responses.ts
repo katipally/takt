@@ -122,7 +122,9 @@ export async function* streamOpenAIResponses(opts: {
       case "response.incomplete": {
         const usage = ev.response?.usage
         if (usage) yield { type: "usage", input: usage.input_tokens ?? 0, output: usage.output_tokens ?? 0 }
-        yield { type: "done", stopReason: "stop" }
+        // Normalize truncation to Anthropic's name so callers can continue-generate.
+        const reason = ev.response?.incomplete_details?.reason
+        yield { type: "done", stopReason: reason === "max_output_tokens" ? "max_tokens" : "stop" }
         return
       }
       case "response.failed":

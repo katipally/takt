@@ -261,7 +261,7 @@ export function buildTaktTools(ctx: {
 
   const cropPageImage: TaktTool = {
     name: "crop_page_image",
-    description: "Crop a manual page to the ONE figure/panel that matters and SHOW that crop — use AFTER get_page_image so you've seen the page and can read the region off its 0–1 grid. Region as fractions of the page: x,y = top-left, w,h = width,height. Crop TIGHT (w,h typically 0.25–0.7); NEVER the whole page. The crop is displayed and returned with a faint 0–1 grid for your reference.",
+    description: "Crop a manual page to the ONE figure/panel that matters and SHOW that crop — use AFTER get_page_image so you've seen the page and can read the region off its 0–1 grid. Region as fractions of the page: x,y = top-left, w,h = width,height. Crop TIGHT (w,h typically 0.25–0.7); NEVER the whole page, and trim the margins — a crop that is mostly blank page is a failed crop; hug the figure's edges. The crop is displayed and returned with a faint 0–1 grid for your reference.",
     parameters: params({
       page: z.number().int().min(1), manual: z.string().optional(),
       x: z.number().min(0).max(1), y: z.number().min(0).max(1),

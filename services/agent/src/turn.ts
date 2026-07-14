@@ -9,6 +9,8 @@ export interface Turn {
   reasoningSignature?: string;
   toolCalls: ToolCall[];
   usage: { input: number; output: number };
+  /** provider stop reason — "max_tokens" means the turn was truncated mid-output */
+  stopReason: string;
 }
 
 /** Fold a provider's normalized event stream into one assistant turn, emitting
@@ -23,6 +25,7 @@ export async function collectTurn(
   let text = "";
   let reasoning = "";
   let reasoningSignature: string | undefined;
+  let stopReason = "stop";
   const usage = { input: 0, output: 0 };
   // Tool-use blocks arrive as start + streamed JSON-arg deltas + stop, keyed by index.
   const calls = new Map<number, { id: string; name: string; args: string }>();
@@ -61,10 +64,11 @@ export async function collectTurn(
         usage.output += ev.output;
         break;
       case "done":
+        stopReason = ev.stopReason;
         break;
     }
   }
 
   const toolCalls: ToolCall[] = [...calls.values()].map((c) => ({ id: c.id, name: c.name, arguments: c.args }));
-  return { text, reasoning, reasoningSignature, toolCalls, usage };
+  return { text, reasoning, reasoningSignature, toolCalls, usage, stopReason };
 }

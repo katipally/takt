@@ -258,7 +258,10 @@ summary:focus-visible,
 .takt-page > * + *{margin-top:clamp(20px,2.6cqi,40px)}
 .takt-card > * + *,.takt-panel > * + *,.takt-callout > * + *{margin-top:.7em}
 .takt-page > :is(h1,h2,h3){margin-top:0}
-.takt-grid{align-items:start}
+/* Stretch grid items to equal height per row so a short card beside a tall one
+   fills the row instead of leaving a dead-space hole (the classic uneven-card
+   failure). Hero overrides this to center (below). */
+.takt-grid{align-items:stretch}
 
 /* Type hierarchy */
 .takt-page h1,.takt-display{font-family:var(--takt-serif);font-weight:500;line-height:1.02;letter-spacing:-.022em;
@@ -283,8 +286,11 @@ summary:focus-visible,
 
 /* Layout primitives */
 .takt-grid{display:grid;gap:clamp(16px,2.4cqi,32px)}
-@container (min-width:560px){ .takt-cols-2{grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr))} .takt-cols-3{grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr))} }
-@container (min-width:820px){ .takt-cols-4{grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr))} .takt-split{grid-template-columns:1.35fr 1fr} }
+/* Explicit, honest column counts (not auto-fit, which silently made "cols-2"
+   render 3–4 columns on a wide canvas). Phone = 1 column (no template set);
+   tablet = 2-up; laptop = the requested count. The model controls the count. */
+@container (min-width:560px){ .takt-cols-2,.takt-cols-3,.takt-cols-4{grid-template-columns:repeat(2,1fr)} }
+@container (min-width:820px){ .takt-cols-3{grid-template-columns:repeat(3,1fr)} .takt-cols-4{grid-template-columns:repeat(4,1fr)} .takt-split{grid-template-columns:1.35fr 1fr} }
 .takt-card{background:var(--takt-card);border:1px solid var(--takt-border);border-radius:var(--takt-radius);padding:clamp(20px,2.4cqi,30px)}
 .takt-panel{background:var(--takt-surface);border:1px solid var(--takt-border);border-radius:var(--takt-radius);padding:clamp(20px,2.4cqi,30px)}
 

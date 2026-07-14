@@ -1,0 +1,10 @@
+<!--
+  md-artifact-wrapper — the `Zxm` constant from the claude-code binary.
+
+  For MARKDOWN (.md) artifacts, the published page = this <style> block + the parsed
+  markdown HTML.  (In the binary: vYt(file) = Zxm + markedParse(file).)
+  This is the actual "minimal CSS reset / skeleton" the Artifact tool prompt refers to,
+  for the markdown path. HTML (.html) artifacts get a different server-side skeleton on
+  claude.ai that is NOT in the binary.
+-->
+<style>:root{color-scheme:light}body{background:#fff;color:rgba(0,0,0,.8);max-width:720px;margin:0 auto;padding:32px;display:flex;flex-direction:column;gap:10px;font:14px/1.55 -apple-system,BlinkMacSystemFont,'SF Pro','Segoe UI',sans-serif;overflow-wrap:break-word}body>:first-child{margin-top:0}h1,h2,h3,h4,h5,h6{margin:6px 0 0;line-height:1.25;font-weight:600;text-wrap:balance}h1{font-size:1.35em}h2{font-size:1.15em;color:rgba(0,0,0,.6)}h3,h4,h5,h6{font-size:1em}p,ul,ol,blockquote,table,pre,hr{margin:0}strong{font-weight:600}a{color:hsl(210 100% 45%);text-decoration:none}a:hover{text-decoration:underline}ul,ol{display:flex;flex-direction:column;gap:6px;padding-left:22px}ul{list-style:disc}ol{list-style:decimal}:is(li,td,th)>*+:is(p,ul,ol,blockquote){margin-top:6px}blockquote{display:flex;flex-direction:column;gap:10px;border-left:2px solid rgba(0,0,0,.1);padding-left:10px;color:rgba(0,0,0,.6)}:not(pre)>code{background:rgba(0,0,0,.04);padding:1px 3px;border-radius:4px;font:.92em 'SF Mono',ui-monospace,Menlo,Consolas,monospace}a>code{background:none;color:inherit}pre{background:rgba(0,0,0,.04);padding:10px 12px;border-radius:6px;overflow-x:auto;font:12px/1.5 'SF Mono',ui-monospace,Menlo,Consolas,monospace;margin-block:4px}pre code{background:none;padding:0;font:inherit}table{width:100%;border-collapse:separate;border-spacing:2px;font:inherit}th,td{padding:6px 8px;border-radius:3px;text-align:left;vertical-align:top}th{background:rgba(0,0,0,.06);font-weight:600}td{background:rgba(0,0,0,.04)}:is(th,td) :not(pre)>code{background:transparent}hr{border:0;border-top:1px solid rgba(0,0,0,.16);margin-block:10px}img{max-width:100%;height:auto;border-radius:4px}</style>

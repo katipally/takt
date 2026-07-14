@@ -96,13 +96,17 @@ export async function* streamAnthropic(opts: {
       ? system
       : [{ type: "text", text: system, cache_control: { type: "ephemeral" } }]
   if (req.tools.length) body.tools = toTools(req.tools, quirks?.noCacheControl)
-  // Extended thinking. Current Anthropic models (Opus 4.6+, Sonnet 5/4.6, Fable 5)
-  // require adaptive thinking + output_config.effort — the old
-  // {type:"enabled",budget_tokens} form is rejected with a 400.
-  // ponytail: pre-4.6 models (claude-3.x, *-4-0/4-1, opus-4-5, sonnet-4-5) still
-  // take a token budget; kept as a fallback. Extend the regex if you add more.
-  // MiniMax (noThinking) ignores these — its M2.x reasoning is always-on.
-  if (req.effort && !quirks?.noThinking) {
+  // Extended thinking. Three shapes, by model:
+  //  • MiniMax-M3+ : reasoning is OFF by default over the Anthropic-compat endpoint
+  //    and enabled with the BARE {type:"adaptive"} form — it REJECTS budget_tokens
+  //    and output_config, and rejects display. (M2.x reasoning is always-on and
+  //    takes no param, so noThinking leaves it alone.) So M3 must bypass noThinking.
+  //  • Current Anthropic (Opus 4.6+, Sonnet 5/4.6, Fable 5): adaptive + output_config.effort.
+  //  • Legacy Anthropic (claude-3.x, *-4-0/4-1, opus-4-5, sonnet-4-5): {type:"enabled",budget_tokens}.
+  const isMiniMaxM3 = /minimax-m(?:[3-9]|\d\d)/i.test(req.model)
+  if (req.effort && isMiniMaxM3) {
+    body.thinking = { type: "adaptive" }
+  } else if (req.effort && !quirks?.noThinking) {
     const legacy = /claude-3|-4-0\b|-4-1\b|opus-4-5|sonnet-4-5/.test(req.model)
     if (legacy) {
       const budget = thinkingBudget(req.effort)
