@@ -45,16 +45,30 @@ export const sseEventSchema = z.discriminatedUnion("type", [
   // ── live overlay (voice mode) ──
   // A visual the agent pins over the live stage while talking: a rotatable 3D
   // part ("model"), a manual figure/photo ("figure"), a repair clip ("video"),
-  // or a short pointer label ("note") optionally anchored on the camera view at
-  // normalized 0–1 coords. "clear" takes the current overlay down. Ephemeral —
-  // rendered live, not persisted into the chat blocks.
+  // a short pointer label ("note"), or AR-style annotations drawn ON the camera
+  // feed ("marks": arrows, rings, boxes, freehand paths, labels). All coords
+  // are normalized 0–1 from the camera frame's top-left. model/figure with an
+  // `anchor` pin INSIDE the feed at that point; without one they float above
+  // the stage. "clear" takes the current overlay down. Ephemeral — rendered
+  // live, never persisted into the chat blocks.
   z.object({
     type: z.literal("live_overlay"),
     overlayId: z.string(),
-    kind: z.enum(["model", "figure", "video", "note", "clear"]),
+    kind: z.enum(["model", "figure", "video", "note", "marks", "clear"]),
     url: z.string().optional(),
     caption: z.string().optional(),
     anchor: z.object({ x: z.number(), y: z.number() }).optional(),
+    marks: z.array(z.object({
+      shape: z.enum(["arrow", "ring", "box", "label", "path"]),
+      at: z.object({ x: z.number(), y: z.number() }).optional(),   // ring/box/label center
+      from: z.object({ x: z.number(), y: z.number() }).optional(), // arrow tail
+      to: z.object({ x: z.number(), y: z.number() }).optional(),   // arrow tip
+      r: z.number().optional(),                                    // ring radius (fraction of view)
+      w: z.number().optional(),                                    // box width (fraction)
+      h: z.number().optional(),                                    // box height (fraction)
+      points: z.array(z.object({ x: z.number(), y: z.number() })).optional(), // freehand path
+      text: z.string().optional(),                                 // label text
+    })).optional(),
   }),
   // Resolution of an interactive canvas action (ack to the client).
   z.object({ type: z.literal("action_result"), actionId: z.string(), ok: z.boolean().optional() }),

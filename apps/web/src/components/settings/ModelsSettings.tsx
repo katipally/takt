@@ -7,6 +7,7 @@ import { KeyRound, Check, Trash2, ShieldAlert } from "lucide-react";
 // can't bundle into this client component.
 import { BUILTIN_PROVIDERS } from "@takt/harness/registry";
 import { allowedEfforts } from "@takt/harness/types";
+import { liveRecsFor, modelVision } from "@takt/shared";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 
@@ -66,10 +67,12 @@ export function ModelsSettings({ admin = true }: { admin?: boolean } = {}) {
   const chatProviderId = settings?.chatProviderId ?? providers.find((p) => p.isDefault)?.kind ?? providers[0]?.kind ?? PROVIDERS[0]!.id;
   const captionProviderId = settings?.captionProviderId ?? chatProviderId;
   const buildProviderId = settings?.buildProviderId ?? chatProviderId;
+  const liveProviderId = settings?.liveProviderId ?? chatProviderId;
 
   const { data: chatModels = [] } = useQuery({ queryKey: ["models", chatProviderId], queryFn: () => api.models(chatProviderId), enabled: !!chatProviderId });
   const { data: captionModels = [] } = useQuery({ queryKey: ["models", captionProviderId], queryFn: () => api.models(captionProviderId), enabled: !!captionProviderId });
   const { data: buildModels = [] } = useQuery({ queryKey: ["models", buildProviderId], queryFn: () => api.models(buildProviderId), enabled: !!buildProviderId });
+  const { data: liveModels = [] } = useQuery({ queryKey: ["models", liveProviderId], queryFn: () => api.models(liveProviderId), enabled: !!liveProviderId });
 
   const saveSetting = useMutation({
     mutationFn: (b: Record<string, string>) => api.updateSettings(b),
@@ -155,6 +158,33 @@ export function ModelsSettings({ admin = true }: { admin?: boolean } = {}) {
           </div>
         </div>
         {admin && buildProviderId !== chatProviderId && <div className="mt-3"><ProviderKey kind={buildProviderId} /></div>}
+      </section>
+
+      <section>
+        <h2 className="text-[15px] font-semibold">Live voice model</h2>
+        <p className="mt-1 text-[12.5px] text-muted-foreground">
+          The model that talks in live calls. Live wants the <span className="font-medium text-foreground">fastest</span> first
+          word, and camera vision when you show it things — thinking is <span className="font-medium text-foreground">always off
+          in live</span> (chat and canvas keep their own reasoning settings above). Leave the model empty for the recommended
+          fast pick.
+        </p>
+        <div className="mt-3 flex flex-wrap items-end gap-3">
+          <div>
+            <label htmlFor="live-provider" className="mb-1 block text-[11.5px] text-faint">Provider</label>
+            {providerSelect(liveProviderId, (id) => saveSetting.mutate({ liveProviderId: id, liveModel: "" }), "live-provider")}
+          </div>
+          <div className="flex-1">
+            <label htmlFor="live-model" className="mb-1 block text-[11.5px] text-faint">Model</label>
+            <select id="live-model" className={cn(inputCls, "max-w-md")} value={settings?.liveModel ?? ""} onChange={(e) => saveSetting.mutate({ liveModel: e.target.value })}>
+              <option value="">{(() => { const rec = liveRecsFor(liveProviderId).find((r) => r.default); return rec ? `Recommended (${rec.label})` : "Provider default"; })()}</option>
+              {liveModels.map((m) => <option key={m.id} value={m.id}>{m.display_name}</option>)}
+            </select>
+          </div>
+        </div>
+        {settings?.liveModel && !modelVision(liveProviderId, settings.liveModel) && (
+          <p className="mt-2 text-[12px] text-[var(--takt-arc,#e2701f)]">This model can&apos;t see camera frames — voice works, but it will be blind to what you show it.</p>
+        )}
+        {admin && liveProviderId !== chatProviderId && <div className="mt-3"><ProviderKey kind={liveProviderId} /></div>}
       </section>
 
       <section>

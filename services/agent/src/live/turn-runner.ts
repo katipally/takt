@@ -1,4 +1,4 @@
-import { streamProvider, isReasoningModel, type Message, type Effort } from "@takt/harness";
+import { streamProvider, isReasoningModel, type Message } from "@takt/harness";
 import type { Product, Manual } from "@takt/shared";
 import { modelVision } from "@takt/shared";
 import { searchChunks, searchEntities } from "@takt/profile";
@@ -7,6 +7,7 @@ import { collectTurn } from "../turn.js";
 import { safeParseArgs } from "../turn-loop.js";
 import { buildLivePrompt } from "../prompt.js";
 import { resolveLive } from "../providers.js";
+import { makeThinkFilter, stripThink } from "./think-filter.js";
 
 // Lower than chat's step cap ON PURPOSE. Every tool round before the model
 // speaks is dead air in a live call — a spoken turn that needs a look-up wants
@@ -16,9 +17,13 @@ import { resolveLive } from "../providers.js";
 const MAX_STEPS = 6;
 
 // Tools that don't belong in a spoken call: ask_user blocks the turn forever on
-// a UI that isn't there; the canvas tools reference a document surface live mode
-// doesn't show (overlays replace it — see show_overlay in session.ts).
-const LIVE_TOOL_DENY = new Set(["ask_user", "read_canvas", "select_canvas"]);
+// a UI that isn't there; select_canvas drives a pointer interaction voice can't.
+// build_canvas IS allowed — a designed page can land on the stage while Takt
+// talks (fire-and-forget; see spawnBuild) — and read_canvas lets it discuss it.
+const LIVE_TOOL_DENY = new Set(["ask_user", "select_canvas", "edit_canvas"]);
+
+/** Session-provided background canvas build (never blocks the spoken turn). */
+export type SpawnBuild = (brief: string, ctx?: { facts?: string; figures?: string[] }) => void;
 
 // A per-call LLM driver that keeps a growing Message[] across turns (unlike the
 // one-shot runAgent) and injects the camera frame(s) onto each user turn. Reuses
@@ -59,8 +64,8 @@ export class LiveTurnRunner {
     } catch { /* cold first turn is the fallback */ }
   }
 
-  private buildTools(emit: Emit): TaktTool[] {
-    return [...buildTaktTools({ product: this.product, manuals: this.manuals, emit, chatId: this.chatId, context: "main" }), ...this.extraTools]
+  private buildTools(emit: Emit, compose?: (brief: string) => Promise<boolean>): TaktTool[] {
+    return [...buildTaktTools({ product: this.product, manuals: this.manuals, emit, chatId: this.chatId, context: "main", compose }), ...this.extraTools]
       .filter((t) => !LIVE_TOOL_DENY.has(t.name));
   }
 
@@ -75,8 +80,8 @@ export class LiveTurnRunner {
     if (cut > 1 && cut < this.messages.length) this.messages.splice(1, cut - 1);
   }
 
-  async runTurn(userText: string, frames: { data: string; mime: string }[], emit: Emit, signal: AbortSignal): Promise<void> {
-    const { provider, model, apiKey, effort } = resolveLive();
+  async runTurn(userText: string, frames: { data: string; mime: string }[], emit: Emit, signal: AbortSignal, spawnBuild?: SpawnBuild): Promise<void> {
+    const { provider, model, apiKey } = resolveLive();
     if (!model) { await emit({ type: "error", message: "No model selected. Open Settings → Models and pick a model." }); return; }
     if (!apiKey && !provider.keyless) { await emit({ type: "error", message: `No API key for ${provider.name}. Add one in Settings → Models.` }); return; }
     // Only attach the camera frame if the live model can actually see (curated
@@ -124,30 +129,56 @@ export class LiveTurnRunner {
     const withImgs = this.messages.filter((m) => m.role === "user" && m.images?.length);
     for (const m of withImgs.slice(0, -2)) if (m.role === "user") m.images = undefined;
 
+    // Ground the live build like chat: accumulate the facts + /assets URLs this
+    // turn gathered (search_product, get_media, explore_entity…) and hand them
+    // to the canvas worker via spawnBuild, so a spoken "walk me through it"
+    // produces the SAME grounded, multimodal page as a typed question. The
+    // build is fire-and-forget — compose returns immediately so the voice
+    // never goes silent while the page paints in the background.
+    const retrieved: string[] = [];
+    const assets = new Set<string>();
+    const compose = spawnBuild
+      ? async (brief: string) => { spawnBuild(brief, { facts: retrieved.join("\n---\n").slice(0, 8000), figures: [...assets].filter((u) => !u.includes("/assets/pages/")) }); return true; }
+      : undefined;
+
     // Build tools with THIS turn's emit so their events are dropped by the same
     // epoch guard when a barge-in interrupts.
-    const tools = this.buildTools(emit);
+    const tools = this.buildTools(emit, compose);
     const toolDefs = tools.map(({ name, description, parameters }) => ({ name, description, parameters }));
 
-    // Live wants the SMOOTHEST conversation, not the deepest reasoning — the
-    // LOWEST reasoning the chosen model supports, unless the user raised
-    // `liveEffort` in Settings: non-reasoning models get none; reasoning models
-    // on the OpenAI Responses API get "minimal"; others get the lowest effort.
-    const reasons = isReasoningModel(model);
-    const reasoning = !reasons ? {}
-      : effort ? (provider.protocol === "openai" ? { reasoningEffort: effort as string } : { effort: effort as Effort })
-        : provider.protocol === "openai" ? { reasoningEffort: "minimal" as const }
-          : { effort: "low" as const };
+    // Live wants INSTANT answers — thinking is OFF, full stop. Passing no
+    // effort keeps Anthropic's thinking block omitted AND keeps MiniMax-M3's
+    // reasoning disabled (the compat endpoint only turns it on when an effort
+    // is sent — sending one is what leaked <think> into the spoken stream).
+    // OpenAI reasoning models can't fully disable it, so ask for "minimal".
+    const reasoning = isReasoningModel(model) && provider.protocol === "openai"
+      ? { reasoningEffort: "minimal" as const } : {};
 
     // Track the assistant text AS it streams, so a barge-in that aborts mid-
     // sentence doesn't lose what we'd started saying (see the catch below).
+    // Two live-only gates ride the same wrapper:
+    //  • text deltas pass through the <think> scrubber (MiniMax M2.x reasons
+    //    inline in the text channel, always-on) — never voice a thought;
+    //  • reasoning deltas are dropped entirely — a spoken call narrates its
+    //    WORK via tool cues, not a reasoning transcript.
     let partial = "";
-    const track: Emit = (e) => { if (e.type === "text_delta") partial += e.text; return emit(e); };
+    let thinkFilter = makeThinkFilter();
+    const track: Emit = (e) => {
+      if (e.type === "reasoning_delta") return;
+      if (e.type === "text_delta") {
+        const clean = thinkFilter(e.text);
+        if (!clean) return;
+        partial += clean;
+        return emit({ type: "text_delta", text: clean });
+      }
+      return emit(e);
+    };
 
     try {
       for (let step = 0; step < MAX_STEPS; step++) {
         if (signal.aborted) return;
         partial = "";
+        thinkFilter = makeThinkFilter(); // each step is a fresh provider stream
         // maxTokens must be high enough that reasoning tokens don't consume the
         // whole budget and leave NO spoken text (that emptied GPT-5 Nano at 1024).
         const turn = await collectTurn(
@@ -156,7 +187,7 @@ export class LiveTurnRunner {
         );
         this.messages.push({
           role: "assistant",
-          text: turn.text,
+          text: stripThink(turn.text), // inline <think> never enters history either
           reasoning: turn.reasoning || undefined,
           reasoningSignature: turn.reasoningSignature,
           toolCalls: turn.toolCalls.length ? turn.toolCalls : undefined,
@@ -175,6 +206,10 @@ export class LiveTurnRunner {
         const results = await Promise.all(turn.toolCalls.map(runOne));
         if (signal.aborted) return;
         for (const { tc, res } of results) {
+          if (!res.isError && res.output) {
+            for (const m of res.output.matchAll(/\/assets\/[^\s"'?)]+/g)) assets.add(m[0]);
+            retrieved.push(res.output);
+          }
           this.messages.push({ role: "tool", callId: tc.id, name: tc.name, result: res.output, images: res.images, isError: res.isError });
         }
       }

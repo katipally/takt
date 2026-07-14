@@ -103,10 +103,10 @@ export function resolveLive(): ResolvedChat {
   const explicitProvider = getSetting("liveProviderId");
   const liveModel = getSetting("liveModel");
   const model = (explicitProvider === providerId && liveModel) ? liveModel : (rec?.model || defaultModel(provider.id));
-  // Live defaults to the LOWEST reasoning for latency; a Settings override raises it.
-  const eff = getSetting("liveEffort");
-  const effort = eff && eff !== "none" && eff !== "auto" ? (eff as Effort) : undefined;
-  return { provider, model, apiKey: getProviderKey(provider.id), effort };
+  // No effort on purpose: live thinking is ALWAYS off (or "minimal" on OpenAI,
+  // decided in the live turn-runner) — instant answers beat deep reasoning in a
+  // spoken call, and enabling MiniMax-M3 thinking leaks <think> into the voice.
+  return { provider, model, apiKey: getProviderKey(provider.id) };
 }
 
 // Which provider + model powers the canvas worker (build_canvas). Its own

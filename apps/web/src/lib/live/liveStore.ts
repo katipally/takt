@@ -6,14 +6,28 @@ export type LivePhase = "off" | "connecting" | "loading" | "reconnecting" | "idl
 export interface DeviceOpt { id: string; label: string }
 
 // The remote-expert overlay the agent pins over the live view (show_overlay →
-// the `live_overlay` SSE event): a 3D part, a manual figure, a repair clip, or a
-// note anchored onto the camera tile. One at a time; ephemeral (never persisted).
+// the `live_overlay` SSE event): a 3D part, a manual figure, a repair clip, a
+// note anchored onto the camera tile, or AR-style marks (arrows, rings, boxes,
+// paths, labels) drawn ON the feed. One at a time; ephemeral (never persisted).
+export interface OverlayMark {
+  shape: "arrow" | "ring" | "box" | "label" | "path";
+  at?: { x: number; y: number };       // ring/box/label center
+  from?: { x: number; y: number };     // arrow tail
+  to?: { x: number; y: number };       // arrow tip
+  r?: number;                          // ring radius (fraction of the view)
+  w?: number;                          // box width (fraction)
+  h?: number;                          // box height (fraction)
+  points?: { x: number; y: number }[]; // freehand path
+  text?: string;                       // label text
+}
+
 export interface LiveOverlay {
   overlayId: string;
-  kind: "model" | "figure" | "video" | "note";
+  kind: "model" | "figure" | "video" | "note" | "marks";
   url?: string;
   caption?: string;
-  anchor?: { x: number; y: number }; // normalized 0–1 coords on the camera tile ("note")
+  anchor?: { x: number; y: number }; // 0–1 on the camera tile (note; in-feed pin for model/figure)
+  marks?: OverlayMark[];             // "marks": annotations drawn on the feed
 }
 
 interface LiveState {

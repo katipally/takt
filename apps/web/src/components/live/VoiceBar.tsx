@@ -65,7 +65,7 @@ export function VoiceBar({
         : <span className="text-muted-foreground">{PHASE_LABEL[phase] || "Listening…"}</span>;
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex flex-col">
+    <div className="pointer-events-none fixed inset-x-0 bottom-0 z-[60] flex flex-col">
       {/* Transparent wrapper — NO band, NO backdrop-blur; the stage shows through
           everywhere except the bar pill itself, which carries its own lift. */}
       <div className="pointer-events-auto">

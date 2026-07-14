@@ -159,7 +159,10 @@ export function useLiveSession(chatId: string, productSlug: string | null) {
           // The remote-expert overlay: pin/replace/clear the visual over the live
           // view. Ephemeral — lives in the live store, not the transcript.
           if (e.type === "live_overlay") {
-            set({ overlay: e.kind === "clear" ? null : { overlayId: e.overlayId, kind: e.kind, url: e.url, caption: e.caption, anchor: e.anchor } });
+            // Carry the WHOLE event payload (marks included) — cherry-picking
+            // fields here is how the marks array once got silently dropped.
+            const { type: _t, kind, ...rest } = e;
+            set({ overlay: kind === "clear" ? null : { ...rest, kind } });
             return;
           }
           if (e.type === "done") {
@@ -180,6 +183,13 @@ export function useLiveSession(chatId: string, productSlug: string | null) {
           }
           if (e.type === "tool_done") {
             set({ toolStatus: "" });
+            if (assistantId.current) chatStore.liveEvent(chatId, assistantId.current, e);
+            return;
+          }
+          // Structural events — a canvas building on the stage mid-call, cited
+          // sources, todos, usage — reduce through the SAME reducer as typed
+          // chat, so a spoken "walk me through it" lands a real page + sources.
+          if (e.type === "canvas_start" || e.type === "canvas_delta" || e.type === "canvas_end" || e.type === "canvas_error" || e.type === "source" || e.type === "todos" || e.type === "usage") {
             if (assistantId.current) chatStore.liveEvent(chatId, assistantId.current, e);
             return;
           }

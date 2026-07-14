@@ -1,12 +1,16 @@
 import { randomUUID } from "node:crypto";
+import { writeFileSync, mkdirSync } from "node:fs";
+import { resolve, dirname } from "node:path";
 import type { WebSocket } from "ws";
 import type { Product, Manual, SseEvent, MessageBlock, LiveServerMsg } from "@takt/shared";
 import { LIVE_TAG, liveClientMsgSchema } from "@takt/shared";
-import { createChat, addMessage, listMessages, renameChat } from "@takt/db";
+import { createChat, addMessage, listMessages, renameChat, updateMessage, DATA_DIR } from "@takt/db";
 import type { Message } from "@takt/harness";
 import type { Emit, TaktTool } from "../tools.js";
 import { foldBlock } from "../block-emit.js";
-import { LiveTurnRunner } from "./turn-runner.js";
+import { runCanvasWorker } from "../canvas-worker.js";
+import { pickHero } from "../agent.js";
+import { LiveTurnRunner, type SpawnBuild } from "./turn-runner.js";
 
 type Frame = { data: string; mime: string };
 const HISTORY_TURNS = 20; // recent messages to rehydrate on reconnect
@@ -68,46 +72,102 @@ export class LiveSession {
       },
     };
     // The live "remote expert" surface: pin ONE visual over the user's live view
-    // while talking — a rotatable 3D part, a manual figure, a repair clip, or a
-    // pointer note anchored on their camera view. Ephemeral: rendered live, never
-    // persisted; a new overlay replaces the last; "clear" takes it down.
+    // while talking — a rotatable 3D part, a manual figure, a repair clip, a
+    // pointer note, or AR-style marks DRAWN ON the camera feed (arrows, rings,
+    // boxes, paths, labels). Ephemeral: rendered live, never persisted; a new
+    // overlay replaces the last; "clear" takes it down.
+    const clamp01 = (n: unknown) => (typeof n === "number" && Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : undefined);
+    const pt = (p: any): { x: number; y: number } | undefined => {
+      const x = clamp01(p?.x), y = clamp01(p?.y);
+      return x !== undefined && y !== undefined ? { x, y } : undefined;
+    };
     const showOverlay: TaktTool = {
       name: "show_overlay",
-      description: "Pin a visual over the user's live view while you talk: kind \"model\" (rotatable 3D part), \"figure\" (manual figure/photo), \"video\" (repair clip), or \"note\" (a short label pinned on their camera view — pass anchor {x,y} in 0–1 camera coords to point at something they're showing). Pass the EXACT /assets url that get_media returned (never invent one); note needs only caption. One overlay at a time — a new call replaces the last; kind \"clear\" removes it. ALWAYS say a spoken line before calling this.",
+      description: "Pin a visual over the user's live view while you talk. kind \"model\" (rotatable 3D part) / \"figure\" (manual figure/photo) / \"video\" (repair clip) take the EXACT /assets url get_media returned (never invent one); add anchor {x,y} to pin a model/figure INSIDE their camera feed at that spot. kind \"note\" = a short label pinned at anchor. kind \"marks\" = DRAW on their camera feed: an array of {shape} objects — {shape:\"arrow\", from, to} points AT something (tip at `to`); {shape:\"ring\", at, r} circles it; {shape:\"box\", at, w, h} frames a region; {shape:\"path\", points:[…]} freehand; {shape:\"label\", at, text} a small tag. All coords normalized 0–1 from the top-left of the camera frame you SEE — aim using the latest frame. One overlay at a time — a new call replaces the last; kind \"clear\" removes it. ALWAYS say a spoken line before calling this.",
       parameters: {
         type: "object",
         properties: {
-          kind: { type: "string", enum: ["model", "figure", "video", "note", "clear"] },
+          kind: { type: "string", enum: ["model", "figure", "video", "note", "marks", "clear"] },
           url: { type: "string", description: "The exact /assets URL from get_media (model/figure/video kinds)" },
           caption: { type: "string", description: "One short line: what they're looking at / the note text" },
-          anchor: { type: "object", properties: { x: { type: "number" }, y: { type: "number" } }, description: "note only: where to pin on the camera view, 0–1 from top-left" },
+          anchor: { type: "object", properties: { x: { type: "number" }, y: { type: "number" } }, description: "Where on the camera view, 0–1 from top-left (note; optional for model/figure to pin in-feed)" },
+          marks: {
+            type: "array",
+            description: "marks kind only: the shapes to draw on the camera feed (they show together)",
+            items: {
+              type: "object",
+              properties: {
+                shape: { type: "string", enum: ["arrow", "ring", "box", "label", "path"] },
+                at: { type: "object", properties: { x: { type: "number" }, y: { type: "number" } }, description: "center (ring/box/label)" },
+                from: { type: "object", properties: { x: { type: "number" }, y: { type: "number" } }, description: "arrow tail" },
+                to: { type: "object", properties: { x: { type: "number" }, y: { type: "number" } }, description: "arrow tip — the thing being pointed at" },
+                r: { type: "number", description: "ring radius as a fraction of the view (e.g. 0.08)" },
+                w: { type: "number", description: "box width fraction" },
+                h: { type: "number", description: "box height fraction" },
+                points: { type: "array", items: { type: "object", properties: { x: { type: "number" }, y: { type: "number" } } }, description: "path points in order" },
+                text: { type: "string", description: "label text (label shape; optional tag on others)" },
+              },
+              required: ["shape"],
+            },
+          },
         },
         required: ["kind"],
         additionalProperties: false,
       },
       execute: async (args) => {
         const kind = String(args?.kind ?? "");
-        if (!["model", "figure", "video", "note", "clear"].includes(kind)) return { output: "kind must be model | figure | video | note | clear.", isError: true };
+        if (!["model", "figure", "video", "note", "marks", "clear"].includes(kind)) return { output: "kind must be model | figure | video | note | marks | clear.", isError: true };
         const emit = this.currentEmit;
         if (!emit) return { output: "No active turn.", isError: true };
         const overlayId = randomUUID().slice(0, 8);
         if (kind === "clear") { await emit({ type: "live_overlay", overlayId, kind: "clear" }); return { output: "Overlay cleared." }; }
+        const anchor = pt(args?.anchor);
+        const caption = args?.caption ? String(args.caption).slice(0, 120) : undefined;
+        // note + marks draw ON the camera feed — meaningless without one.
+        if ((kind === "note" || kind === "marks") && !this.cameraOn) {
+          return { output: "Their camera is off — marks/notes pin on the live view. Ask them to turn the camera on, or show a figure/model instead.", isError: true };
+        }
         if (kind === "note") {
-          const caption = String(args?.caption ?? "").trim();
           if (!caption) return { output: "A note needs a caption.", isError: true };
-          const a = args?.anchor;
-          const anchor = a && typeof a.x === "number" && typeof a.y === "number"
-            ? { x: Math.min(1, Math.max(0, a.x)), y: Math.min(1, Math.max(0, a.y)) } : undefined;
           await emit({ type: "live_overlay", overlayId, kind: "note", caption, anchor });
           return { output: "Note pinned on their view. Keep talking them through it." };
+        }
+        if (kind === "marks") {
+          const raw = Array.isArray(args?.marks) ? args.marks : [];
+          const marks = raw.slice(0, 8).flatMap((m: any) => {
+            const shape = String(m?.shape ?? "");
+            if (!["arrow", "ring", "box", "label", "path"].includes(shape)) return [];
+            const mark: Record<string, unknown> = { shape };
+            const at = pt(m?.at), from = pt(m?.from), to = pt(m?.to);
+            if (at) mark.at = at;
+            if (from) mark.from = from;
+            if (to) mark.to = to;
+            const r = clamp01(m?.r), w = clamp01(m?.w), h = clamp01(m?.h);
+            if (r !== undefined) mark.r = r;
+            if (w !== undefined) mark.w = w;
+            if (h !== undefined) mark.h = h;
+            if (Array.isArray(m?.points)) {
+              const ps = m.points.map(pt).filter(Boolean);
+              if (ps.length >= 2) mark.points = ps;
+            }
+            if (m?.text) mark.text = String(m.text).slice(0, 60);
+            // each shape needs its geometry
+            if (shape === "arrow" && !(mark.from && mark.to)) return [];
+            if ((shape === "ring" || shape === "box" || shape === "label") && !mark.at) return [];
+            if (shape === "path" && !mark.points) return [];
+            return [mark];
+          });
+          if (!marks.length) return { output: "No valid marks — each needs its geometry (arrow: from+to; ring/box/label: at; path: points).", isError: true };
+          await emit({ type: "live_overlay", overlayId, kind: "marks", caption, marks: marks as any });
+          return { output: `${marks.length} mark(s) drawn on their view. Talk them through what you're pointing at; show_overlay "clear" when done.` };
         }
         // model / figure / video need a real ingested asset — same discipline as
         // the canvas: only /assets URLs, never an invented or external one.
         const url = String(args?.url ?? "").trim();
         if (!/^(https?:\/\/[^/]+)?\/assets\//.test(url)) return { output: "Pass the exact /assets URL that get_media returned — call get_media first.", isError: true };
-        const caption = args?.caption ? String(args.caption).slice(0, 120) : undefined;
-        await emit({ type: "live_overlay", overlayId, kind: kind as "model" | "figure" | "video", url, caption });
-        return { output: `Overlay is up (${kind}). Talk through what they're seeing; show_overlay kind "clear" when done.` };
+        const inFeed = anchor && kind !== "video" && this.cameraOn ? anchor : undefined;
+        await emit({ type: "live_overlay", overlayId, kind: kind as "model" | "figure" | "video", url, caption, anchor: inFeed });
+        return { output: `Overlay is up (${kind}${inFeed ? ", pinned on their camera view" : ""}). Talk through what they're seeing; show_overlay kind "clear" when done.` };
       },
     };
     this.runner = new LiveTurnRunner(product, manuals, chatId || undefined, [lookTool, showOverlay]);
@@ -202,8 +262,27 @@ export class LiveSession {
       // Auto-title a fresh conversation from the first thing the user says.
       if (!this.titled) { this.titled = true; try { renameChat(this.chatId, text.replace(/\s+/g, " ").trim().slice(0, 48) || "Live conversation"); } catch { /* */ } }
     }
+    // A canvas the model spawns mid-call runs on a SESSION-stable emit — its
+    // own never-aborting signal, so a barge-in that kills the SPOKEN turn never
+    // kills the page landing on the stage. The runner threads in the facts +
+    // /assets it gathered this turn so the page is grounded like chat's; when
+    // the camera is on, the freshest frame rides along so the worker can build
+    // the answer AROUND what the user is showing. A build that finishes after
+    // the row was persisted re-saves it (blocks were serialized without it).
+    let messageId: string | null = null;
+    const spawnBuild: SpawnBuild = (brief, ctx) => {
+      const frame = frames.length ? this.persistFrame(frames[frames.length - 1]!) : undefined;
+      void runCanvasWorker({
+        mode: "build", canvasId: randomUUID().slice(0, 8), brief, question: text,
+        facts: ctx?.facts, figures: ctx?.figures, hero: pickHero(ctx?.figures ?? []),
+        product: this.product, frame,
+        emit: this.blockEmit(blocks, new AbortController().signal), signal: new AbortController().signal,
+      }).then(() => {
+        if (messageId && this.chatId) { try { updateMessage(messageId, blocks); } catch { /* */ } }
+      });
+    };
     try {
-      await this.runner.runTurn(text, frames, emit, ac.signal);
+      await this.runner.runTurn(text, frames, emit, ac.signal, spawnBuild);
     } catch (e) {
       if (!ac.signal.aborted) console.error("[live] turn:", e);
     } finally {
@@ -213,7 +292,7 @@ export class LiveSession {
       this.bargeSpoken = null;
       scrubControlTokens(blocks);
       // Persist the assistant reply even on barge-in/abort, so reload shows it.
-      if (this.chatId && blocks.length) { try { addMessage(this.chatId, "assistant", blocks, true /* live */); } catch { /* */ } }
+      if (this.chatId && blocks.length) { try { messageId = addMessage(this.chatId, "assistant", blocks, true /* live */).id; } catch { /* */ } }
       this.send({ t: "sse", event: { type: "done" } });
       if (this.currentEmit === emit) this.currentEmit = null;
       if (this.ac === ac) { this.ac = null; this.turnActive = false; }
@@ -233,6 +312,21 @@ export class LiveSession {
   }
 
   private interrupt() { this.ac?.abort(); }
+
+  // Write a camera frame to disk as a canvas resource and return the /assets
+  // URL the build worker can embed (mirrors crop_page_image's scratch→/assets
+  // pattern). Returns undefined on any failure — a missing frame just means the
+  // worker builds from the product graph alone.
+  private persistFrame(frame: Frame): { url: string; image: Frame } | undefined {
+    try {
+      const rel = `scratch/frames/${this.chatId || "live"}/${randomUUID()}.jpg`;
+      const dest = resolve(DATA_DIR, rel);
+      mkdirSync(dirname(dest), { recursive: true });
+      writeFileSync(dest, Buffer.from(frame.data, "base64"));
+      const base = process.env.WEB_PUBLIC_URL ?? "http://localhost:3000";
+      return { url: `${base}/assets/${rel}`, image: frame };
+    } catch { return undefined; }
+  }
 
   // ── `look` handshake ────────────────────────────────────────────────────
   private requestFrame(): Promise<Frame | null> {
