@@ -68,6 +68,13 @@ export function lintCanvas(html: string): LintFinding[] {
       add("P0", "svg-dark-bg", "A solid black <rect> fills the SVG background — it vanishes in dark mode and reads as a broken black box. Remove it; leave the background transparent.");
   }
 
+  // The same figure embedded twice on one page (hero + a step reusing one crop)
+  // reads as filler. Flag the first duplicated /assets src.
+  const figSrcs = [...html.matchAll(/<takt-(?:figure|model|video)\b[^>]*\bsrc=["']([^"']+)["']/gi)].map((m) => m[1]!);
+  const dupSrc = figSrcs.find((s, i) => figSrcs.indexOf(s) !== i);
+  if (dupSrc)
+    add("P0", "dup-figure", `The same media (${dupSrc.split("/").pop()}) is embedded twice. Show each figure once — replace the second use with a different crop, the 3D part, or drop it.`);
+
   // P1 — should fix
   if (svgNoViewBox(html))
     add("P1", "svg-viewbox", "An <svg> has no viewBox, so it won't scale with its column. Use <svg width=\"100%\" viewBox=\"0 0 680 H\"> and compute H from the lowest element.");
@@ -114,6 +121,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   assert(p0(lintCanvas(svg('<path d="M0 0C40 40 80 40 120 0" stroke="var(--takt-muted)"/>'))).some((f) => f.rule === "svg-blob"), "flags stroked markerless curve with no fill");
   assert(lintCanvas(svg('<path d="M0 0h10v10z" fill="var(--takt-accent)"/>')).every((f) => f.rule !== "svg-blob"), "explicitly filled shape passes");
   assert(p0(lintCanvas(svg('<rect fill="#000" width="680" height="100"/>'))).some((f) => f.rule === "svg-dark-bg"), "flags black svg background");
+  assert(p0(lintCanvas('<takt-figure src="/assets/a.png"></takt-figure><takt-figure src="/assets/a.png"></takt-figure>')).some((f) => f.rule === "dup-figure"), "flags the same figure embedded twice");
+  assert(lintCanvas('<takt-figure src="/assets/a.png"></takt-figure><takt-figure src="/assets/b.png"></takt-figure>').every((f) => f.rule !== "dup-figure"), "two different figures pass");
   assert(lintCanvas('<p style="text-align:justify">hi</p>').some((f) => f.rule === "justify"), "flags justified text");
   assert(lintCanvas('<button style="outline:none">x</button>').some((f) => f.rule === "focus-ring"), "flags outline:none with no focus replacement");
   assert(lintCanvas('<style>button{outline:none}button:focus-visible{outline:2px solid}</style>').every((f) => f.rule !== "focus-ring"), ":focus-visible clears the focus-ring finding");

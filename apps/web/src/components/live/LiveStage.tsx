@@ -43,12 +43,12 @@ function DownloadProgress({ pct, loaded, total, models }: { pct: number; loaded:
   );
 }
 
-function DeviceSelect({ icon: Icon, opts, value, onChange }: { icon: typeof Mic; opts: DeviceOpt[]; value?: string; onChange: (id: string) => void }) {
+function DeviceSelect({ icon: Icon, name, opts, value, onChange }: { icon: typeof Mic; name: string; opts: DeviceOpt[]; value?: string; onChange: (id: string) => void }) {
   if (!opts.length) return <p className="text-[12px] text-faint">No device found</p>;
   return (
     <label className="flex items-center gap-2 text-muted-foreground">
       <Icon className="size-3.5 shrink-0" />
-      <select value={value ?? opts[0]?.id ?? ""} onChange={(e) => onChange(e.target.value)}
+      <select name={name} aria-label={name} value={value ?? opts[0]?.id ?? ""} onChange={(e) => onChange(e.target.value)}
         className="min-w-0 flex-1 truncate rounded-lg border border-border bg-surface px-2 py-1.5 text-[12px] text-foreground">
         {opts.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
       </select>
@@ -80,8 +80,8 @@ export function PreCall({ mics, cams, micId, camId, onMic, onCam, error, modelsD
         <MicMeter micId={micId} onGranted={refreshDevices} />
 
         <div className="w-full max-w-xs space-y-2">
-          <DeviceSelect icon={Mic} opts={mics} value={micId} onChange={onMic} />
-          <DeviceSelect icon={Video} opts={cams} value={camId} onChange={onCam} />
+          <DeviceSelect icon={Mic} name="Microphone" opts={mics} value={micId} onChange={onMic} />
+          <DeviceSelect icon={Video} name="Camera" opts={cams} value={camId} onChange={onCam} />
         </div>
 
         <ModelQuickPick onOpenSettings={onOpenSettings} />

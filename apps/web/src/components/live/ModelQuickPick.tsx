@@ -39,10 +39,10 @@ export function ModelQuickPick({ onOpenSettings }: { onOpenSettings: () => void 
   return (
     <div className="flex w-full max-w-xs flex-col gap-2 rounded-xl border border-border bg-surface/60 p-2.5">
       <div className="flex items-center gap-2">
-        <select className={cn(sel, "shrink-0")} value={providerId} onChange={(e) => save.mutate({ liveProviderId: e.target.value, liveModel: "" })}>
+        <select name="live-provider" aria-label="Live provider" className={cn(sel, "shrink-0")} value={providerId} onChange={(e) => save.mutate({ liveProviderId: e.target.value, liveModel: "" })}>
           {PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
-        <select className={cn(sel, "flex-1")} value={settings?.liveModel ?? ""} onChange={(e) => save.mutate({ liveModel: e.target.value })}>
+        <select name="live-model" aria-label="Live model" className={cn(sel, "flex-1")} value={settings?.liveModel ?? ""} onChange={(e) => save.mutate({ liveModel: e.target.value })}>
           <option value="">{models.length ? "Recommended" : hasKey ? "Loading…" : "Add a key →"}</option>
           {models.map((m) => <option key={m.id} value={m.id}>{m.display_name}</option>)}
         </select>

@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from "lucide-react";
 import type { CanvasSource } from "@/lib/chatStore";
+import { MarkdownBody } from "@/components/markdown/MarkdownBody";
 import { overlay, modal } from "@/lib/motion";
 import { useFocusTrap } from "@/lib/useFocusTrap";
 import { cn } from "@/lib/cn";
@@ -36,10 +37,10 @@ export function SourceModal({ source, onClose, onNavigate }: {
                 <div className="text-[11px] text-muted-foreground">Page {source.page}</div>
               </div>
               <div className="flex items-center gap-1">
-                <IconBtn onClick={() => onNavigate(Math.max(1, source.page - 1))}><ChevronLeft className="size-4" /></IconBtn>
-                <IconBtn onClick={() => onNavigate(source.page + 1)}><ChevronRight className="size-4" /></IconBtn>
-                <IconBtn onClick={() => setZoom((z) => !z)}>{zoom ? <ZoomOut className="size-4" /> : <ZoomIn className="size-4" />}</IconBtn>
-                <IconBtn onClick={onClose} aria-label="Close"><X className="size-4" /></IconBtn>
+                <IconBtn onClick={() => onNavigate(Math.max(1, source.page - 1))} aria-label="Previous page" title="Previous page"><ChevronLeft className="size-4" /></IconBtn>
+                <IconBtn onClick={() => onNavigate(source.page + 1)} aria-label="Next page" title="Next page"><ChevronRight className="size-4" /></IconBtn>
+                <IconBtn onClick={() => setZoom((z) => !z)} aria-label={zoom ? "Zoom out" : "Zoom in"} title={zoom ? "Zoom out" : "Zoom in"}>{zoom ? <ZoomOut className="size-4" /> : <ZoomIn className="size-4" />}</IconBtn>
+                <IconBtn onClick={onClose} aria-label="Close" title="Close"><X className="size-4" /></IconBtn>
               </div>
             </header>
             <div className={cn("takt-scroll min-h-0 flex-1 overflow-auto p-3")}>
@@ -51,7 +52,11 @@ export function SourceModal({ source, onClose, onNavigate }: {
             {source.caption && (
               <details className="border-t border-border px-4 py-2.5">
                 <summary className="cursor-pointer text-[11px] text-muted-foreground hover:text-foreground">What this page says</summary>
-                <p className="mt-2 whitespace-pre-wrap text-[12px] leading-[18px] text-muted-foreground">{source.caption}</p>
+                {/* The vision caption is stored as markdown — render it, don't
+                    show raw ## headings and pipe tables. */}
+                <div className="takt-scroll mt-2 max-h-72 overflow-y-auto text-[12px] leading-[18px] text-muted-foreground">
+                  <MarkdownBody content={source.caption} />
+                </div>
               </details>
             )}
           </motion.div>

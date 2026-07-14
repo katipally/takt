@@ -7,6 +7,7 @@ import { askAnswerPayloadSchema } from "@takt/shared";
 import { getProductBySlug, createChat, listChats, listMasterChats, addMessage, renameChat, loadEnv } from "@takt/db";
 import { ingestProduct, countPdfPages } from "@takt/ingest";
 import { extname } from "node:path";
+import { createHash } from "node:crypto";
 import { catalogModels } from "@takt/harness";
 import { makeBlockEmit } from "./block-emit.js";
 import { ensureSeedProviders, resolveCaption } from "./providers.js";
@@ -179,10 +180,11 @@ app.post("/ingest", async (c) => {
     if (pdfFiles.length && !cap.apiKey && !cap.provider.keyless) { await emit({ type: "error", message: `No API key for ${cap.provider.name}. Add your key in Settings → Models before adding a product.` }); return; }
     try {
       // Dedup identical PDFs (Prusa ships the same parts catalog in two folders) —
-      // by basename+size, so we don't caption + author the same doc twice.
+      // by CONTENT hash, so the same doc under two different names still counts
+      // once and is never captioned + authored twice.
       const seenPdf = new Set<string>();
       const pdfs = (await Promise.all(pdfFiles.map(async (f) => ({ filename: base(f.name), data: new Uint8Array(await f.arrayBuffer()) }))))
-        .filter((p) => { const k = `${p.filename}:${p.data.byteLength}`; if (seenPdf.has(k)) return false; seenPdf.add(k); return true; });
+        .filter((p) => { const k = createHash("sha256").update(p.data).digest("hex"); if (seenPdf.has(k)) return false; seenPdf.add(k); return true; });
       const hero = heroFile && typeof heroFile !== "string"
         ? { ext: extname((heroFile as File).name) || ".png", data: new Uint8Array(await (heroFile as File).arrayBuffer()) }
         : undefined;

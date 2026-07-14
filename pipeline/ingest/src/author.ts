@@ -24,8 +24,19 @@ function unitBody(u: ProfileUnit): string {
 /** Write a bundle from in-memory concept units. Rebuilds the folder from scratch
  *  (deleteProfile) — this is a fresh-start rebuild, no incremental merge. Also
  *  seeds the media index with a `page` item for every unit that has an image. */
-export function authorFromUnits(slug: string, product: ProfileProductMeta, concepts: ProfileConceptInput[]): AuthorResult {
+export function authorFromUnits(slug: string, product: ProfileProductMeta, conceptsIn: ProfileConceptInput[]): AuthorResult {
   deleteProfile(slug);
+
+  // The same source doc ingested twice (same title + source) is ONE concept —
+  // authoring it twice produced duplicate "-x" files, duplicate Sources lines,
+  // and duplicate cards on the landing page.
+  const seenConcept = new Set<string>();
+  const concepts = conceptsIn.filter((c) => {
+    const key = `${c.title}\n${c.source ?? ""}`;
+    if (seenConcept.has(key)) return false;
+    seenConcept.add(key);
+    return true;
+  });
 
   const overviewBody = [
     product.summary || `${product.name}${product.manufacturer ? ` by ${product.manufacturer}` : ""}.`,

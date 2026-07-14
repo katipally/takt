@@ -46,7 +46,13 @@ export function LiveDock({ chatId, productSlug, onExit }: { chatId: string; prod
               <PreCall mics={mics} cams={cams} micId={micId} camId={camId} onMic={(id) => void setMic(id)} onCam={setCam}
                 error={error} modelsDownloaded={modelsDownloaded} downloading={downloading} downloadPct={downloadPct}
                 downloadLoaded={downloadLoaded} downloadTotal={downloadTotal} downloadModels={downloadModels}
-                refreshDevices={refreshDevices} onDownload={() => void download()} onStart={() => void start()}
+                refreshDevices={refreshDevices} onDownload={() => void download()}
+                onStart={() => void start().then(() => {
+                  // The pre-call screen just showed a live camera preview — carry
+                  // that into the call instead of starting with the camera off.
+                  const s = useLiveStore.getState();
+                  if (s.active && !s.cameraOn && cams.length) return toggleCamera();
+                })}
                 onOpenSettings={openSettings} />
             </motion.div>
           </motion.div>

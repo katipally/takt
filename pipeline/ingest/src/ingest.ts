@@ -68,7 +68,18 @@ export function manualKindFromName(file: string): ManualKind {
 }
 
 export function titleFromName(file: string): string {
-  return basename(file, ".pdf").replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  // Raw export names carry UUIDs and part numbers ("451500-…-182941ab-390e-…");
+  // strip them — they end up as user-facing titles on the landing page, profile,
+  // and source cards.
+  const cleaned = basename(file, ".pdf")
+    .replace(/[0-9a-f]{8}[-_ ]?[0-9a-f]{4}[-_ ]?[0-9a-f]{4}[-_ ]?[0-9a-f]{4}[-_ ]?[0-9a-f]{12}/gi, " ") // uuid
+    .replace(/\b[0-9a-f]{7,}\b/gi, " ")   // stray long hex fragments
+    .replace(/\b\d{5,}\b/g, " ")          // bare part/SKU numbers
+    .replace(/[-_]+/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  const base = cleaned || basename(file, ".pdf").replace(/[-_]+/g, " ");
+  return base.replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 const slugify = (s: string) =>
