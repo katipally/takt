@@ -40,6 +40,15 @@ const STATIC = {
   ),
   th: (p: MdProps) => el("th", "border-b border-border bg-foreground/5 px-2.5 py-1.5 text-left text-chat font-semibold", p),
   td: (p: MdProps) => el("td", "border-b border-border px-2.5 py-1.5 align-top text-chat", p),
+  // Lazy + async images with reserved paint work deferred until near-viewport —
+  // the profile page renders EVERY manual page inline and was heavy enough that
+  // Chrome refused to screenshot it. contentVisibility skips offscreen layout.
+  img: ({ node: _n, alt, ...rest }: MdProps & { src?: string; alt?: string }) => (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img loading="lazy" decoding="async" alt={alt ?? ""}
+      style={{ contentVisibility: "auto", containIntrinsicSize: "800px 1000px" }}
+      className="my-3 h-auto max-w-full rounded-lg border border-border" {...rest} />
+  ),
 } as const;
 
 // strong/em/a default-render inline unless overridden (a is set per-render below).

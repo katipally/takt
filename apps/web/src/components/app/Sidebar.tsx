@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Settings, Check, Pencil, Trash2, X, PanelLeftClose } from "lucide-react";
@@ -21,9 +21,16 @@ export function Sidebar({
 }) {
   // null slug = master mode → the no-product chat list (server maps "master").
   const chatKey = currentSlug ?? "master";
-  // Poll the chat list to pick up a freshly-generated title; 12s is plenty and
-  // a quarter the load of a tight 4s poll. (Stops when the tab is backgrounded.)
-  const { data: chats = [] } = useQuery({ queryKey: ["chats", chatKey], queryFn: () => api.chats(chatKey), refetchInterval: 12000 });
+  // Event-driven, not polled: the store dispatches `takt:chats-updated` when a
+  // chat gets its title (and rename/delete invalidate directly). The old 12s
+  // interval — multiplied across mounts — hammered /api/chats continuously.
+  const qc = useQueryClient();
+  const { data: chats = [] } = useQuery({ queryKey: ["chats", chatKey], queryFn: () => api.chats(chatKey), staleTime: 60_000 });
+  useEffect(() => {
+    const onUpdate = () => qc.invalidateQueries({ queryKey: ["chats", chatKey] });
+    document.addEventListener("takt:chats-updated", onUpdate);
+    return () => document.removeEventListener("takt:chats-updated", onUpdate);
+  }, [qc, chatKey]);
   const toggleSidebar = useUi((s) => s.toggleSidebar);
   const openSettings = useUi((s) => s.openSettings);
 

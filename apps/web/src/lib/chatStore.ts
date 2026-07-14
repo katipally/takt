@@ -109,6 +109,9 @@ function applyStreamEvent(chatId: string, assistantId: string, e: SseEvent) {
   else if (e.type === "canvas_end") update(chatId, (s) => patchAssistant(s, assistantId, (p) => upsertCanvas(p, e.canvasId, (c) => ({ ...c, html: e.html, title: e.title ?? c.title, specCheck: e.specCheck }))));
   else if (e.type === "canvas_error") update(chatId, (s) => setStatus(patchAssistant(s, assistantId, (p) => p.filter((q) => !(q.kind === "canvas" && q.canvasId === e.canvasId))), assistantId, null));
   else if (e.type === "canvas_highlight") useUi.getState().highlightCanvas(e.target);
+  // A fresh chat just got its server-generated title — tell the sidebar to
+  // refresh its list ONCE, instead of the sidebar polling on an interval.
+  else if (e.type === "title") document.dispatchEvent(new CustomEvent("takt:chats-updated"));
   else if (e.type === "action_result") { /* client ack only */ }
   else if (e.type === "ask_user") update(chatId, (s) => {
     const withPart = patchAssistant(s, assistantId, (p) => p.some((q) => q.kind === "ask" && q.askId === e.askId) ? p : [...p, { id: uid(), kind: "ask", askId: e.askId, questions: e.questions }]);
