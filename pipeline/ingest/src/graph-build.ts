@@ -8,7 +8,12 @@ import type { Entity, Edge, KgChunk, KgMedia, GraphInput, EntityType, EdgeRel } 
 // names an entity) are added by normalized-name match.
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 60) || "x";
-const eid = (type: EntityType, name: string) => `${type}:${slug(name)}`;
+// Entity ids are namespaced by product: entities/edges/chunks/media all share a
+// GLOBAL primary key, so an unscoped `part:screw` from a second product collides
+// with the first's and aborts the whole replaceProductGraph transaction (→ 0
+// entities for every later product that shares any name). Scoping by productId
+// keeps the same-name-collapses-to-one-node dedup WITHIN a product intact.
+const eid = (productId: string, type: EntityType, name: string) => `${productId}:${type}:${slug(name)}`;
 
 /** One named thing the vision parse pulled off a page. */
 export interface ParsedItem { name: string; aliases?: string[]; summary?: string; value?: string; unit?: string; refHint?: string }
@@ -54,7 +59,7 @@ export function buildGraphInput(input: GraphBuildInput): GraphInput {
   const lookup = (type: EntityType, name: string): string | undefined => nameIndex.get(`${type}\n${slug(name)}`);
 
   const addEntity = (type: EntityType, item: ParsedItem, page: number, manualId: string | null): string => {
-    const id = eid(type, item.name);
+    const id = eid(productId, type, item.name);
     const attrs: Record<string, unknown> = {};
     // A measured value must contain a digit. The vision pass sometimes returns
     // qualitative fills ("very high", "increased") — storing those as spec
@@ -88,7 +93,7 @@ export function buildGraphInput(input: GraphBuildInput): GraphInput {
     if (src === dst) return;
     const key = `${src}|${rel}|${dst}`;
     if (edges.has(key)) return;
-    edges.set(key, { id: `e${edges.size}`, productId, src, dst, rel, provenance, weight: 1, page: page ?? null });
+    edges.set(key, { id: `${productId}:e${edges.size}`, productId, src, dst, rel, provenance, weight: 1, page: page ?? null });
   };
 
   // ── entities + page chunks + figure media ──
@@ -113,7 +118,7 @@ export function buildGraphInput(input: GraphBuildInput): GraphInput {
 
     // one figure entity per page that has a diagram/photo, linked to the page image
     if (p.figures?.length) {
-      const figId = eid("figure", `${p.manualId} page ${p.page}`);
+      const figId = eid(productId, "figure", `${p.manualId} page ${p.page}`);
       const cap = p.figures.map((f) => `${f.label}: ${f.caption}`).join(" · ");
       if (!entities.has(figId)) {
         entities.set(figId, { id: figId, productId, type: "figure", name: `${p.manualKind} p.${p.page}`, aliases: [], summary: cap, attrs: {}, manualId: p.manualId, page: p.page, contentHash: null });
@@ -128,7 +133,7 @@ export function buildGraphInput(input: GraphBuildInput): GraphInput {
   // ── 3D parts: model_part entity + link to the matching part by name ──
   for (const m of input.meshes ?? []) {
     const id = addEntity("model_part", { name: m.name, summary: m.caption ?? m.subsystem }, 0, null);
-    media.push({ id: `media:mesh:${slug(m.name)}`, productId, entityId: id, kind: "mesh", assetUrl: m.assetUrl, caption: m.caption ?? m.name, subsystem: m.subsystem ?? null, bbox: null, contentHash: null });
+    media.push({ id: `${productId}:media:mesh:${slug(m.name)}`, productId, entityId: id, kind: "mesh", assetUrl: m.assetUrl, caption: m.caption ?? m.name, subsystem: m.subsystem ?? null, bbox: null, contentHash: null });
     const part = lookup("part", m.name);
     if (part) addEdge(id, "depicts", part, "INFERRED");
   }
@@ -136,7 +141,7 @@ export function buildGraphInput(input: GraphBuildInput): GraphInput {
   // ── video clips: entity + link to any part/procedure it names ──
   for (const v of input.videos ?? []) {
     const id = addEntity("video_clip", { name: v.name, summary: v.caption }, 0, null);
-    media.push({ id: `media:vid:${slug(v.name)}`, productId, entityId: id, kind: "video_clip", assetUrl: v.assetUrl, caption: v.caption, bbox: { tStart: v.tStart, tEnd: v.tEnd }, contentHash: null });
+    media.push({ id: `${productId}:media:vid:${slug(v.name)}`, productId, entityId: id, kind: "video_clip", assetUrl: v.assetUrl, caption: v.caption, bbox: { tStart: v.tStart, tEnd: v.tEnd }, contentHash: null });
     const hay = `${v.name} ${v.caption}`.toLowerCase();
     for (const [key, refId] of nameIndex) {
       const [t, nm = ""] = key.split("\n");
@@ -147,7 +152,7 @@ export function buildGraphInput(input: GraphBuildInput): GraphInput {
   // ── loose images: image media linked to any part it names ──
   for (const im of input.images ?? []) {
     const part = lookup("part", im.name);
-    media.push({ id: `media:img:${slug(im.name)}`, productId, entityId: part ?? null, kind: "image", assetUrl: im.assetUrl, caption: im.caption, bbox: null, contentHash: null });
+    media.push({ id: `${productId}:media:img:${slug(im.name)}`, productId, entityId: part ?? null, kind: "image", assetUrl: im.assetUrl, caption: im.caption, bbox: null, contentHash: null });
   }
 
   return { entities: [...entities.values()], edges: [...edges.values()], chunks, media };
@@ -180,21 +185,23 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const byId = new Map(g.entities.map((e) => [e.id, e]));
   // dedup: extruder named on p12 → exactly one part node
   assert(g.entities.filter((e) => e.type === "part" && e.name === "Extruder").length === 1, "extruder deduped to one node");
-  // spec references the part
-  assert(g.edges.some((e) => e.rel === "references" && e.dst === "part:extruder"), "spec references extruder");
+  // spec references the part (ids are product-namespaced: `p1:part:extruder`)
+  assert(g.edges.some((e) => e.rel === "references" && e.dst === "p1:part:extruder"), "spec references extruder");
   // symptom fixed by the cold-pull procedure
   assert(g.edges.some((e) => e.rel === "fixes" && byId.get(e.src)?.name === "Cold pull" && byId.get(e.dst)?.name === "Extruder clicking"), "cold pull fixes clicking");
   // figure depicts the parts on its page (shown_in edge)
-  assert(g.edges.some((e) => e.rel === "shown_in" && e.src === "part:extruder"), "extruder shown_in the page figure");
+  assert(g.edges.some((e) => e.rel === "shown_in" && e.src === "p1:part:extruder"), "extruder shown_in the page figure");
   // cross-modal: the 3D gear links to the part of the same name
-  assert(g.edges.some((e) => e.rel === "depicts" && e.src.startsWith("model_part:") && e.dst === "part:bondtech-drive-gear"), "3D gear depicts the part");
+  assert(g.edges.some((e) => e.rel === "depicts" && e.src.startsWith("p1:model_part:") && e.dst === "p1:part:bondtech-drive-gear"), "3D gear depicts the part");
   // cross-modal: the video references the cold-pull procedure by name
-  assert(g.edges.some((e) => e.rel === "references" && e.src.startsWith("video_clip:") && e.dst === "procedure:cold-pull"), "video references the procedure");
+  assert(g.edges.some((e) => e.rel === "references" && e.src.startsWith("p1:video_clip:") && e.dst === "p1:procedure:cold-pull"), "video references the procedure");
+  // ids are namespaced by product → a second product's `part:extruder` won't collide
+  assert(g.entities.every((e) => e.id.startsWith("p1:")), "every entity id is product-namespaced");
   // page chunk retained
   assert(g.chunks.some((c) => c.kind === "page" && c.text.includes("215C")), "page chunk kept");
   // media: figure + mesh + video present and entity-linked
-  assert(g.media.some((m) => m.kind === "figure" && m.entityId?.startsWith("figure:")), "figure media linked");
-  assert(g.media.some((m) => m.kind === "mesh" && m.entityId?.startsWith("model_part:")), "mesh media linked");
+  assert(g.media.some((m) => m.kind === "figure" && m.entityId?.startsWith("p1:figure:")), "figure media linked");
+  assert(g.media.some((m) => m.kind === "mesh" && m.entityId?.startsWith("p1:model_part:")), "mesh media linked");
 
   console.log(`graph-build self-check ok (${g.entities.length} entities, ${g.edges.length} edges, ${g.chunks.length} chunks, ${g.media.length} media)`);
 
@@ -208,6 +215,20 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     assert(db.ftsChunks("p1", "cold pull clog").length > 0, "persisted: FTS finds the fix chunk");
     const sym = db.findEntity("p1", "clicking noise")[0]!;
     assert(db.neighbors(sym.id).length > 0, "persisted: symptom has graph neighbors");
+
+    // Regression: a SECOND product that shares a part name ("Extruder") must NOT
+    // collide on the global entity PK. Before ids were product-namespaced this
+    // threw a UNIQUE violation and left the second product with 0 entities.
+    db.getDb().prepare(`INSERT OR IGNORE INTO products (id, slug, name) VALUES (?,?,?)`).run("p2", "gb-test-2", "GB Test 2");
+    const g2 = buildGraphInput({
+      productId: "p2",
+      pages: [{ manualId: "man2", manualKind: "owner", page: 1, imageUrl: "/assets/pages/man2/1.png",
+        textMd: "The extruder here is different. Nozzle runs at 240C.",
+        parts: [{ name: "Extruder" }], specs: [{ name: "Nozzle temperature", value: "240", unit: "C", refHint: "Extruder" }] }],
+    });
+    db.replaceProductGraph("p2", g2); // must not throw
+    assert(db.graphStats("p2").entities > 0, "second product with a shared name persisted (no PK collision)");
+    assert(db.graphStats("p1").entities > 0, "first product's graph is untouched by the second ingest");
     console.log("graph-build DB integration ok");
   } else {
     console.log("(set a throwaway TAKT_DATA_DIR to also run the DB integration check)");

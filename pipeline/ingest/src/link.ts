@@ -163,7 +163,7 @@ export function embeddingCrossModalLink(g: GraphInput): number {
     if (linked.has(e.id)) continue;
     const hit = nearest(e.embedding);
     if (hit && hit.score >= XMODAL_MIN) {
-      g.edges.push({ id: `lk${added}`, productId: g.entities[0]!.productId, src: e.id, dst: hit.e.id, rel: relFor(e.type), provenance: "INFERRED", weight: hit.score });
+      g.edges.push({ id: `${g.entities[0]!.productId}:lk${added}`, productId: g.entities[0]!.productId, src: e.id, dst: hit.e.id, rel: relFor(e.type), provenance: "INFERRED", weight: hit.score });
       added++;
     }
   }
