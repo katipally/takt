@@ -3,6 +3,9 @@
 // drifts, and disappear when it leaves the frame. No ML, no deps: template
 // matching (mean-abs-diff) on a ~160px grayscale downscale, searching a small
 // window around each mark's last position at ~10 fps. A few ms per tick.
+// Handheld motion is continuous, so each tick searches around the PREDICTED
+// position (last spot + last velocity), not just the last spot — a fast pan
+// stays inside the search window instead of jumping out of it and dropping.
 // ponytail: translation-only appearance tracking — no scale/rotation, no
 // re-detection after loss. Upgrade path if it ever matters: MOSSE filter, or
 // re-acquire by scanning the whole frame on loss.
@@ -109,6 +112,7 @@ export function bestMatch(f: Uint8Array, fw: number, fh: number, tpl: Uint8Array
 interface Target {
   id: string;
   x: number; y: number;        // current, downscaled px
+  vx: number; vy: number;      // smoothed velocity, downscaled px/tick (for prediction)
   tpl: Uint8Array;
   misses: number;
 }
@@ -157,7 +161,7 @@ export class MarkTracker {
     for (const p of points) {
       const cx = p.x * this.fw, cy = p.y * this.fh;
       const tpl = grabPatch(f, this.fw, this.fh, cx, cy);
-      if (tpl) this.targets.push({ id: p.id, x: cx, y: cy, tpl, misses: 0 });
+      if (tpl) this.targets.push({ id: p.id, x: cx, y: cy, vx: 0, vy: 0, tpl, misses: 0 });
     }
   }
 
@@ -178,14 +182,26 @@ export class MarkTracker {
     if (!f) return;
     const moved = new Map<string, { x: number; y: number }>();
     const lost: string[] = [];
+    const clampVel = (v: number) => Math.max(-SEARCH, Math.min(SEARCH, v)); // never predict past one search window
     for (const t of this.targets) {
-      const m = bestMatch(f, this.fw, this.fh, t.tpl, t.x, t.y);
+      // search around where the object is HEADING; if that overshoots, fall back
+      // to the last-known spot (a wrong prediction shouldn't cost the track)
+      let m = bestMatch(f, this.fw, this.fh, t.tpl, t.x + t.vx, t.y + t.vy);
+      if (m.score > LOST_SCORE && (t.vx || t.vy)) {
+        const m2 = bestMatch(f, this.fw, this.fh, t.tpl, t.x, t.y);
+        if (m2.score < m.score) m = m2;
+      }
       if (m.score <= LOST_SCORE) {
         t.misses = 0;
-        if (m.x !== t.x || m.y !== t.y) { t.x = m.x; t.y = m.y; moved.set(t.id, { x: m.x / this.fw, y: m.y / this.fh }); }
+        const dx = m.x - t.x, dy = m.y - t.y;
+        t.vx = clampVel(0.6 * dx + 0.4 * t.vx); // smoothed so one noisy frame doesn't fling the prediction
+        t.vy = clampVel(0.6 * dy + 0.4 * t.vy);
+        if (dx || dy) { t.x = m.x; t.y = m.y; moved.set(t.id, { x: m.x / this.fw, y: m.y / this.fh }); }
         if (m.score <= ADAPT_SCORE) { const fresh = grabPatch(f, this.fw, this.fh, m.x, m.y); if (fresh) t.tpl = fresh; }
       } else if (++t.misses >= MISS_LIMIT) {
         lost.push(t.id);
+      } else {
+        t.vx *= 0.5; t.vy *= 0.5; // decay the guess while we've lost sight of it
       }
     }
     if (lost.length) this.targets = this.targets.filter((t) => !lost.includes(t.id));

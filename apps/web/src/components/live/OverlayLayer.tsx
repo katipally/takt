@@ -100,10 +100,14 @@ export function OverlayLayer() {
                 src={card.url}
                 camera-controls
                 auto-rotate
+                auto-rotate-delay={3000}
                 ar
                 ar-modes={AR_MODES}
+                ar-scale="fixed"
+                environment-image="neutral"
                 shadow-intensity="0.6"
-                style={{ width: "100%", height: "min(46vh, 380px)", background: "transparent" }}
+                interaction-prompt="none"
+                style={{ width: "100%", height: "min(46vh, 380px)", background: "transparent", touchAction: "none" }}
               />
             ) : (
               <div className="flex h-[min(46vh,380px)] items-center justify-center text-sm text-muted">Loading 3D…</div>
@@ -218,7 +222,7 @@ export function FeedOverlay({ overlay, videoDim }: { overlay: LiveOverlay | null
             {/* model / figure pinned in-feed — tracks its object until the user
                 drags the handle, then stays where they put it */}
             {(onFeed.kind === "model" || onFeed.kind === "figure") && onFeed.anchor && (
-              <motion.div className="pointer-events-auto absolute" style={{ transform: "translate(-50%, -104%)" }}
+              <motion.div data-overlay-interactive className="pointer-events-auto absolute touch-none" style={{ transform: "translate(-50%, -104%)" }}
                 animate={{ left: (manual ?? px(onFeed.anchor)).x, top: (manual ?? px(onFeed.anchor)).y }}
                 transition={manual ? { duration: 0 } : GLIDE}>
                 <div className="overflow-hidden rounded-xl border border-white/25 bg-black/55 shadow-xl backdrop-blur-sm">
@@ -230,8 +234,9 @@ export function FeedOverlay({ overlay, videoDim }: { overlay: LiveOverlay | null
                     <img src={onFeed.url} alt={onFeed.caption ?? "figure"} className="max-h-40 max-w-[220px] object-contain" />
                   )}
                   {onFeed.kind === "model" && onFeed.url && (mvReady ? (
-                    <model-viewer src={onFeed.url} camera-controls auto-rotate ar ar-modes={AR_MODES}
-                      style={{ width: 190, height: 160, background: "transparent" }} />
+                    <model-viewer src={onFeed.url} camera-controls auto-rotate auto-rotate-delay={3000} ar ar-modes={AR_MODES}
+                      ar-scale="fixed" environment-image="neutral" interaction-prompt="none"
+                      style={{ width: 190, height: 160, background: "transparent", touchAction: "none" }} />
                   ) : (
                     <div className="grid h-[160px] w-[190px] place-items-center text-[11px] text-white/70">Loading 3D…</div>
                   ))}
@@ -289,7 +294,7 @@ function Bubble({ at, text, onDismiss, dot }: { at: { x: number; y: number }; te
   return (
     <motion.div className="absolute" style={{ transform: "translate(-50%, -100%)" }}
       animate={{ left: at.x, top: at.y }} transition={GLIDE}>
-      <div className="pointer-events-auto flex max-w-[220px] items-start gap-1.5 rounded-lg bg-black/75 px-2.5 py-1.5 text-[12px] leading-snug text-white shadow-lg backdrop-blur">
+      <div data-overlay-interactive className="pointer-events-auto flex max-w-[220px] items-start gap-1.5 rounded-lg bg-black/75 px-2.5 py-1.5 text-[12px] leading-snug text-white shadow-lg backdrop-blur">
         <span>{text}</span>
         {onDismiss && <button onClick={onDismiss} aria-label="Dismiss note" className="mt-0.5 shrink-0 opacity-70 hover:opacity-100"><X size={11} /></button>}
       </div>

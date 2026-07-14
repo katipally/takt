@@ -69,7 +69,10 @@ export function CameraPiP({ stream }: { stream: MediaStream | null }) {
   };
 
   const onDrag = (e: React.PointerEvent) => {
-    if ((e.target as HTMLElement).dataset.resize) return; // resize handle owns this
+    // The resize handle and any interactive overlay element (a pinned 3D
+    // model/figure, its drag handle, a note) own their own pointer — orbiting
+    // the 3D part or moving a pin must NOT drag the whole camera tile.
+    if ((e.target as HTMLElement).closest("[data-resize], [data-overlay-interactive]")) return;
     e.preventDefault();
     const startX = e.clientX, startY = e.clientY, ox = pos.x, oy = pos.y;
     const h = size * 0.75;
