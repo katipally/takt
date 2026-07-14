@@ -35,3 +35,7 @@ out
 # os / editor
 .DS_Store
 *.log
+
+# agent/session scratch — never part of the product
+.claude/
+artifact_dump/

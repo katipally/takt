@@ -6,8 +6,10 @@ import { askQuestionSchema, askAnswerSchema } from "./ask-spec";
 // dumb byte-pass-through proxy; the chat-stream hook decodes them.
 //
 // The canvas is streamed as raw HTML: `canvas_start` opens it, `canvas_delta`
-// carries decoded HTML chunks that the client morphdom-diffs in live, and
-// `canvas_end` delivers the authoritative sanitized+linted full page.
+// carries the full decoded HTML so far (idempotent replace; kept in the store
+// and persisted, so an interrupted stream still leaves a partial page — the
+// client paints only the finished page), and `canvas_end` delivers the
+// authoritative sanitized+linted full page.
 
 export const sseEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text_delta"), text: z.string() }),
@@ -29,9 +31,9 @@ export const sseEventSchema = z.discriminatedUnion("type", [
     productName: z.string().nullable().optional(),
   }),
   // ── canvas (streamed HTML) ──
-  // canvas_start opens a canvas (title shell); canvas_delta carries decoded HTML
-  // as it streams (client morphdom-diffs it in); canvas_end is the authoritative
-  // sanitized + linted full page under the same canvasId.
+  // canvas_start opens a canvas (title shell); canvas_delta carries the full
+  // decoded HTML so far (crash-resilience only — not painted live); canvas_end
+  // is the authoritative sanitized + linted full page under the same canvasId.
   z.object({ type: z.literal("canvas_start"), canvasId: z.string(), title: z.string().optional() }),
   z.object({ type: z.literal("canvas_delta"), canvasId: z.string(), html: z.string() }),
   z.object({ type: z.literal("canvas_end"), canvasId: z.string(), html: z.string(), title: z.string().optional() }),
@@ -40,6 +42,20 @@ export const sseEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("canvas_error"), canvasId: z.string(), message: z.string() }),
   // Highlight (ring + scroll-into-view) a block by its data-takt-id; empty clears.
   z.object({ type: z.literal("canvas_highlight"), target: z.string() }),
+  // ── live overlay (voice mode) ──
+  // A visual the agent pins over the live stage while talking: a rotatable 3D
+  // part ("model"), a manual figure/photo ("figure"), a repair clip ("video"),
+  // or a short pointer label ("note") optionally anchored on the camera view at
+  // normalized 0–1 coords. "clear" takes the current overlay down. Ephemeral —
+  // rendered live, not persisted into the chat blocks.
+  z.object({
+    type: z.literal("live_overlay"),
+    overlayId: z.string(),
+    kind: z.enum(["model", "figure", "video", "note", "clear"]),
+    url: z.string().optional(),
+    caption: z.string().optional(),
+    anchor: z.object({ x: z.number(), y: z.number() }).optional(),
+  }),
   // Resolution of an interactive canvas action (ack to the client).
   z.object({ type: z.literal("action_result"), actionId: z.string(), ok: z.boolean().optional() }),
   z.object({ type: z.literal("title"), title: z.string() }),

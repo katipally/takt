@@ -12,6 +12,7 @@ export function FloatingComposer({ above, ...props }: {
   above?: ReactNode;
   onSend: (text: string, attachments?: Attachment[]) => void;
   onStop: () => void;
+  onLive?: () => void;
   isStreaming: boolean;
 }) {
   return (

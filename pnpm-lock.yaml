@@ -62,9 +62,6 @@ importers:
       mermaid:
         specifier: ^11.16.0
         version: 11.16.0
-      morphdom:
-        specifier: ^2.7.4
-        version: 2.7.8
       motion:
         specifier: ^12.42.0
         version: 12.42.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -77,6 +74,9 @@ importers:
       onnxruntime-web:
         specifier: ^1.22.0
         version: 1.27.0
+      phonemizer:
+        specifier: ^1.2.1
+        version: 1.2.1
       react:
         specifier: ^19.2.0
         version: 19.2.7
@@ -1770,9 +1770,6 @@ packages:
 
   mkdirp-classic@0.5.3:
     resolution: {integrity: sha512-gKLcREMhtuZRwRAfqP3RFW+TK4JqApVBtOIftVgjuABpAtpxhPGaDcfvbhNvD0B8iD1oUr/txX35NjcaY6Ns/A==}
-
-  morphdom@2.7.8:
-    resolution: {integrity: sha512-D/fR4xgGUyVRbdMGU6Nejea1RFzYxYtyurG4Fbv2Fi/daKlWKuXGLOdXtl+3eIwL110cI2hz1ZojGICjjFLgTg==}
 
   motion-dom@12.42.0:
     resolution: {integrity: sha512-M63h4n8R+quJdNhBwuLlgxM+OLYa9+I/T2pzDRboB9fLXRdbou+Gw7Zury+SkpaCyACP1JHSjHgZ1EgTkBr30w==}
@@ -3777,8 +3774,6 @@ snapshots:
   minimist@1.2.8: {}
 
   mkdirp-classic@0.5.3: {}
-
-  morphdom@2.7.8: {}
 
   motion-dom@12.42.0:
     dependencies:

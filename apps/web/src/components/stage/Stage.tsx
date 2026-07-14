@@ -8,10 +8,10 @@ import type { CanvasPart } from "@/lib/chatStore";
 import { Wordmark } from "@/components/brand/Wordmark";
 
 // The stage is a pure ARTIFACT surface — it shows the SINGLE most-recent canvas
-// (the streamed HTML page), rendered directly in the app document via morphdom.
+// (the composed HTML page), rendered in a sandboxed iframe (see Canvas.tsx).
 // A new canvas replaces the previous one (like an artifact panel), so the Canvas
-// stays mounted (stable key by canvasId) and morphdom diffs updates in place. It
-// never shows the conversation; prose/reasoning/tools/sources live in the rail.
+// stays mounted (stable key by canvasId). It never shows the conversation;
+// prose/reasoning/tools/sources live in the rail.
 
 export function Stage({
   canvas, chatId, productSlug, constructing, buildStatus, streaming, empty, heading, subheading, starters, onStarter,
@@ -52,7 +52,7 @@ export function Stage({
         <div aria-hidden className="pointer-events-none sticky inset-x-0 top-0 z-30 h-[3px] bg-accent/80 animate-pulse" />
       )}
       {/* The canvas owns the WHOLE stage (full-bleed; .takt-page provides its own
-          padding + layout). It renders OUTSIDE the crossfade so morphdom never
+          padding + layout). It renders OUTSIDE the crossfade so the iframe never
           remounts. */}
       {mode === "canvas" && canvas ? (
         <div className="relative w-full pb-48">
@@ -77,7 +77,7 @@ export function Stage({
 
 // Full-bleed loading skeleton shaped like a poster page (eyebrow, headline, lead,
 // a lead visual, a two-column body) using the same .takt-page grid + shimmer as
-// the real canvas — so when the first canvas_delta paints, it's a seamless
+// the real canvas — so when the finished page lands, it's a seamless
 // continuation, never a jump from a centered spinner.
 function CanvasSkeleton({ status }: { status?: string | null }) {
   return (
@@ -97,10 +97,10 @@ function CanvasSkeleton({ status }: { status?: string | null }) {
   );
 }
 
-// The one non-empty, non-canvas state: a calm status line while a turn streams, or
-// a quiet wordmark when settled. Live mode gets its own animated "listening" view.
-function Placeholder({ streaming, status, live }: { streaming: boolean; status?: string | null; live?: boolean }) {
-  if (live) return <LiveIdle streaming={streaming} />;
+// The one non-empty, non-canvas state: a calm status line while a turn streams,
+// or a quiet wordmark when settled. (Live mode is a fullscreen overlay — see
+// components/live/LiveDock — so the stage has no live state.)
+function Placeholder({ streaming, status }: { streaming: boolean; status?: string | null }) {
   return (
     <div className="flex min-h-[55vh] flex-col items-center justify-center text-center">
       {streaming ? (
@@ -111,27 +111,6 @@ function Placeholder({ streaming, status, live }: { streaming: boolean; status?:
           <div className="max-w-xs text-[12px] text-faint">Your answer renders here as a designed page — steps, cropped figures, 3D parts, charts and diagrams.</div>
         </>
       )}
-    </div>
-  );
-}
-
-// Live-call empty/idle canvas: a breathing "listening" orb.
-function LiveIdle({ streaming }: { streaming: boolean }) {
-  return (
-    <div className="flex min-h-[55vh] flex-col items-center justify-center text-center">
-      <div className="relative mb-7 grid size-24 place-items-center">
-        <span className="absolute inset-0 rounded-full bg-accent/10 motion-safe:animate-ping" />
-        <span className="absolute inset-2 rounded-full bg-accent/10 motion-safe:animate-ping" style={{ animationDelay: "0.7s" }} />
-        <motion.span
-          className="grid size-14 place-items-center rounded-full bg-accent/20 text-accent"
-          animate={{ scale: [1, 1.08, 1] }}
-          transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
-        >
-          <AudioLines className="size-6" />
-        </motion.span>
-      </div>
-      <div className="text-[13px] font-medium text-foreground">{streaming ? "Takt is thinking…" : "Talking with Takt"}</div>
-      <div className="mt-1 max-w-xs text-[12px] text-faint">Diagrams, cropped figures, 3D parts and step-by-step guides appear here as you talk.</div>
     </div>
   );
 }

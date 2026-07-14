@@ -9,7 +9,7 @@ import { CANVAS_CSS } from "./canvas-css";
 //   • the frame owns its whole world — its CSS/JS cannot touch or collide with the app
 //   • the runtime auto-heights the frame, syncs theme, and bridges island clicks
 //     (cite / lightbox / action / select) up to the app via postMessage
-//   • it renders the FINISHED document once — no morphdom, no partial parses
+//   • it renders the FINISHED document once — no partial parses
 //
 // Security: sandbox="allow-scripts allow-modals" gives a NULL/opaque origin. We
 // deliberately DO NOT add allow-same-origin (with allow-scripts that pair lets the

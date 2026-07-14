@@ -157,6 +157,46 @@ async function runStream(chatId: string, productSlug: string | null, attachments
 export const chatStore = {
   getSession, subscribe, activePath,
 
+  // ── live-mode transcript (driven by the /live WebSocket, not HTTP) ──────────
+  // A spoken user turn: push the user node (flagged live) + a fresh streaming
+  // assistant node; returns the assistant id the live events attach to.
+  liveUserTurn(chatId: string, text: string): string {
+    const assistantId = uid();
+    update(chatId, (s) => ({
+      ...s,
+      messages: [...s.messages,
+        { id: uid(), role: "user", text: text.trim(), live: true },
+        { id: assistantId, role: "assistant", parts: [], streaming: true }],
+      streaming: true,
+    }));
+    return assistantId;
+  },
+  // Voice-synced transcript: REPLACE the spoken text so far (the reveal is paced
+  // to the TTS, so the panel never runs ahead of what was actually said).
+  liveText(chatId: string, assistantId: string, fullText: string) {
+    update(chatId, (s) => patchAssistant(s, assistantId, (p) => {
+      const i = p.findIndex((q) => q.kind === "text");
+      if (i >= 0) { p[i] = { ...(p[i] as TextPart), text: fullText }; return p; }
+      p.push({ id: uid(), kind: "text", text: fullText });
+      return p;
+    }));
+  },
+  liveReason(chatId: string, assistantId: string, delta: string) {
+    update(chatId, (s) => patchAssistant(s, assistantId, (p) => appendText(p, "reasoning", delta)));
+  },
+  // Any other live SSE event (tool_start/tool_done/source/usage…) — same reducer
+  // as the HTTP stream so tool chips and sources render identically.
+  liveEvent(chatId: string, assistantId: string, e: SseEvent) {
+    applyStreamEvent(chatId, assistantId, e);
+  },
+  liveFinish(chatId: string, assistantId: string) {
+    update(chatId, (s) => ({
+      ...s,
+      streaming: false,
+      messages: s.messages.map((n) => (n.id === assistantId && n.role === "assistant" ? { ...n, streaming: false, status: null } : n)),
+    }));
+  },
+
   submitAsk(chatId: string, answers: AskAnswer[]) {
     const ask = getSession(chatId).ask; if (!ask) return;
     void api.answerAsk({ askId: ask.askId, answers }).catch(() => {});

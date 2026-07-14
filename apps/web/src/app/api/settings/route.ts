@@ -12,7 +12,7 @@ const DEFAULTS = { effort: DEFAULT_EFFORT };
 // sensitive. API keys (/api/providers) and product ingestion (/api/products)
 // stay admin-gated. captionModel is included so admins can set the vision model,
 // but only the admin console surfaces it.
-const KEYS = ["chatModel", "captionModel", "effort", "chatProviderId", "captionProviderId", "buildModel", "buildProviderId"];
+const KEYS = ["chatModel", "captionModel", "effort", "chatProviderId", "captionProviderId", "buildModel", "buildProviderId", "liveProviderId", "liveModel", "liveEffort"];
 
 export function GET() {
   return NextResponse.json({ ...DEFAULTS, ...getAllSettings() });

@@ -39,8 +39,8 @@ export interface IngestInput {
   // Audio (voice notes / recordings) → transcribed to text and folded in as
   // retrievable, linkable chunks. Best-effort: needs TAKT_WHISPER_CMD, else skipped.
   audios?: { filename: string; data: Uint8Array }[];
-  // Catalogued misc files (STP/STEP, gcode, other) — recorded in resources.json,
-  // NOT otherwise ingested (no dependency-free tessellator for STEP).
+  // Catalogued misc files (gcode, other) — recorded in resources.json, NOT
+  // otherwise ingested. (STL/STEP/3MF go through the mesh path → GLB.)
   resources?: { filename: string; kind: string }[];
   hero?: { ext: string; data: Uint8Array };
   // Which provider + model does vision (caption + product detect + video
@@ -300,17 +300,12 @@ export async function ingestProduct(input: IngestInput): Promise<IngestResult> {
     await report(`Media step skipped: ${String(e?.message ?? e)}`);
   }
 
-  // Record catalogued-but-not-ingested files (STP/STEP source, gcode, other) so
-  // the bundle is a complete manifest of the dropped folder.
+  // Record catalogued-but-not-ingested files (gcode, other) so the bundle is a
+  // complete manifest of the dropped folder.
   if (input.resources?.length) {
     mkdirSync(join(PRODUCTS_DIR, slug), { recursive: true });
     writeFileSync(join(PRODUCTS_DIR, slug, "resources.json"), JSON.stringify(input.resources, null, 2));
   }
-
-  // NOTE: the old flat markdown-chunk index (buildIndex → chunks.json + vectors.bin)
-  // is retired — semantic search now lives in the KG (embedGraph writes vectors onto
-  // the entity/chunk/media rows; retrieval fuses FTS + those vectors). The markdown
-  // Profile remains as the human-editable export + read_profile source only.
 
   // Build the KNOWLEDGE GRAPH from the structured page parses + the media the
   // steps above wrote (3D parts, video clips, images). Deterministic + additive:

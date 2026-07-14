@@ -27,19 +27,9 @@ export interface Concept {
 
 export const RESERVED = new Set(["index.md", "log.md"]);
 
-// ── compiled index (regenerable, under <slug>/.index/) ───────────────────────
-// The markdown Profile is canonical; the index is a fast lookup built once at
-// ingest so runtime needs zero processing. Retrieval = grep + cached semantic
-// search over chunks, plus a flat media index so the canvas always has visuals.
-
-/** A retrievable text unit (a manual page or a section of a concept). */
-export interface Chunk {
-  id: string;          // e.g. "owner-manual#p12"
-  conceptId: string;   // the .md concept it came from
-  title: string;       // concept title (for display / citation)
-  page?: number;       // manual page number, when applicable
-  text: string;        // the chunk body (~500 tokens)
-}
+// ── media registry (regenerable, under <slug>/.index/media.json) ─────────────
+// The markdown Profile is canonical; the media registry is written at ingest so
+// the graph build and the canvas know every render-ready asset.
 
 export type MediaKind = "figure" | "page" | "mesh" | "video_clip" | "image";
 

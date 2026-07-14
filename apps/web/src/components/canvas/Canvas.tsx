@@ -12,7 +12,7 @@ import { buildFrameSrcdoc, prepareCanvasHtml, FRAME_MSG } from "@/lib/canvas/fra
 // no allow-same-origin → opaque origin, no cookies/storage/parent access). The frame
 // owns its whole document, so the model's CSS/JS can never collide with the app, the
 // container-query grid can't collapse, and islands can't be wiped — the failures of
-// the old direct-DOM/morphdom renderer. We set srcdoc ONCE, when the turn's stream
+// the old direct-DOM renderer. We set srcdoc ONCE, when the turn's stream
 // has stopped (the finished page), and never paint the partial stream. The in-frame
 // runtime posts island clicks (cite/lightbox/action/select) + its content height back
 // up here; we bridge them into the app and push theme down.

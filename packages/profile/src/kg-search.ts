@@ -23,14 +23,36 @@ async function embedQuery(q: string): Promise<Float32Array | null> {
   return e ? await e(q.slice(0, 2000)) : null;
 }
 
+// Query-term coverage: how many of the question's MEANINGFUL words a chunk
+// contains. On natural questions ("what temperature does PLA print at?") the
+// OR-ed FTS + cosine blend lets a chunk rich in one common word ("print",
+// "temperature") outrank the one section that has ALL the terms — coverage
+// dominating is what makes the PLA guide beat the first-print page. Same fix
+// the retired flat index carried; re-applied to the KG path.
+const STOP = new Set(["the", "and", "for", "with", "you", "your", "what", "how", "should", "use", "this", "that", "from", "are", "can", "does", "when", "which", "where", "why", "into", "out", "get", "got", "need", "print", "prints"]);
+function queryTerms(q: string): string[] {
+  return [...new Set((q.toLowerCase().match(/[a-z0-9°.#/-]+/g) ?? []).filter((t) => t.length >= 3 && !STOP.has(t)))];
+}
+
 /** Hybrid chunk search — passages for a symptom/spec/free-text query. */
 export async function searchChunks(productId: string, query: string, k = 8): Promise<KgChunk[]> {
-  const lex = ftsChunks(productId, query, k * 2).map((h) => h.id);
+  const lex = ftsChunks(productId, query, k * 3).map((h) => h.id);
   const qv = await embedQuery(query);
-  const sem = qv ? semanticSearchKg(productId, qv, "chunk", k * 2).map((h) => h.id) : [];
-  const ids = rrf([lex, sem], k);
+  const sem = qv ? semanticSearchKg(productId, qv, "chunk", k * 3).map((h) => h.id) : [];
+  const ids = rrf([lex, sem], k * 3);
   const byId = new Map(getChunks(ids).map((c) => [c.id, c]));
-  return ids.map((id) => byId.get(id)).filter((c): c is KgChunk => !!c);
+  const terms = queryTerms(query);
+  // Coverage DOMINATES; the fused rank only breaks ties among equal coverage.
+  const ranked = ids
+    .map((id, i) => ({ c: byId.get(id), i }))
+    .filter((x): x is { c: KgChunk; i: number } => !!x.c)
+    .map(({ c, i }) => {
+      const hay = c.text.toLowerCase();
+      const cover = terms.length ? terms.filter((t) => hay.includes(t)).length / terms.length : 0;
+      return { c, s: cover + (1 - i / (ids.length || 1)) * 0.45 };
+    })
+    .sort((a, b) => b.s - a.s);
+  return ranked.slice(0, k).map((x) => x.c);
 }
 
 /** Hybrid media search — the figure/3D/video/image to SHOW. Surfaces cross-modal

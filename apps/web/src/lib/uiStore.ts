@@ -21,6 +21,12 @@ interface UiState {
   settingsOpen: boolean;
   openSettings: () => void;
   closeSettings: () => void;
+  // Live call overlay: whether the live dock is open, and whether an active call
+  // is minimized to the floating pill. Transient — not persisted.
+  liveOpen: boolean;
+  minimized: boolean;
+  setLiveOpen: (v: boolean) => void;
+  setMinimized: (v: boolean) => void;
 }
 
 export const useUi = create<UiState>()(
@@ -39,6 +45,10 @@ export const useUi = create<UiState>()(
       settingsOpen: false,
       openSettings: () => set({ settingsOpen: true }),
       closeSettings: () => set({ settingsOpen: false }),
+      liveOpen: false,
+      minimized: false,
+      setLiveOpen: (v) => set({ liveOpen: v }),
+      setMinimized: (v) => set({ minimized: v }),
     }),
     { name: "takt-ui", partialize: (s) => ({ sidebarWidth: s.sidebarWidth, railWidth: s.railWidth, sidebarCollapsed: s.sidebarCollapsed, railOpen: s.railOpen }) },
   ),

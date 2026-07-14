@@ -32,7 +32,7 @@ export function Model3D({ props }: { props: { src: string; alt?: string; caption
           <div className="grid h-[300px] place-items-center bg-surface text-[12px] text-muted-foreground">Couldn’t load the 3D viewer.</div>
         ) : ready ? (
           <>
-            {/* @ts-expect-error — model-viewer is a custom element registered at runtime */}
+            {/* model-viewer is a custom element registered at runtime; typed in OverlayLayer.tsx */}
             <model-viewer
               src={src}
               alt={alt || "3D model"}

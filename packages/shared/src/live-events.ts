@@ -6,14 +6,13 @@ import { sseEventSchema } from "./sse-events";
 // turn detection, TTS) on-device, so the socket only carries TEXT + camera
 // frames + a cancel signal — no audio. The server is a thin LLM proxy that
 // streams reply text back (reusing the chat SSE union verbatim so the browser
-// feeds it into the same chatStore reducer: artifacts, page images, usage all
-// render unchanged) and persists the conversation.
-//   • BINARY frames — a 1-byte tag. Only camera JPEGs travel this way now.
+// feeds it into the same chatStore reducer) and persists the conversation.
+//   • BINARY frames — a 1-byte tag. Only the `look` hi-res JPEG travels this way.
 //   • TEXT frames — the JSON discriminated unions below.
 
 /** First byte of a binary WS message. */
 export const LIVE_TAG = {
-  FRAME_IN: 0x02, // client→server: JPEG camera frame (freshest-per-turn or `look`)
+  FRAME_IN: 0x02, // client→server: JPEG camera frame (the `look` handshake)
 } as const;
 
 // ── server → client (JSON) ────────────────────────────────────────────────
@@ -29,9 +28,14 @@ export type LiveServerMsg = z.infer<typeof liveServerMsgSchema>;
 
 // ── client → server (JSON) ────────────────────────────────────────────────
 export const liveClientMsgSchema = z.discriminatedUnion("t", [
-  // A completed user turn: the on-device STT's final transcript. The freshest
-  // camera frame (if the camera is on) is sent as a FRAME_IN binary just before.
-  z.object({ t: z.literal("user_text"), text: z.string() }),
+  // A completed user turn: the on-device STT's final transcript, plus the
+  // freshest camera frame(s) base64 inline. Inline (not binary) so the frame
+  // arrives atomically with the turn — no accumulation/timing races.
+  z.object({
+    t: z.literal("user_text"),
+    text: z.string(),
+    frames: z.array(z.object({ data: z.string(), mime: z.string() })).optional(),
+  }),
   // Barge-in: the user started talking over the agent — abort the in-flight LLM
   // stream. Audio is stopped locally; this only stops the server generating.
   // `spoken` is what the on-device TTS actually voiced before the cut, so the
@@ -42,7 +46,3 @@ export const liveClientMsgSchema = z.discriminatedUnion("t", [
   z.object({ t: z.literal("frame_response"), reqId: z.string() }),
 ]);
 export type LiveClientMsg = z.infer<typeof liveClientMsgSchema>;
-
-export function encodeLiveMsg(m: LiveServerMsg | LiveClientMsg): string {
-  return JSON.stringify(m);
-}

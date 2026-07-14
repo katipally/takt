@@ -3,7 +3,7 @@ import {
   getProviderApiKey, getSetting, setSetting,
 } from "@takt/db";
 import { BUILTIN_PROVIDERS, defaultModel, type ProviderInfo, type Effort } from "@takt/harness";
-import { DEFAULT_EFFORT } from "@takt/shared";
+import { DEFAULT_EFFORT, liveRecsFor } from "@takt/shared";
 
 // Provider-neutral resolution. Keys live in the DB `providers` table (kind =
 // harness provider id) or fall back to the provider's declared env vars. Which
@@ -79,7 +79,35 @@ export function resolveChat(): ResolvedChat {
 }
 
 // Which provider + model powers LIVE voice. Its own settings so live can run a
-// fast, low-latency model independent of the heavier chat model. When unset, we
+// fast, low-latency model independent of the heavier chat model. When unset,
+// prefer a keyed provider whose curated live model can SEE (camera-first) —
+// MiniMax's Anthropic-compat endpoint takes no images, so it only wins when
+// nothing vision-capable is keyed.
+function resolveLiveProviderId(): string {
+  const explicit = getSetting("liveProviderId");
+  if (explicit && providerInfo(explicit) && getProviderKey(explicit)) return explicit;
+  for (const id of ["anthropic", "openai", "minimax"]) {
+    if (!getProviderKey(id)) continue;
+    const rec = liveRecsFor(id).find((r) => r.default) ?? liveRecsFor(id)[0];
+    if (rec?.vision) return id;
+  }
+  return resolveChatProviderId(); // no vision provider keyed → same as chat
+}
+
+export function resolveLive(): ResolvedChat {
+  const providerId = resolveLiveProviderId();
+  const provider = providerInfo(providerId) ?? BUILTIN_PROVIDERS[0]!;
+  const rec = liveRecsFor(provider.id).find((r) => r.default) ?? liveRecsFor(provider.id)[0];
+  // The explicit liveModel only applies to the explicitly-picked provider — a
+  // stale model id from a previous provider would 400 on this one.
+  const explicitProvider = getSetting("liveProviderId");
+  const liveModel = getSetting("liveModel");
+  const model = (explicitProvider === providerId && liveModel) ? liveModel : (rec?.model || defaultModel(provider.id));
+  // Live defaults to the LOWEST reasoning for latency; a Settings override raises it.
+  const eff = getSetting("liveEffort");
+  const effort = eff && eff !== "none" && eff !== "auto" ? (eff as Effort) : undefined;
+  return { provider, model, apiKey: getProviderKey(provider.id), effort };
+}
 
 // Which provider + model powers the canvas worker (build_canvas). Its own
 // settings so builds can run a STRONGER model than the fast talker. Falls back to

@@ -14,11 +14,13 @@ import { StatusBar } from "@/components/stage/StatusBar";
 import { ProcessRail } from "@/components/rail/ProcessRail";
 import { SourceModal } from "@/components/canvas/SourceModal";
 import { AskModal } from "@/components/chat/AskModal";
+import { LiveDock } from "@/components/live/LiveDock";
 import { Wordmark } from "@/components/brand/Wordmark";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import type { CanvasPart } from "@/lib/chatStore";
 import { useWorkbench } from "@/hooks/useWorkbench";
 import { useUi } from "@/lib/uiStore";
+import { useLiveStore } from "@/lib/live/liveStore";
 import { STARTERS } from "@/lib/starters";
 import { quick } from "@/lib/motion";
 import { cn } from "@/lib/cn";
@@ -30,7 +32,8 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
   const heading = productName ?? (isMaster ? "Takt" : "");
   const empty = wb.messages.length === 0;
   const prompts = starters?.length ? starters : STARTERS;
-  const { sidebarCollapsed, toggleSidebar, railOpen, toggleRail, railWidth, setRailWidth, sidebarWidth, setSidebarWidth } = useUi();
+  const { sidebarCollapsed, toggleSidebar, railOpen, toggleRail, railWidth, setRailWidth, sidebarWidth, setSidebarWidth, liveOpen, setLiveOpen } = useUi();
+  const liveActive = useLiveStore((s) => s.active); // composer ⇄ voice-bar swap
   const reduce = useReducedMotion();
   const [drawerOpen, setDrawerOpen] = useState(false); // mobile sidebar
   const [sheetOpen, setSheetOpen] = useState(false);    // mobile activity sheet
@@ -94,7 +97,7 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
   // Is this turn building a NEW canvas that hasn't landed yet? True while streaming,
   // no canvas for THIS turn, and a build signal is present — a canvas tool is pending
   // or a source crop has arrived. Drives the loading skeleton (vs. showing the
-  // previous, stale canvas) until the first canvas_delta paints in.
+  // previous, stale canvas) until the finished page lands.
   const buildPending = (view?.assistant?.parts ?? []).some((p) => p.kind === "tool" && (p.tool === "build_canvas" || p.tool === "edit_canvas" || p.lane === "build"));
   const hasBuildCrops = (view?.assistant?.parts ?? []).some((p) => p.kind === "source");
   const constructing = !!view?.assistant?.streaming && !viewCanvas && (buildPending || hasBuildCrops);
@@ -209,8 +212,10 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
           starters={prompts}
           onStarter={send}
         />
-        {
-          <FloatingComposer onSend={sendFromComposer} onStop={wb.stop} isStreaming={wb.isStreaming}
+        {/* The composer hides while a live call is active — the VoiceBar takes its
+            place (same layoutId, so the pill morphs between the two shapes). */}
+        {!liveActive &&
+          <FloatingComposer onSend={sendFromComposer} onStop={wb.stop} isStreaming={wb.isStreaming} onLive={() => setLiveOpen(true)}
             above={!wb.ask ? (
               <div className="flex flex-col gap-1.5">
                 {selection && (
@@ -230,6 +235,10 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
         <AnimatePresence>
           {wb.ask && <AskModal key="ask" ask={wb.ask} onSubmit={wb.submitAsk} onCancel={wb.cancelAsk} />}
         </AnimatePresence>
+
+        {/* Live voice mode — fullscreen overlay over the workbench, sharing this
+            chat (spoken turns persist and render in the same conversation). */}
+        {liveOpen && <LiveDock key={wb.chatId} chatId={wb.chatId} productSlug={slug} onExit={() => setLiveOpen(false)} />}
       </section>
 
       {/* PROCESS RAIL — collapsed strip by default; hidden under md (sheet there).

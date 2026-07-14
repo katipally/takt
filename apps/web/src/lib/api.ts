@@ -9,6 +9,7 @@ export interface AppSettings {
   chatModel: string; captionModel: string; effort: string;
   chatProviderId?: string; captionProviderId?: string;
   buildModel?: string; buildProviderId?: string;
+  liveProviderId?: string; liveModel?: string; liveEffort?: string;
 }
 
 async function j<T>(res: Response): Promise<T> {

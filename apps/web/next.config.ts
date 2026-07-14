@@ -9,18 +9,36 @@ import { join } from "node:path";
 // 'self' permits the srcdoc canvas frame itself; object-src none still blocks
 // plugins. Mermaid is pre-rendered in the parent, so no CDN is needed.
 const DEV = process.env.NODE_ENV !== "production";
+// Live voice runs on-device AI models (Whisper / Kokoro / smart-turn) via
+// transformers.js + onnxruntime-web: the weights download from the Hugging Face
+// hub, the ort runtime instantiates WebAssembly (already allowed via
+// 'wasm-unsafe-eval') and spins up blob: workers. The VAD's worklet/onnx/wasm
+// are vendored same-origin under /public/live. jsDelivr stays allowed as the
+// fallback host transformers/ort resolve to when a bundled asset path misses.
+// connect-src must also allow the live WebSocket's origin (dev connects the
+// browser straight to the agent; prod goes through /live on this same origin,
+// which 'self' already covers).
+// ponytail: widens connect-src to the HF/jsdelivr hosts (not arbitrary). To
+// re-fence fully, proxy model downloads through a same-origin /api route.
+const MODEL_HOSTS = "https://huggingface.co https://*.huggingface.co https://*.hf.co https://cdn.jsdelivr.net";
+const LIVE_WS = (() => {
+  const raw = process.env.NEXT_PUBLIC_LIVE_WS_URL || `ws://localhost:${process.env.AGENT_PORT || 8787}`;
+  try { return new URL(raw).origin; } catch { return "ws://localhost:8787"; }
+})();
 const CSP = [
   "default-src 'self'",
   "img-src 'self' data: blob:",
   "media-src 'self' blob:",
-  "connect-src 'self' blob: data:",
+  `connect-src 'self' blob: data: ${LIVE_WS} ${MODEL_HOSTS}`,
   "worker-src 'self' blob:",
   "object-src 'none'",
   "frame-src 'self'",
   "style-src 'self' 'unsafe-inline'",
   // 'unsafe-eval' is DEV-ONLY: React's dev build uses eval() for debugging
   // (callstack reconstruction). Never emitted in production.
-  `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob:${DEV ? " 'unsafe-eval'" : ""}`,
+  // onnxruntime-web + vad-web load their wasm-loader SCRIPTS from jsdelivr, so
+  // it must be in script-src too (connect-src alone only covers the fetches).
+  `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net${DEV ? " 'unsafe-eval'" : ""}`,
 ].join("; ");
 
 const config: NextConfig = {

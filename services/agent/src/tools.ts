@@ -15,8 +15,7 @@ import {
   type Entity, type KgMedia,
 } from "@takt/db";
 import {
-  profileExists, listConcepts, readConcept, indexExists,
-  searchProduct, findMedia, type MediaItem,
+  profileExists, listConcepts, readConcept,
   searchChunks, searchKgMedia, searchEntities,
 } from "@takt/profile";
 import { awaitAnswers } from "./pending.js";
@@ -88,25 +87,6 @@ export async function withCoordGrid(buf: Buffer): Promise<Buffer> {
   return sharp(buf).composite([{ input: svg, top: 0, left: 0 }]).png().toBuffer();
 }
 
-// Format one media-index item as an actionable instruction telling the model how
-// to SHOW it (which URL to embed, or to crop a page). Absolute-izes /assets URLs.
-function mediaHint(m: MediaItem): string {
-  const abs = (u: string) => (u.startsWith("/") ? `${WEB_URL()}${u}` : u);
-  const cap = m.caption ? ` — ${m.caption.replace(/\s+/g, " ").slice(0, 90)}` : "";
-  switch (m.kind) {
-    case "mesh": return `- 3D part "${m.nodeName ?? ""}"${m.subsystem ? ` [${m.subsystem}]` : ""}${cap}: embed <takt-model src="${abs(m.url)}" caption="…"> — a rotatable part beats a photo`;
-    case "video_clip": {
-      const frag = (m.tStart != null || m.tEnd != null) ? `#t=${Math.floor(m.tStart ?? 0)}${m.tEnd != null ? "," + Math.floor(m.tEnd) : ""}` : "";
-      return `- video${cap}: embed <takt-video src="${abs(m.url)}${frag}" caption="…">${frag ? " (plays just that clip)" : ""}`;
-    }
-    case "image": return `- image${cap}: embed <takt-figure src="${abs(m.url)}" caption="…">`;
-    case "page":
-    case "figure":
-    default:
-      return `- manual page ${m.page ?? "?"}${cap}: call crop_page_image(page:${m.page ?? 1}) to embed just the relevant figure — do NOT embed the whole page`;
-  }
-}
-
 // fetch_url SSRF guard: block loopback / private / link-local / metadata hosts.
 function isPrivateIp(ip: string): boolean {
   if (ip === "::1" || ip.startsWith("fe80:") || ip.startsWith("fc") || ip.startsWith("fd")) return true;
@@ -152,7 +132,7 @@ export function buildTaktTools(ctx: {
   const searchGuard = (args: any): { slug: string; name: string } | ToolResult => {
     const prod = pageProduct(args);
     if (!prod) return text("Pass a `product` slug (see list_products).");
-    if (!indexExists(prod.slug) && !profileExists(prod.slug)) return text(`No knowledge indexed for ${prod.name} yet.`);
+    if (!graphExists(prod.id) && !profileExists(prod.slug)) return text(`No knowledge indexed for ${prod.name} yet.`);
     return { slug: prod.slug, name: prod.name };
   };
 
@@ -166,20 +146,14 @@ export function buildTaktTools(ctx: {
       const prod = pageProduct(args)!;
       const id = randomUUID();
       await emit({ type: "tool_start", id, tool: "search_product", summary: String(args.query) });
-      // KG-first (hybrid FTS + semantic over the unified store); fall back to the
-      // legacy flat markdown index only for products with no graph yet.
-      let body: string;
-      let n: number;
-      if (graphExists(prod.id)) {
-        const titles = new Map(getManualsByProduct(prod.id).map((m) => [m.id, m.title]));
-        const chunks = await searchChunks(prod.id, String(args.query), 8);
-        n = chunks.length;
-        body = chunks.map((c) => `[${titles.get(c.manualId ?? "") ?? "manual"}${c.page ? ` p.${c.page}` : ""}] ${c.text.replace(/\s+/g, " ").slice(0, 280)}`).join("\n\n");
-      } else {
-        const hits = await searchProduct(g.slug, String(args.query), 8);
-        n = hits.length;
-        body = hits.map((h) => `[${h.title}${h.page ? ` p.${h.page}` : ""}] ${h.text.replace(/\s+/g, " ").slice(0, 280)}`).join("\n\n");
-      }
+      // Hybrid FTS + semantic over the unified KG store.
+      const titles = new Map(getManualsByProduct(prod.id).map((m) => [m.id, m.title]));
+      const chunks = await searchChunks(prod.id, String(args.query), 8);
+      const n = chunks.length;
+      // 700 chars per chunk, not less — a material section names its temperature
+      // mid-passage; harder truncation cuts the actual value out of the snippet
+      // (the old flat index served 700 for exactly this reason).
+      const body = chunks.map((c) => `[${titles.get(c.manualId ?? "") ?? "manual"}${c.page ? ` p.${c.page}` : ""}] ${c.text.replace(/\s+/g, " ").slice(0, 700)}`).join("\n\n");
       await emit({ type: "tool_done", id, detail: `${n} hits` });
       if (!n) return text(`No matches for "${args.query}". Try a synonym, or read_profile a concept.`);
       return text(`${body}\n\nTo SHOW a figure/3D part/video for this, call get_media. To read a concept in full, call read_profile.`);
@@ -198,16 +172,10 @@ export function buildTaktTools(ctx: {
       await emit({ type: "tool_start", id, tool: "get_media", summary: String(args.query) });
       // KG media (hybrid) so the ingest cascade's cross-modal links surface — a 3D
       // part or figure connected by embedding, not just an exact caption match.
-      if (graphExists(prod.id)) {
-        const media = await searchKgMedia(prod.id, String(args.query), 6, args.kind);
-        await emit({ type: "tool_done", id, detail: `${media.length} media` });
-        if (!media.length) return text(`No media for "${args.query}". Use crop_page_image on a manual page instead.`);
-        return text(`${media.map(graphMediaHint).join("\n")}\n\nEmbed only these exact URLs — never invent one. For a manual page, crop_page_image tight to the one figure.`);
-      }
-      const media = await findMedia(g.slug, String(args.query), 6, args.kind);
+      const media = await searchKgMedia(prod.id, String(args.query), 6, args.kind);
       await emit({ type: "tool_done", id, detail: `${media.length} media` });
       if (!media.length) return text(`No media for "${args.query}". Use crop_page_image on a manual page instead.`);
-      return text(`${media.map(mediaHint).join("\n")}\n\nEmbed only these exact URLs — never invent one. For a manual page, crop_page_image tight to the one figure.`);
+      return text(`${media.map(graphMediaHint).join("\n")}\n\nEmbed only these exact URLs — never invent one. For a manual page, crop_page_image tight to the one figure.`);
     },
   };
 
@@ -318,7 +286,13 @@ export function buildTaktTools(ctx: {
     if (r.includes(":")) { const e = getEntity(r); if (e && e.productId === pid) return e; }
     return findEntity(pid, r, 1)[0];
   };
-  const entLine = (e: Entity) => `[${e.type}] ${e.name}${e.page ? ` (p.${e.page})` : ""}${e.summary ? ` — ${e.summary.slice(0, 100)}` : ""}  {${e.id}}`;
+  // A spec's measured value lives in attrs (value/unit), not summary — surface
+  // it inline so "PLA nozzle temperature = 215 °C" answers without another hop.
+  const entVal = (e: Entity) => {
+    const a = e.attrs as Record<string, unknown> | null;
+    return a && a.value != null ? ` = ${a.value}${a.unit ? ` ${a.unit}` : ""}` : "";
+  };
+  const entLine = (e: Entity) => `[${e.type}] ${e.name}${entVal(e)}${e.page ? ` (p.${e.page})` : ""}${e.summary ? ` — ${e.summary.slice(0, 100)}` : ""}  {${e.id}}`;
   const graphMediaHint = (m: KgMedia): string => {
     const abs = (u: string) => (u.startsWith("/") ? `${WEB_URL()}${u}` : u);
     const cap = m.caption ? ` — ${m.caption.replace(/\s+/g, " ").slice(0, 90)}` : "";

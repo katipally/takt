@@ -3,12 +3,13 @@
 **An AI that actually understands your product — and answers, shows, and talks like it.**
 
 Takt turns a product's scattered documentation — manuals, spec sheets, diagrams,
-photos, video, and 3D models — into **captioned markdown an AI can search, cite, and
-reason over**, plus a flat index of every figure, 3D part, and video clip. Ask it
-anything in chat or by voice; it answers grounded in the real docs, cites the exact
-page, and composes a **designed, full-page answer** — cropped and annotated figures,
-the interactive 3D part, specs, and step-by-step guides — when a picture beats a
-paragraph.
+photos, video, and 3D models — into a **typed knowledge graph** (parts, specs with
+their exact values, symptoms, procedures, warnings — cross-linked to the figures,
+3D parts, and video clips that show them) plus human-readable markdown Profiles.
+Ask it anything in chat or by voice; it answers grounded in the real docs, cites
+the exact page, and composes a **designed, full-page answer** — cropped and
+annotated figures, the interactive 3D part, specs, and step-by-step guides — when
+a picture beats a paragraph.
 
 ![Takt answering a grounded, cited question — 25% duty cycle at 200A / 240V, cited to p.7 and p.19](docs/media/hero.png)
 
@@ -19,11 +20,10 @@ yourself:
 ![Clicking a citation opens the exact manual page it came from](docs/media/source-page.png)
 
 > Built around one idea most assistants get wrong: product knowledge should stay
-> **human- and AI-readable** — plain markdown you can open and edit is the source of
-> truth. From it Takt compiles a transparent, regenerable **search index + media
-> index** (vision captions inlined next to their page images, every figure/part/clip
-> catalogued), so answers are grounded in the product's real docs, not a black-box
-> embedding blob.
+> **inspectable and regenerable**. A vision pass reads every page into structured
+> entities and captions; a **deterministic build** (no LLM) compiles them into the
+> knowledge graph, so the same input always produces the same graph — and the
+> markdown Profiles remain plain files you can open, edit, and re-ingest.
 
 ---
 
@@ -38,11 +38,15 @@ yourself:
   content becomes fully searchable.
 - **Designs the answer, full-page.** The canvas isn't a wall of text — Takt writes a
   raw HTML page (headline, cropped and *annotated* figures, the interactive 3D part, spec
-  tables, step-by-step guides, live calculators), streamed token-by-token and rendered
-  directly in the app (no iframe), held to a consistent design system by a built-in
-  anti-slop check.
-- **Talks.** On-device voice mode: speak to it, it speaks back, and with the camera on it
-  can look at what you're looking at.
+  tables, step-by-step guides, live calculators), rendered as a finished page in a
+  sandboxed iframe and held to a consistent design system.
+- **Talks — fully on-device.** Live voice mode runs the whole voice stack in your browser
+  (Silero VAD, Whisper, Kokoro TTS — no audio ever leaves your machine). The composer
+  morphs into a voice bar, you talk, it talks back; interrupt it mid-sentence and it stops.
+  With the camera on it watches what you're showing it, live.
+- **Shows things while it talks.** In a live call the agent can pin visuals over your
+  view — the rotatable 3D part (with AR placement on phones), the exact manual figure, a
+  repair clip, or a pointer note anchored on your camera view ("that lever, right here").
 - **Asks before guessing.** When a choice would change the answer, it asks a short
   multiple-choice question first — sometimes with its own little diagram.
 - **Multi-product.** Point it at one product or let it answer and compare across your whole
@@ -55,30 +59,29 @@ yourself:
 
 ---
 
-## The idea: markdown you own + an index compiled from it
+## The idea: a knowledge graph compiled deterministically, markdown you can read
 
-Each product's knowledge lives in a **Profile** — a folder of
-[OKF](https://okf.md/)-style markdown (`data/products/<slug>/`), one concept per source,
-with the vision captions inlined next to their page images. It's **canonical and
-human-editable**: open a `.md`, fix a fact, re-ingest, and it's live.
+Each product's knowledge is built twice from the same ingest:
 
-From that markdown Takt compiles an index under `.index/` — a regenerable artifact, never
-the source of truth:
+- **The knowledge graph** (in SQLite) — typed entities (part / spec / symptom /
+  procedure / warning / figure / 3D part / video clip) with their measured values,
+  typed edges (`fixes`, `references`, `shown_in`, `depicts`, …), page-text chunks, and
+  media — every row carrying its own local embedding
+  (`Xenova/bge-small-en-v1.5`, 384-dim, no API key) plus FTS5. The build is
+  **deterministic** — no LLM in the compile, so the same part on five pages collapses
+  to one node and re-ingest is stable. A linking cascade then connects media across
+  modalities (the 3D mesh `depicts` the part; the video `references` the procedure).
+- **The Profile** — a folder of [OKF](https://okf.md/)-style markdown
+  (`data/products/<slug>/`), one concept per source, vision captions inlined next to
+  their page images. Human-readable and editable; the agent's `read_profile` serves it
+  verbatim.
 
-```
-chunks.json        → text units for lexical + semantic search
-vectors.bin        → local embeddings (Xenova MiniLM, 384-dim, no API key), a flat
-                     Float32 array loaded into memory once
-vectors.meta.json  → the sidecar for vectors.bin (model, dim, ids, kinds)
-media.json         → a flat media index: every page, 3D mesh, video clip, and image
-                     with its /assets URL + caption
-```
-
-Retrieval is **hybrid**: semantic search over the chunks blended with a lexical grep for
-exact codes and part numbers (`search_product`), plus a cosine scan of the media index for
-the right figure/part/clip (`get_media`). It stays **transparent and regenerable** — delete
-the `.index/` and re-ingest any time; a markdown-only product still answers via grep. See
-[docs/architecture.md](docs/architecture.md).
+Retrieval is **hybrid**: FTS5 (exact codes, part numbers) fused with embedding cosine
+(fuzzy symptoms in the user's words), re-ranked so query-term coverage dominates. The
+agent doesn't just search — it **walks the graph**: resolve "clicking noise" to the
+symptom, hop `fixes` to the procedure, `shown_in` to the figure, `depicts` to the 3D
+part. Everything is regenerable: re-ingest rebuilds the whole graph transactionally.
+See [docs/architecture.md](docs/architecture.md).
 
 ---
 
@@ -147,6 +150,18 @@ The product shows up in the picker immediately — no redeploy. Full details in
 
 ---
 
+## Talk to it
+
+Hit the waveform button in the composer. The first call downloads the voice models
+(one-time, cached; a progress bar shows exactly what and how much), then the composer
+morphs into a voice bar and you just talk — it listens, answers out loud, and stops the
+moment you interrupt. Everything speech runs **in your browser** (WebGPU when available);
+the server only ever sees text. Turn the camera on and it watches live — ask "what's this
+part?" while holding it up, and it can pin the 3D model or the manual's figure over your
+view while it explains.
+
+---
+
 ## Under the hood
 
 A pnpm monorepo:
@@ -155,16 +170,17 @@ A pnpm monorepo:
 |---|---|
 | `apps/web` | Next.js UI + API routes |
 | `services/agent` | the agent loop, tools, and live-voice WebSocket (Hono) |
-| `pipeline/ingest` | offline loader: one folder → Profile + index (render → vision-caption → markdown → chunks + embeddings + media index; fold in 3D/video) |
-| `packages/db` | SQLite metadata + connection |
+| `pipeline/ingest` | offline loader: one folder → Profile + knowledge graph (render → vision-parse every page → deterministic graph build → embed → cross-modal link; STL/STEP/3MF → GLB, video → chaptered clips) |
+| `packages/db` | SQLite: the knowledge graph (entities/edges/chunks/media + FTS5), catalog, chats, encrypted provider keys |
 | `packages/harness` | LLM provider adapters (Anthropic / OpenAI / MiniMax) |
-| `packages/profile` | the OKF Profile store + the compiled index (chunks, embeddings, media) + hybrid retrieval |
-| `packages/shared` | shared types + the SSE protocol |
+| `packages/profile` | the OKF Profile store + local embeddings + hybrid graph retrieval |
+| `packages/shared` | shared types + the SSE and live-voice wire protocols |
 
-The SQLite database holds only metadata + app state (catalog, chats); the product
-knowledge is the markdown + compiled `.index/` in `data/products/`. Full architecture and
-the SSE protocol are in [docs/architecture.md](docs/architecture.md); hosting on a free
-Hugging Face Space is in [docs/hosting.md](docs/hosting.md).
+The web app also runs the on-device voice stack (`apps/web/src/lib/live/` — VAD, Whisper,
+Kokoro in a Web Worker) and the live UI (`apps/web/src/components/live/`). Full
+architecture, the live protocol, and the SSE protocol are in
+[docs/architecture.md](docs/architecture.md); hosting on a free Hugging Face Space is in
+[docs/hosting.md](docs/hosting.md).
 
 ---
 

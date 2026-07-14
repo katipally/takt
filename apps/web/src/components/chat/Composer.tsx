@@ -2,22 +2,22 @@
 
 import { useEffect, useRef, useState } from "react";
 import { motion, useReducedMotion } from "motion/react";
-import { ArrowUp, Square, Plus, X } from "lucide-react";
+import { ArrowUp, Square, Plus, X, AudioLines } from "lucide-react";
 import type { Attachment } from "@/lib/chatStore";
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random() + Date.now()));
 
 export function Composer({
-  onSend, onStop, isStreaming,
+  onSend, onStop, onLive, isStreaming,
 }: {
   onSend: (text: string, attachments?: Attachment[]) => void;
   onStop: () => void;
+  onLive?: () => void; // opens live voice mode (button hidden when absent)
   isStreaming: boolean;
 }) {
   const reduce = useReducedMotion();
-  // Shared morph spring for the composer ⇄ voice-bar transition (layoutId
-  // "takt-dock"). MUST match VoiceBar's so the shape animates identically both
-  // ways — normal → live and back.
+  // Morph spring for the composer dock (layoutId "takt-dock") — any surface
+  // that morphs from/into the dock must use the same spring.
   const morph = reduce ? { duration: 0 } : { type: "spring" as const, stiffness: 400, damping: 34, mass: 0.9 };
   const [value, setValue] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -82,6 +82,12 @@ export function Composer({
           <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
 
           <div className="flex items-center gap-1.5">
+            {onLive && !isStreaming && (
+              <button onClick={onLive} title="Talk live" aria-label="Start live voice mode"
+                className="grid size-8 place-items-center rounded-full text-muted-foreground transition hover:bg-foreground/10 hover:text-foreground">
+                <AudioLines className="size-4" />
+              </button>
+            )}
             {isStreaming ? (
               <button onClick={onStop} title="Stop" aria-label="Stop generating" className="grid size-8 place-items-center rounded-full bg-foreground text-background transition hover:opacity-90"><Square className="size-3 fill-current" /></button>
             ) : (

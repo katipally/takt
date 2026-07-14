@@ -10,6 +10,7 @@ import { extname } from "node:path";
 import { catalogModels } from "@takt/harness";
 import { makeBlockEmit } from "./block-emit.js";
 import { ensureSeedProviders, resolveCaption } from "./providers.js";
+import { attachLiveWs } from "./live/ws.js";
 
 // Per-1M-token prices for a caption model, from the models.dev catalog (cached).
 async function captionCost(provider: any, model: string): Promise<{ input: number; output: number }> {
@@ -209,6 +210,7 @@ app.post("/ingest", async (c) => {
 
 const port = Number(process.env.AGENT_PORT ?? 8787);
 const server = serve({ fetch: app.fetch, port }) as unknown as Server;
+attachLiveWs(server); // the /live voice WebSocket rides the same http server
 console.log(`▸ Takt agent service listening on http://localhost:${port}`);
 
 // A clear message on a busy port instead of an unhandled-'error' crash, and a
