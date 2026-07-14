@@ -80,8 +80,9 @@ Retrieval is hybrid: FTS5 catches exact codes and part numbers, embedding cosine
 fuzzy symptoms in the user's words, and results are re-ranked so query-term coverage
 dominates. The agent doesn't just search, it walks the graph: resolve "clicking noise" to the
 symptom, hop `fixes` to the procedure, `shown_in` to the figure, `depicts` to the 3D part.
-Everything is regenerable, since re-ingest rebuilds the whole graph transactionally. Full
-detail in [docs/architecture.md](docs/architecture.md).
+Everything is regenerable, since re-ingest rebuilds the whole graph transactionally. How
+ingestion builds all this, and how it's stored, is in
+[docs/ingestion.md](docs/ingestion.md).
 
 ---
 
@@ -114,6 +115,12 @@ Questions to try once you've ingested the Prusa MK4S handbook:
 - *"My extruder keeps clicking and filament won't come out. What should I check?"*
 
 ![Live voice mode: speak to Takt and it answers out loud, running the voice stack in your browser](docs/media/voice.png)
+
+Live mode does a lot more than talk: on-device VAD, Whisper, and Kokoro; semantic end-of-turn
+detection; barge-in with echo cancellation; server-side grounding so a fast model still cites
+the right page; and `show_overlay`, which pins the 3D part, a manual figure, a clip, or arrows
+drawn on your camera feed while it explains. The whole feature set is in
+[docs/live-mode.md](docs/live-mode.md).
 
 ---
 
@@ -193,12 +200,23 @@ A pnpm monorepo:
 | `packages/profile` | the OKF Profile store, local embeddings, hybrid graph retrieval |
 | `packages/shared` | shared types and the SSE + live-voice wire protocols |
 
-Ingest runs render → vision-parse every page → deterministic graph build → embed →
-cross-modal link, plus STL/STEP/3MF to GLB and video to chaptered clips. The web app also
-runs the on-device voice stack (`apps/web/src/lib/live/`: VAD, Whisper, Kokoro in a Web
-Worker) and the live UI (`apps/web/src/components/live/`). Full architecture, the live
-protocol, and the SSE protocol are in [docs/architecture.md](docs/architecture.md). Hosting
-on a free Hugging Face Space is in [docs/hosting.md](docs/hosting.md).
+The web app also runs the on-device voice stack (`apps/web/src/lib/live/`: VAD, Whisper,
+Kokoro in a Web Worker) and the live UI (`apps/web/src/components/live/`).
+
+---
+
+## Docs
+
+- [architecture.md](docs/architecture.md) — the whole system: processes, the chat and live
+  flows, the canvas, and the SSE protocol, with diagrams.
+- [ingestion.md](docs/ingestion.md) — how a folder becomes a knowledge graph, and how it's
+  stored (the pipeline, the vision parse, the graph build, the SQLite schema).
+- [live-mode.md](docs/live-mode.md) — the full live voice feature set, on-device stack, and
+  the `/live` protocol.
+- [adding-a-product.md](docs/adding-a-product.md) — the file-type table and the ingest flags.
+- [design-standard.md](docs/design-standard.md) — the canvas design system.
+- [hosting.md](docs/hosting.md) — deploying your own on a free Hugging Face Space (for
+  operators).
 
 ---
 
