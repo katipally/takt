@@ -1,7 +1,10 @@
-import { serve } from "@hono/node-server";
+import { serve, type HttpBindings } from "@hono/node-server";
+import { RESPONSE_ALREADY_SENT } from "@hono/node-server/utils/response";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { streamSSE } from "hono/streaming";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { buildMcpServer } from "./mcp-server.js";
 import type { ChatRequest, SseEvent } from "@takt/shared";
 import { askAnswerPayloadSchema } from "@takt/shared";
 import { getProductBySlug, createChat, listChats, listMasterChats, addMessage, renameChat, loadEnv } from "@takt/db";
@@ -37,7 +40,7 @@ ensureSeedProviders();
 const AGENT_SECRET = process.env.TAKT_AGENT_SECRET?.trim() || "";
 const WEB_ORIGIN = process.env.WEB_PUBLIC_URL?.trim() || "http://localhost:3000";
 
-const app = new Hono();
+const app = new Hono<{ Bindings: HttpBindings }>();
 app.use("*", cors({ origin: WEB_ORIGIN }));
 app.use("*", async (c, next) => {
   if (!AGENT_SECRET || c.req.path === "/health") return next();
@@ -46,6 +49,24 @@ app.use("*", async (c, next) => {
 });
 
 app.get("/health", (c) => c.json({ ok: true }));
+
+// ── MCP over Streamable HTTP ────────────────────────────────────────────────
+// The same read-only graph tools as the stdio server, reachable when Takt is
+// HOSTED: the web app proxies <site>/mcp here, so any MCP client (Claude,
+// ChatGPT, Copilot…) can query the catalog remotely. Stateless — one
+// server+transport per request, no session bookkeeping.
+app.post("/mcp", async (c) => {
+  const body = await c.req.json().catch(() => undefined);
+  const server = buildMcpServer();
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  c.env.outgoing.on("close", () => { void transport.close(); void server.close(); });
+  await server.connect(transport);
+  await transport.handleRequest(c.env.incoming, c.env.outgoing, body);
+  return RESPONSE_ALREADY_SENT;
+});
+// Stateless server: no SSE notification channel, no sessions to delete.
+app.on(["GET", "DELETE"], "/mcp", (c) =>
+  c.json({ jsonrpc: "2.0", error: { code: -32000, message: "Method not allowed — this MCP server is stateless; use POST." }, id: null }, 405));
 
 app.post("/chat", async (c) => {
   const req = (await c.req.json()) as ChatRequest;

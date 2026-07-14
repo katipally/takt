@@ -4,12 +4,16 @@ import { REPO_ROOT } from "@takt/db";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Connection details for Takt's MCP server (services/agent/src/mcp.ts) — the
-// graph tools exposed over stdio so any MCP client can query the catalog. The
-// command embeds this install's real repo path so it's copy-paste ready.
-export function GET() {
+// Connection details for Takt's MCP server. Two transports:
+//   • http  — <this site>/mcp, works for ANY visitor of a hosted Takt (and
+//             locally too); this is the command the UI leads with.
+//   • stdio — only meaningful on the machine that runs Takt from source.
+export function GET(req: Request) {
+  const origin = new URL(req.url).origin;
   return NextResponse.json({
-    command: `claude mcp add takt -- pnpm --dir ${REPO_ROOT}/services/agent mcp`,
+    httpUrl: `${origin}/mcp`,
+    httpCommand: `claude mcp add --transport http takt ${origin}/mcp`,
+    stdioCommand: `claude mcp add takt -- pnpm --dir ${REPO_ROOT}/services/agent mcp`,
     tools: ["list_products", "find_entity", "explore_entity", "trace_path", "search_product", "get_media", "read_profile"],
   });
 }
