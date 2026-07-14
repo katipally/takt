@@ -14,14 +14,15 @@ import { Wordmark } from "@/components/brand/Wordmark";
 // prose/reasoning/tools/sources live in the rail.
 
 export function Stage({
-  canvas, chatId, productSlug, constructing, buildStatus, streaming, empty, heading, subheading, starters, onStarter,
+  canvas, chatId, productSlug, constructing, buildStatus, streaming, canvasStreaming, empty, heading, subheading, starters, onStarter,
 }: {
   canvas?: CanvasPart;
   chatId: string;
   productSlug: string | null;
-  constructing: boolean;            // this turn is building a new canvas that hasn't landed yet
+  constructing: boolean;            // this turn is building a new canvas that hasn't painted yet
   buildStatus?: string | null;      // live gather/compose status line
   streaming: boolean;
+  canvasStreaming?: boolean;        // the SHOWN canvas is this turn's, still streaming (live preview)
   empty: boolean;
   heading?: string;
   subheading?: string;
@@ -56,7 +57,7 @@ export function Stage({
           remounts. */}
       {mode === "canvas" && canvas ? (
         <div className="relative w-full pb-48">
-          <Canvas key={canvas.canvasId} part={canvas} chatId={chatId} productSlug={productSlug} streaming={streaming} />
+          <Canvas key={canvas.canvasId} part={canvas} chatId={chatId} productSlug={productSlug} streaming={!!canvasStreaming} />
         </div>
       ) : mode === "building" ? (
         <div className="relative w-full pb-48"><CanvasSkeleton status={buildStatus ?? null} /></div>

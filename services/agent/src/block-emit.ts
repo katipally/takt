@@ -15,6 +15,17 @@ export function foldBlock(blocks: MessageBlock[], e: SseEvent): void {
       else blocks.push({ type: kind, text: e.text });
       break;
     }
+    case "usage": {
+      // ONE cumulative usage block per turn: output/cost accumulate across steps,
+      // context reflects the latest window size.
+      const u = blocks.find((b) => b.type === "usage");
+      if (u && u.type === "usage") {
+        u.contextTokens = e.contextTokens || u.contextTokens;
+        u.outputTokens += e.outputTokens;
+        u.costUsd += e.costUsd;
+      } else blocks.push({ type: "usage", contextTokens: e.contextTokens, outputTokens: e.outputTokens, costUsd: e.costUsd });
+      break;
+    }
     case "tool_start": blocks.push({ type: "tool", id: e.id, tool: e.tool, summary: e.summary, status: "done" }); break;
     case "tool_done": {
       const t = blocks.find((b) => b.type === "tool" && b.id === e.id);

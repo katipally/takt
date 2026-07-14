@@ -82,7 +82,10 @@ export type MessageBlock =
   | { type: "tool"; id?: string; tool: string; summary?: string; detail?: string; status: "running" | "done" }
   | { type: "source"; citationId: string; url: string; page: number; manualKind: ManualKind; manualTitle?: string | null; caption: string | null; productSlug?: string | null; productName?: string | null }
   | { type: "canvas"; canvasId: string; title?: string; html: string; specCheck?: { checked: number; flagged: number } }
-  | { type: "ask_user"; askId: string; questions: AskQuestion[]; answers?: AskAnswer[]; cancelled?: boolean };
+  | { type: "ask_user"; askId: string; questions: AskQuestion[]; answers?: AskAnswer[]; cancelled?: boolean }
+  // Cumulative token/cost usage for the turn — persisted so the context meter
+  // survives a reload instead of resetting to $0.
+  | { type: "usage"; contextTokens: number; outputTokens: number; costUsd: number };
 
 /** Request body the web app POSTs to /api/chat (and the agent service).
  * `productSlug` is null in master mode (no product selected — search across all). */

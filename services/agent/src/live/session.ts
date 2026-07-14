@@ -181,10 +181,11 @@ export class LiveSession {
   }
 
   async start() {
-    // Persist the chat row + rehydrate recent history (so a reconnect mid-call
-    // doesn't make the agent forget what was already said).
+    // Rehydrate recent history (so a reconnect mid-call doesn't make the agent
+    // forget what was already said). The chat ROW is created lazily on the first
+    // spoken turn — opening and closing live mode must not litter the sidebar
+    // with empty "New chat" entries.
     if (this.chatId) {
-      createChat(this.product?.id ?? null, this.chatId);
       const prior = this.rehydrate();
       if (prior.length) { this.runner.seed(prior); this.titled = true; }
     }
@@ -258,6 +259,7 @@ export class LiveSession {
     this.currentEmit = emit;
 
     if (this.chatId) {
+      createChat(this.product?.id ?? null, this.chatId); // lazy — first real turn
       addMessage(this.chatId, "user", [{ type: "text", text }], true /* live */);
       // Auto-title a fresh conversation from the first thing the user says.
       if (!this.titled) { this.titled = true; try { renameChat(this.chatId, text.replace(/\s+/g, " ").trim().slice(0, 48) || "Live conversation"); } catch { /* */ } }

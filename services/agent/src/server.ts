@@ -76,7 +76,11 @@ app.post("/chat", async (c) => {
     } finally {
       // Persist the assistant turn even on Stop, so reopening the chat shows the
       // partial reply, ask_user panel, and page images exactly as they streamed.
-      if (req.chatId && blocks.length) addMessage(req.chatId, "assistant", blocks);
+      // A canvas block that never received any HTML (build stopped before its
+      // first delta) must NOT persist — replayed, it renders as a permanently
+      // stuck skeleton hiding the last good canvas.
+      const keep = blocks.filter((b) => !(b.type === "canvas" && !b.html));
+      if (req.chatId && keep.length) addMessage(req.chatId, "assistant", keep);
     }
   });
 });

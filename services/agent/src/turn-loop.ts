@@ -39,12 +39,25 @@ export async function runTurnLoop(opts: TurnLoopOpts): Promise<{ text: string }>
   const defer = deferLast ?? (() => false);
   let finalText = "";
 
+  // Text from successive steps used to concatenate with no separator
+  // ("…now.Building the viewer…"). Insert a paragraph break between one step's
+  // text and the next step's — for the client stream AND the model transcript.
+  let prevStepText = "";
+  const stepEmit: Emit = async (e) => {
+    if (e.type === "text_delta" && prevStepText && !/\s$/.test(prevStepText)) {
+      prevStepText = ""; // separator emitted once per step boundary
+      await emit({ type: "text_delta", text: "\n\n" });
+    } else if (e.type === "text_delta") prevStepText = "";
+    return emit(e);
+  };
+
   for (let step = 0; step < maxSteps; step++) {
     if (signal.aborted) return { text: finalText };
     const turn = await collectTurn(
       streamProvider(provider, apiKey, { model, messages, tools: toolDefs, effort, reasoningEffort, maxTokens }, signal),
-      emit,
+      stepEmit,
     );
+    prevStepText = turn.text;
     messages.push({
       role: "assistant",
       text: turn.text,
@@ -52,9 +65,14 @@ export async function runTurnLoop(opts: TurnLoopOpts): Promise<{ text: string }>
       reasoningSignature: turn.reasoningSignature,
       toolCalls: turn.toolCalls.length ? turn.toolCalls : undefined,
     });
+    // Some providers report input_tokens 0 on a prefix-cache hit (MiniMax) with
+    // no cache_read field — the context meter would sit at 0 forever. Fall back
+    // to a chars/4 estimate of the transcript; the meter is a gauge, not a bill.
+    const contextTokens = turn.usage.input || Math.round(messages.reduce(
+      (n, m) => n + ("text" in m && m.text ? m.text.length : 0) + ("result" in m && typeof m.result === "string" ? m.result.length : 0), 0) / 4);
     if (cost) await emit({
       type: "usage",
-      contextTokens: turn.usage.input,
+      contextTokens,
       outputTokens: turn.usage.output,
       costUsd: (turn.usage.input * cost.input + turn.usage.output * cost.output) / 1_000_000,
     });

@@ -68,7 +68,17 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
 
   // A fresh send/edit/regenerate snaps the stage back to the latest answer.
   const follow = () => setViewUserId(null);
-  const send = (t: string, a?: Parameters<typeof wb.send>[1]) => { follow(); wb.send(t, a); };
+  const send = (t: string, a?: Parameters<typeof wb.send>[1]) => {
+    follow();
+    // First turn of a fresh chat → pin the chat id in the URL so reload/share
+    // lands back in THIS conversation (previously only ?q= deep-links did this).
+    if (wb.messages.length === 0) window.history.replaceState(null, "", `${basePath}?chat=${wb.chatId}`);
+    wb.send(t, a);
+  };
+  // New chat / chat switch keep the URL in sync — a stale ?chat= param used to
+  // reload the previous conversation.
+  const newChat = () => { follow(); wb.newChat(); window.history.replaceState(null, "", basePath); };
+  const selectChat = (id: string) => { follow(); wb.loadChat(id); window.history.replaceState(null, "", `${basePath}?chat=${id}`); };
   // Composer send: if a canvas block is selected, scope the message to it (the agent
   // reads the data-takt-id and does a surgical edit_canvas on just that block).
   const sendFromComposer = (t: string, a?: Parameters<typeof wb.send>[1]) => {
@@ -91,26 +101,27 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
   const latest = turns[turns.length - 1];
   const view = (viewUserId ? turns.find((t) => t.userId === viewUserId) : null) ?? latest;
 
-  // The stage shows ONLY the latest canvas. This turn's own canvas (partials
-  // included) — the last canvas part of the viewed turn:
-  const viewCanvas: CanvasPart | undefined = [...(view?.assistant?.parts ?? [])].reverse().find((p): p is CanvasPart => p.kind === "canvas");
-  // Is this turn building a NEW canvas that hasn't landed yet? True while streaming,
-  // no canvas for THIS turn, and a build signal is present — a canvas tool is pending
-  // or a source crop has arrived. Drives the loading skeleton (vs. showing the
-  // previous, stale canvas) until the finished page lands.
+  // The stage shows ONLY the latest canvas WITH CONTENT — this turn's own canvas
+  // as soon as its first streamed HTML arrives (the live preview paints it):
+  const viewCanvas: CanvasPart | undefined = [...(view?.assistant?.parts ?? [])].reverse().find((p): p is CanvasPart => p.kind === "canvas" && !!p.html);
   const buildPending = (view?.assistant?.parts ?? []).some((p) => p.kind === "tool" && (p.tool === "build_canvas" || p.tool === "edit_canvas" || p.lane === "build"));
   const hasBuildCrops = (view?.assistant?.parts ?? []).some((p) => p.kind === "source");
-  const constructing = !!view?.assistant?.streaming && !viewCanvas && (buildPending || hasBuildCrops);
   const buildStatus = view?.assistant?.status ?? null;
-  // Hold the most recent canvas when this turn produced none (so a plain chat
-  // follow-up doesn't blank the stage); the placeholder overrides it while building.
+  // Hold the most recent finished canvas while this turn hasn't painted one yet —
+  // a follow-up or edit keeps the last page on stage (under the streaming bar)
+  // instead of wiping it to a skeleton. The skeleton shows only when there is no
+  // canvas at all to keep showing.
   const canvas: CanvasPart | undefined = viewCanvas ?? (() => {
     for (let i = turns.length - 1; i >= 0; i--) {
-      const c = [...(turns[i]!.assistant?.parts ?? [])].reverse().find((p): p is CanvasPart => p.kind === "canvas");
+      const c = [...(turns[i]!.assistant?.parts ?? [])].reverse().find((p): p is CanvasPart => p.kind === "canvas" && !!p.html);
       if (c) return c;
     }
     return undefined;
   })();
+  const constructing = !!view?.assistant?.streaming && !canvas && (buildPending || hasBuildCrops);
+  // Only the CURRENT turn's canvas is live-previewed; a held previous page must
+  // keep its finished (scripted) document, not fall back to an inert preview.
+  const canvasStreaming = !!view?.assistant?.streaming && !!viewCanvas && canvas === viewCanvas;
 
   // Canvas block selection (right-click → "Select this area") bubbles to document
   // as a `takt:select` CustomEvent — scope the composer's next message to it.
@@ -147,7 +158,7 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
           </button>
         ) : (
           <div style={{ width: sidebarW }} className="relative h-full overflow-hidden rounded-2xl">
-            <Sidebar currentSlug={slug} onNewChat={() => { follow(); wb.newChat(); }} onSelectChat={(id) => { follow(); wb.loadChat(id); }} activeChatId={wb.chatId} />
+            <Sidebar currentSlug={slug} onNewChat={newChat} onSelectChat={selectChat} activeChatId={wb.chatId} />
             {/* Collapse button — centered on the sidebar's right border. */}
             <button onClick={toggleSidebar} title="Collapse history" aria-label="Collapse history"
               className="absolute right-1 top-1/2 z-40 grid size-6 -translate-y-1/2 place-items-center rounded-full border border-border bg-card text-muted-foreground shadow-sm transition hover:text-foreground">
@@ -205,6 +216,7 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
           constructing={constructing}
           buildStatus={buildStatus}
           streaming={!!view?.assistant?.streaming}
+          canvasStreaming={canvasStreaming}
           heading={heading}
           subheading={isMaster
             ? "Ask across all your products at once — or anything else. Answers cite the product and page they come from."
@@ -276,7 +288,7 @@ export function Workbench({ slug, productName, starters }: { slug: string | null
             <div className="absolute inset-0 bg-black/50" onClick={() => setDrawerOpen(false)} />
             <motion.div initial={{ x: "-100%" }} animate={{ x: 0 }} exit={{ x: "-100%" }} transition={{ type: "spring", stiffness: 380, damping: 40 }}
               className="absolute left-0 top-0 h-full w-[82%] max-w-[320px] border-r border-border bg-background shadow-2xl">
-              <Sidebar currentSlug={slug} onNewChat={() => { follow(); wb.newChat(); setDrawerOpen(false); }} onSelectChat={(id) => { follow(); wb.loadChat(id); setDrawerOpen(false); }} activeChatId={wb.chatId} />
+              <Sidebar currentSlug={slug} onNewChat={() => { newChat(); setDrawerOpen(false); }} onSelectChat={(id) => { selectChat(id); setDrawerOpen(false); }} activeChatId={wb.chatId} />
             </motion.div>
           </motion.div>
         )}

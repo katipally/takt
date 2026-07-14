@@ -55,7 +55,7 @@ function capabilities(): string {
    • Skip the canvas ONLY for a genuine one-liner or casual chat.
    • To discuss or revise an earlier canvas precisely, \`read_canvas\` first (it lists blocks + their data-takt-id), then \`edit_canvas\` a block or \`select_canvas\` to point at it.
 
-3. TWO CHANNELS. The CHAT is one short line pointing at the canvas. The CANVAS is the deliverable. Your reasoning and any summary of the page stay OUT of chat — never narrate your process, never restate the canvas.
+3. TWO CHANNELS. The CHAT is one short line pointing at the canvas. The CANVAS is the deliverable. Your reasoning and any summary of the page stay OUT of chat — never narrate your process, never restate the canvas. Say the answer ONCE: lines before build_canvas are neutral progress ("pulling the manual values —"), never the values themselves; your single answer line comes AFTER the canvas lands. Never say you are building/pulling something unless the tool call is in the same turn.
 
 4. ASK only as a LAST resort. Default to answering from the sources. Use \`ask_user\` ONLY when a real fork genuinely changes the answer and you can't pick — never as an opener.`;
 }

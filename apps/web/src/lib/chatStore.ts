@@ -146,7 +146,9 @@ async function runStream(chatId: string, productSlug: string | null, attachments
       const messages = s.messages.map((n) => {
         if (n.id !== assistantId || n.role !== "assistant") return n;
         finalText = n.parts.filter((p) => p.kind === "text").map((p) => (p as TextPart).text).join("");
-        return { ...n, streaming: false, status: null };
+        // A canvas that never received HTML (build stopped before its first
+        // delta) would render as a stuck skeleton — drop it with the stream.
+        return { ...n, parts: n.parts.filter((p) => !(p.kind === "canvas" && !p.html)), streaming: false, status: null };
       });
       return { ...s, streaming: false, abort: undefined, messages };
     });
@@ -234,6 +236,16 @@ export const chatStore = {
     const msgs = await api.messages(chatId);
     update(chatId, (s) => {
       const messages: Node[] = [];
+      // Restore the context meter from persisted usage blocks (cost/output
+      // accumulate across turns; context is the latest window size).
+      const usage: Usage = { contextTokens: 0, outputTokens: 0, costUsd: 0 };
+      for (const m of msgs) for (const b of m.content) {
+        if (b.type === "usage") {
+          usage.contextTokens = b.contextTokens || usage.contextTokens;
+          usage.outputTokens += b.outputTokens;
+          usage.costUsd += b.costUsd;
+        }
+      }
       for (const m of msgs) {
         if (m.role === "user") {
           messages.push({ id: m.id, role: "user", text: m.content.filter((b) => b.type === "text").map((b: any) => b.text).join(""), live: (m as any).live || undefined });
@@ -250,7 +262,7 @@ export const chatStore = {
           messages.push({ id: m.id, role: "assistant", parts, streaming: false });
         }
       }
-      return { ...blank(chatId, s.productSlug), messages };
+      return { ...blank(chatId, s.productSlug), messages, usage };
     });
   },
 };
