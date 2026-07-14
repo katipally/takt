@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { motion, AnimatePresence, useReducedMotion } from "motion/react";
-import { X } from "lucide-react";
+import { motion, AnimatePresence, useReducedMotion, useDragControls } from "motion/react";
+import { X, GripHorizontal } from "lucide-react";
 import { useLiveStore, type LiveOverlay, type OverlayMark } from "@/lib/live/liveStore";
 
 // The remote-expert surface: ONE visual the agent pins over the live call while
@@ -52,6 +52,11 @@ export function OverlayLayer() {
   const set = useLiveStore((s) => s.set);
   const reduce = useReducedMotion();
   const mvReady = useModelViewer(overlay?.kind === "model");
+  // Drag: a handle starts it (dragListener off) so the 3D viewer keeps its own
+  // pointer-orbit; constrained to the viewport so the card can't be lost. The
+  // card floats over the whole app, independent of the camera PiP.
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const drag = useDragControls();
   // In-feed placements render inside CameraPiP (FeedOverlay), not here.
   const card = overlay && (overlay.kind === "video" || ((overlay.kind === "model" || overlay.kind === "figure") && !overlay.anchor))
     ? overlay : null;
@@ -59,14 +64,29 @@ export function OverlayLayer() {
   return (
     <AnimatePresence>
       {card && (
+        <div ref={wrapRef} className="pointer-events-none fixed inset-0 z-[60] flex justify-center">
         <motion.div
           key={card.overlayId}
+          drag
+          dragControls={drag}
+          dragListener={false}
+          dragConstraints={wrapRef}
+          dragMomentum={false}
+          dragElastic={0.06}
           initial={{ opacity: 0, scale: reduce ? 1 : 0.94, y: reduce ? 0 : 10 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: reduce ? 1 : 0.96 }}
           transition={reduce ? { duration: 0 } : { type: "spring", stiffness: 320, damping: 30 }}
-          className="pointer-events-auto fixed left-1/2 top-[8%] z-[60] w-[min(560px,86vw)] -translate-x-1/2 overflow-hidden rounded-2xl border border-border bg-surface shadow-[0_18px_60px_-18px_rgba(0,0,0,0.55)]"
+          className="pointer-events-auto absolute top-[8%] w-[min(560px,86vw)] overflow-hidden rounded-2xl border border-border bg-surface shadow-[0_18px_60px_-18px_rgba(0,0,0,0.55)]"
         >
+          {/* drag handle — grab here to move the card (the 3D viewer below keeps its orbit) */}
+          <div
+            onPointerDown={(e) => drag.start(e)}
+            className="flex cursor-grab items-center justify-center gap-1.5 border-b border-border/60 bg-black/20 py-1.5 text-white/50 active:cursor-grabbing"
+            title="Drag to move"
+          >
+            <GripHorizontal size={14} />
+          </div>
           <button
             onClick={() => set({ overlay: null })}
             aria-label="Dismiss overlay"
@@ -100,6 +120,7 @@ export function OverlayLayer() {
             <div className="border-t border-border px-4 py-2.5 text-[13px] leading-snug text-muted">{card.caption}</div>
           )}
         </motion.div>
+        </div>
       )}
     </AnimatePresence>
   );
@@ -127,6 +148,21 @@ export function FeedOverlay({ overlay, videoDim }: { overlay: LiveOverlay | null
     return () => ro.disconnect();
   }, []);
   const mvReady = useModelViewer(!!overlay && overlay.kind === "model" && !!overlay.anchor);
+
+  // Let the user drag a pinned model/figure off the thing it's covering. Once
+  // dragged it stops tracking the object and stays put (manual position, in tile
+  // pixels); a new overlay resets it. Moving the pin does NOT move the PiP tile.
+  const [manual, setManual] = useState<{ x: number; y: number } | null>(null);
+  useEffect(() => { setManual(null); }, [overlay?.overlayId]);
+  const startPinDrag = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const box = boxRef.current?.getBoundingClientRect();
+    if (!box) return;
+    const move = (ev: PointerEvent) => setManual({ x: ev.clientX - box.left, y: ev.clientY - box.top });
+    const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
 
   const onFeed = overlay && (
     overlay.kind === "marks" || overlay.kind === "note" ||
@@ -179,11 +215,16 @@ export function FeedOverlay({ overlay, videoDim }: { overlay: LiveOverlay | null
               <Bubble at={px(onFeed.anchor ?? { x: 0.5, y: 0.5 })} text={onFeed.caption ?? ""} onDismiss={() => set({ overlay: null })} dot />
             )}
 
-            {/* model / figure pinned in-feed at the anchor — follows its object */}
+            {/* model / figure pinned in-feed — tracks its object until the user
+                drags the handle, then stays where they put it */}
             {(onFeed.kind === "model" || onFeed.kind === "figure") && onFeed.anchor && (
               <motion.div className="pointer-events-auto absolute" style={{ transform: "translate(-50%, -104%)" }}
-                animate={{ left: px(onFeed.anchor).x, top: px(onFeed.anchor).y }} transition={GLIDE}>
+                animate={{ left: (manual ?? px(onFeed.anchor)).x, top: (manual ?? px(onFeed.anchor)).y }}
+                transition={manual ? { duration: 0 } : GLIDE}>
                 <div className="overflow-hidden rounded-xl border border-white/25 bg-black/55 shadow-xl backdrop-blur-sm">
+                  {/* drag handle — move the pin off what it's covering */}
+                  <div onPointerDown={startPinDrag} title="Drag to move"
+                    className="flex cursor-grab items-center justify-center bg-black/30 py-1 text-white/45 active:cursor-grabbing"><GripHorizontal size={12} /></div>
                   {onFeed.kind === "figure" && onFeed.url && (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={onFeed.url} alt={onFeed.caption ?? "figure"} className="max-h-40 max-w-[220px] object-contain" />
@@ -198,7 +239,7 @@ export function FeedOverlay({ overlay, videoDim }: { overlay: LiveOverlay | null
                   <button onClick={() => set({ overlay: null })} aria-label="Dismiss"
                     className="absolute right-1 top-1 rounded-full bg-black/50 p-1 text-white/80 hover:text-white"><X size={10} /></button>
                 </div>
-                <div className="mx-auto mt-1 h-2.5 w-2.5 rounded-full border-2 border-white bg-accent shadow" />
+                {!manual && <div className="mx-auto mt-1 h-2.5 w-2.5 rounded-full border-2 border-white bg-accent shadow" />}
               </motion.div>
             )}
 

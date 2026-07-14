@@ -2,14 +2,14 @@ import {
   listProviders, createProvider, updateProvider,
   getProviderApiKey, getSetting, setSetting,
 } from "@takt/db";
-import { BUILTIN_PROVIDERS, defaultModel, type ProviderInfo, type Effort } from "@takt/harness";
+import { BUILTIN_PROVIDERS, defaultModel, type BuiltinProvider, type ProviderInfo, type Effort } from "@takt/harness";
 import { DEFAULT_EFFORT, liveRecsFor } from "@takt/shared";
 
 // Provider-neutral resolution. Keys live in the DB `providers` table (kind =
 // harness provider id) or fall back to the provider's declared env vars. Which
 // provider + model to chat with is a setting — nothing is hardcoded to Anthropic.
 
-export function providerInfo(id: string): ProviderInfo | undefined {
+export function providerInfo(id: string): BuiltinProvider | undefined {
   return BUILTIN_PROVIDERS.find((p) => p.id === id);
 }
 
@@ -56,7 +56,7 @@ function resolveChatProviderId(): string {
 }
 
 export interface ResolvedChat {
-  provider: ProviderInfo;
+  provider: BuiltinProvider;
   model: string;
   apiKey: string | null;
   effort?: Effort;

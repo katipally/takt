@@ -54,7 +54,7 @@ export function defaultModel(providerId: string): string {
 export const MODEL_SNAPSHOT: Record<string, string[]> = {
   anthropic: ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
   openai: ["gpt-5", "gpt-5-mini", "o3"],
-  // MiniMax-M3 (1M ctx, vision) and M2.5 (vision) support images over the
-  // Anthropic-compat endpoint; M2 is text-only.
+  // MiniMax-M3 (1M ctx, vision — text/image/video) is the camera pick; the M2.x
+  // line (M2.5, highspeed, …) is text-only.
   minimax: ["MiniMax-M3", "MiniMax-M2.5", "MiniMax-M2.5-highspeed"],
 }

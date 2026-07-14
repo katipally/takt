@@ -20,13 +20,12 @@ export const LIVE_MODEL_RECS: Record<string, LiveModelRec[]> = {
     { model: "gpt-5-mini", label: "GPT-5 mini", note: "fast, multimodal, cheap", vision: true, default: true },
     { model: "gpt-5-nano", label: "GPT-5 nano", note: "lowest latency", vision: true },
   ],
-  // MiniMax runs over its Anthropic-compatible endpoint, which does NOT accept
-  // image input (M3 400s on an image, M2.5 says "no image") — so live camera
-  // vision must NOT go to MiniMax. Text/voice-only here; for the camera the live
-  // resolver prefers a vision-capable provider (OpenAI / Anthropic).
+  // MiniMax over its Anthropic-compat endpoint: M3 accepts images (models.dev
+  // modalities: text/image/video), the M2.x line is text-only. M3 is the camera
+  // pick; M2.5-highspeed is the fastest voice-only option.
   minimax: [
-    { model: "MiniMax-M2.5-highspeed", label: "M2.5 highspeed", note: "fast, strong tool use (voice only — no camera)", vision: false, default: true },
-    { model: "MiniMax-M3", label: "M3", note: "1M context (voice only — no camera)", vision: false },
+    { model: "MiniMax-M3", label: "M3", note: "1M context, vision — sees the camera", vision: true, default: true },
+    { model: "MiniMax-M2.5-highspeed", label: "M2.5 highspeed", note: "fastest, voice only (no camera)", vision: false },
   ],
 };
 
@@ -35,16 +34,19 @@ export function liveRecsFor(providerId: string): LiveModelRec[] {
   return LIVE_MODEL_RECS[providerId] ?? [];
 }
 
-/** Does this provider+model accept image input? Curated table wins; otherwise a
- *  per-provider heuristic. Consulted everywhere before attaching an image
- *  (chat gather, live camera frames, page-image tools). */
+/** Does this provider+model accept image input? This is the OFFLINE fallback:
+ *  models.dev metadata (ModelInfo.vision, via the harness) is the real source of
+ *  truth — server code prefers it, the client reads it off the fetched model
+ *  list. This curated table + per-provider heuristic only covers the offline /
+ *  not-yet-fetched case. Consulted before attaching an image (chat gather, live
+ *  camera frames, page-image tools). */
 export function modelVision(providerId: string, model: string): boolean {
   const rec = LIVE_MODEL_RECS[providerId]?.find((r) => r.model === model);
   if (rec) return rec.vision;
   switch (providerId) {
     case "anthropic": return true;                 // all current Claude models see
     case "openai": return !/^(o1-mini|o3-mini)$/i.test(model); // gpt-5 / 4o / o-series see
-    case "minimax": return false;                  // no image input over the Anthropic-compat endpoint
+    case "minimax": return /m3/i.test(model);      // M3 sees (text/image/video); the M2.x line is text-only
     default: return true;
   }
 }

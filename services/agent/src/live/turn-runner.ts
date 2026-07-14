@@ -1,4 +1,4 @@
-import { streamProvider, isReasoningModel, type Message } from "@takt/harness";
+import { streamProvider, isReasoningModel, modelVisionMeta, type Message } from "@takt/harness";
 import type { Product, Manual } from "@takt/shared";
 import { modelVision } from "@takt/shared";
 import { searchChunks, searchEntities } from "@takt/profile";
@@ -24,6 +24,17 @@ const LIVE_TOOL_DENY = new Set(["ask_user", "select_canvas", "edit_canvas"]);
 
 /** Session-provided background canvas build (never blocks the spoken turn). */
 export type SpawnBuild = (brief: string, ctx?: { facts?: string; figures?: string[] }) => void;
+
+// The literal camera state for THIS turn, so the model states it correctly
+// instead of inferring it from whether an image happened to attach. `canSee` =
+// the model can process images at all; `cameraOn` = the user's camera is on;
+// `hasFrame` = a frame is attached to this turn.
+function cameraStatusNote(canSee: boolean, cameraOn: boolean, hasFrame: boolean): string {
+  if (!canSee) return "[Camera: the current live model can't view images, so you cannot see the user's camera. Never say you can see it — if they want you to look at something, tell them to switch to a vision-capable model in settings.]";
+  if (!cameraOn) return "[Camera: OFF right now — you cannot see the user. Don't claim to. If you need to look at something, ask them to turn their camera on. marks/notes/look won't work until it's on.]";
+  if (hasFrame) return "[Camera: ON — the image attached to this turn is the user's live view this moment. React to what's actually there; call look for a sharper/closer frame.]";
+  return "[Camera: ON, but no fresh frame arrived this turn — call look to grab the current view before you describe or mark anything.]";
+}
 
 // A per-call LLM driver that keeps a growing Message[] across turns (unlike the
 // one-shot runAgent) and injects the camera frame(s) onto each user turn. Reuses
@@ -80,21 +91,25 @@ export class LiveTurnRunner {
     if (cut > 1 && cut < this.messages.length) this.messages.splice(1, cut - 1);
   }
 
-  async runTurn(userText: string, frames: { data: string; mime: string }[], emit: Emit, signal: AbortSignal, spawnBuild?: SpawnBuild): Promise<void> {
+  async runTurn(userText: string, frames: { data: string; mime: string }[], cameraOn: boolean, emit: Emit, signal: AbortSignal, spawnBuild?: SpawnBuild): Promise<void> {
     const { provider, model, apiKey } = resolveLive();
     if (!model) { await emit({ type: "error", message: "No model selected. Open Settings → Models and pick a model." }); return; }
     if (!apiKey && !provider.keyless) { await emit({ type: "error", message: `No API key for ${provider.name}. Add one in Settings → Models.` }); return; }
-    // Only attach the camera frame if the live model can actually see (curated
-    // table; unknown/custom models default to attaching). A text-only fast model
-    // would otherwise error on an image input.
-    const canSee = modelVision(provider.id, model);
+    // Can this model see images? models.dev metadata is the source of truth
+    // (MiniMax-M3 is text/image/video; the M2.x line is text-only) — fall back to
+    // the offline heuristic only when the model isn't in the catalog. Attaching an
+    // image to a text-only model would 400.
+    const canSee = (await modelVisionMeta(provider.catalogId, model)) ?? modelVision(provider.id, model);
     const imgs = canSee && frames.length ? frames : undefined;
     // Ground EVERY product-scoped turn server-side: retrieve the top manual
     // passages for what they said and put them IN the turn, so the exact value
     // (215 °C, not "usually ~200") is in context even when a latency-tuned model
     // skips the search tool — fast models fabricate plausible cites otherwise.
     // A few ms of local SQLite; tools remain for anything deeper.
-    let text = userText;
+    // Per-turn context appended to the user's words (annotations the model reads
+    // but that never persist to the visible transcript — the session saves the
+    // raw text). Order: manual facts, then camera status.
+    const notes: string[] = [];
     // Skip injection on conversational turns ("thanks, sounds good") — matched
     // facts there are noise a latency-tuned model happily recites as an answer.
     // A turn earns injection only if it has a substantive word left after
@@ -118,10 +133,14 @@ export class LiveTurnRunner {
           });
         const chunkLines = hits.map((c) => `[p.${c.page ?? "?"}] ${c.text.replace(/\s+/g, " ").slice(0, 400)}`);
         if (entLines.length || chunkLines.length) {
-          text = `${userText}\n\n[Manual facts matched to this question — answer with these EXACT values and cite the page; if they don't cover it, search_product / find_entity for more:\n${[...entLines, ...chunkLines].join("\n")}]`;
+          notes.push(`[Manual facts matched to this question — answer with these EXACT values and cite the page; if they don't cover it, search_product / find_entity for more:\n${[...entLines, ...chunkLines].join("\n")}]`);
         }
       } catch { /* retrieval is an enhancement — never blocks the turn */ }
     }
+    // Tell the model the REAL camera state every turn, so it never guesses (the
+    // guessing is what flip-flops between "I can see you" and "camera's off").
+    notes.push(cameraStatusNote(canSee, cameraOn, !!imgs?.length));
+    const text = notes.length ? `${userText}\n\n${notes.join("\n\n")}` : userText;
     this.messages.push({ role: "user", text, images: imgs });
     // Keep camera frames only on the 2 most recent user turns — the model "sees
     // live" from the current view, and a long call doesn't balloon with every past

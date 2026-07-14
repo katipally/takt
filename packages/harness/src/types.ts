@@ -100,6 +100,8 @@ export interface ModelInfo {
   maxOutput?: number
   /** model exposes a reasoning/thinking channel */
   reasoning?: boolean
+  /** model accepts image input (models.dev modalities.input includes "image") */
+  vision?: boolean
   /** USD per 1M tokens, when known */
   cost?: { input: number; output: number }
   /** true when surfaced from the provider's own live endpoint (vs offline snapshot) */

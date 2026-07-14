@@ -284,7 +284,7 @@ export class LiveSession {
       });
     };
     try {
-      await this.runner.runTurn(text, frames, emit, ac.signal, spawnBuild);
+      await this.runner.runTurn(text, frames, this.cameraOn, emit, ac.signal, spawnBuild);
     } catch (e) {
       if (!ac.signal.aborted) console.error("[live] turn:", e);
     } finally {

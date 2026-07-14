@@ -54,6 +54,20 @@ export async function catalogModels(catalogId?: string): Promise<Record<string, 
   return cat?.[catalogId]?.models ?? {}
 }
 
+/**
+ * Whether a model accepts image input, straight from models.dev metadata
+ * (modalities.input includes "image"). Returns undefined when the model isn't
+ * in the catalog, so callers can fall back to a heuristic. This is the source of
+ * truth for "can this model see the camera" — e.g. MiniMax-M3 is
+ * ["text","image","video"] while M2.5 is text-only.
+ */
+export async function modelVisionMeta(catalogId: string | undefined, model: string): Promise<boolean | undefined> {
+  if (!catalogId || !model) return undefined
+  const meta = (await catalogModels(catalogId))[model]
+  const input = meta?.modalities?.input
+  return Array.isArray(input) ? input.includes("image") : undefined
+}
+
 /** Models for a provider, from models.dev when available, else the offline snapshot. */
 export async function getModels(providerId: string, catalogId?: string): Promise<ModelInfo[]> {
   // Providers without a catalog id (local/keyless) skip the network entirely.
@@ -70,6 +84,7 @@ export async function getModels(providerId: string, catalogId?: string): Promise
         providerId,
         contextWindow: m.limit?.context ?? m.context_length,
         reasoning: !!m.reasoning,
+        vision: Array.isArray(m.modalities?.input) ? m.modalities.input.includes("image") : undefined,
       })
     }
   }

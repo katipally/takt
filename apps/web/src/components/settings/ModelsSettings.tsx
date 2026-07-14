@@ -181,9 +181,11 @@ export function ModelsSettings({ admin = true }: { admin?: boolean } = {}) {
             </select>
           </div>
         </div>
-        {settings?.liveModel && !modelVision(liveProviderId, settings.liveModel) && (
-          <p className="mt-2 text-[12px] text-[var(--takt-arc,#e2701f)]">This model can&apos;t see camera frames — voice works, but it will be blind to what you show it.</p>
-        )}
+        {(() => {
+          const rec = settings?.liveModel ? liveModels.find((m) => m.id === settings.liveModel) : undefined;
+          const blind = !!settings?.liveModel && (rec ? rec.vision === false : !modelVision(liveProviderId, settings.liveModel));
+          return blind ? <p className="mt-2 text-[12px] text-[var(--takt-arc,#e2701f)]">This model can&apos;t see camera frames — voice works, but it will be blind to what you show it.</p> : null;
+        })()}
         {admin && liveProviderId !== chatProviderId && <div className="mt-3"><ProviderKey kind={liveProviderId} /></div>}
       </section>
 

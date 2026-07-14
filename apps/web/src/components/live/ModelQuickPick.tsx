@@ -32,9 +32,12 @@ export function ModelQuickPick({ onOpenSettings }: { onOpenSettings: () => void 
   });
 
   const effort = settings?.effort ?? "auto";
-  // Warn only on KNOWN-blind models (the curated live table / per-provider
-  // heuristic in @takt/shared) — the camera is pointless with a blind model.
-  const blind = !!settings?.liveModel && !modelVision(providerId, settings.liveModel);
+  // Warn only when the model truly can't see. Prefer the real models.dev vision
+  // flag from the fetched list; fall back to the offline heuristic when the list
+  // hasn't loaded (or the model isn't in it) — the camera is pointless when blind.
+  const picked = settings?.liveModel;
+  const rec = picked ? models.find((m) => m.id === picked) : undefined;
+  const blind = !!picked && (rec ? rec.vision === false : !modelVision(providerId, picked));
 
   return (
     <div className="flex w-full max-w-xs flex-col gap-2 rounded-xl border border-border bg-surface/60 p-2.5">

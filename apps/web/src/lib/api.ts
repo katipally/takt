@@ -2,7 +2,7 @@ import type { Product, Provider, ChatSummary, ChatMessage, AskAnswerPayload } fr
 
 export interface ModelInfo {
   id: string; display_name: string; created_at?: string;
-  contextWindow?: number; maxOutput?: number; reasoning?: boolean;
+  contextWindow?: number; maxOutput?: number; reasoning?: boolean; vision?: boolean;
   cost?: { input: number; output: number };
 }
 export interface AppSettings {

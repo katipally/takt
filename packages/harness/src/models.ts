@@ -47,6 +47,15 @@ function costFrom(meta: any, raw: any): { input: number; output: number } | unde
   return undefined
 }
 
+// Does the model accept image input? Source of truth is models.dev's
+// modalities.input; some live endpoints echo the same under raw.modalities /
+// architecture.input_modalities. undefined when nothing says (unknown model).
+function visionFrom(meta: any, raw: any): boolean | undefined {
+  const input = meta?.modalities?.input ?? raw?.modalities?.input ?? raw?.architecture?.input_modalities
+  if (Array.isArray(input)) return input.includes("image")
+  return undefined
+}
+
 function isChat(id: string, meta: any): boolean {
   if (NON_CHAT.test(id)) return false
   const out = meta?.modalities?.output
@@ -62,6 +71,7 @@ function enrich(l: LiveModel, meta: any, providerId: string): ModelInfo {
     contextWindow: meta?.limit?.context ?? l.raw?.context_length ?? l.raw?.inputTokenLimit,
     maxOutput: meta?.limit?.output ?? l.raw?.outputTokenLimit,
     reasoning: meta?.reasoning ?? isReasoningModel(l.id),
+    vision: visionFrom(meta, l.raw),
     cost: costFrom(meta, l.raw),
     live: true,
   }
