@@ -14,6 +14,8 @@ import { spring, easeOut } from "@/lib/motion";
 import { Wordmark } from "@/components/brand/Wordmark";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { ResourcesSection } from "@/components/product/ResourcesSection";
+import { McpConnect } from "@/components/product/McpConnect";
+import { KnowledgeGraph } from "@/components/product/KnowledgeGraph";
 import { useUi } from "@/lib/uiStore";
 import { cn } from "@/lib/cn";
 
@@ -149,6 +151,13 @@ function Showcase({ products, active, setActive, product }: {
       <div data-reveal className="mt-4 flex items-baseline gap-3">
         {product.manufacturer && <span className="text-[11px] uppercase tracking-[0.14em] text-faint">{product.manufacturer}</span>}
         <h1 className="text-[22px] font-semibold tracking-tight">{product.name}</h1>
+      </div>
+
+      {/* Below the hero: connect this catalog's graph tools to any MCP client,
+          and SEE the knowledge graph the answers walk. */}
+      <div data-reveal>
+        <McpConnect productName={product.name} />
+        <KnowledgeGraph key={product.slug} slug={product.slug} />
       </div>
 
       {/* Suggested questions */}

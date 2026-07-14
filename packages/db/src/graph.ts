@@ -357,6 +357,28 @@ export function graphExists(productId: string): boolean {
   return (db().prepare(`SELECT 1 FROM entities WHERE product_id = ? LIMIT 1`).get(productId)) != null;
 }
 
+/** A display sample of the graph: the most-connected entities plus every edge
+ *  among them — enough to VISUALIZE the product's knowledge shape without
+ *  shipping all 800+ nodes to the browser. */
+export function graphSample(productId: string, limit = 60): {
+  nodes: { id: string; type: string; name: string; degree: number }[];
+  links: { src: string; dst: string; rel: string }[];
+} {
+  const nodes = db().prepare(
+    `SELECT e.id, e.type, e.name, COUNT(ed.id) AS degree
+     FROM entities e
+     LEFT JOIN edges ed ON (ed.src = e.id OR ed.dst = e.id)
+     WHERE e.product_id = ?
+     GROUP BY e.id
+     ORDER BY degree DESC, e.name
+     LIMIT ?`,
+  ).all(productId, limit) as { id: string; type: string; name: string; degree: number }[];
+  const ids = new Set(nodes.map((n) => n.id));
+  const links = (db().prepare(`SELECT src, dst, rel FROM edges WHERE product_id = ?`).all(productId) as { src: string; dst: string; rel: string }[])
+    .filter((l) => ids.has(l.src) && ids.has(l.dst));
+  return { nodes, links };
+}
+
 // ── self-check: `TAKT_DATA_DIR=/tmp/takt-graph-selfcheck tsx src/graph.ts` ────
 // Run with a throwaway TAKT_DATA_DIR (paths resolve at import, so it MUST be set
 // in the environment, not here) to avoid touching the real catalog.
