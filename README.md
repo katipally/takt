@@ -2,6 +2,10 @@
 
 **An AI that actually understands your product, and answers, shows, and talks like it.**
 
+**Live demo: [yashwanttth-takt.hf.space](https://yashwanttth-takt.hf.space)** (bring your own
+model key at [/admin](https://yashwanttth-takt.hf.space/admin); the demo product is the Prusa
+MK4S handbook).
+
 Takt takes a product's scattered docs (manuals, spec sheets, diagrams, photos, video,
 3D models) and turns them into a typed knowledge graph plus readable markdown Profiles.
 The graph holds parts, specs with their exact values, symptoms, procedures, and warnings,
@@ -31,10 +35,10 @@ Profiles stay plain files you can open, edit, and re-ingest.
   surfaces the actual manual page and crops the exact region that matters.
 - **Reads the images too.** The vision pass transcribes tables, describes diagrams, and
   records what each figure answers, so image-only content becomes searchable.
-- **Designs the answer, full-page.** The canvas isn't a wall of text. Takt writes a raw HTML
-  page (headline, cropped and annotated figures, the interactive 3D part, spec tables,
-  step-by-step guides, live calculators) and renders it in a sandboxed iframe, held to a
-  consistent design system.
+- **Designs the answer, full-page.** Instead of a wall of text, Takt writes a raw HTML page
+  (headline, cropped and annotated figures, the interactive 3D part, spec tables, step-by-step
+  guides, live calculators) and renders it in a sandboxed iframe, held to a consistent design
+  system.
 - **Talks, fully on-device.** Live voice runs the whole voice stack in your browser (Silero
   VAD, Whisper, Kokoro TTS). No audio leaves your machine. The composer becomes a voice bar,
   you talk, it talks back, and it stops the moment you interrupt. Turn the camera on and it
@@ -86,14 +90,35 @@ ingestion builds all this, and how it's stored, is in
 
 ---
 
-## Run it
+## Try it
 
-**Hosted:** open a live Space, go to **`/admin`** (type it in the URL), paste your own API
-key under **Models & API keys** (Anthropic, OpenAI, or MiniMax), and start asking. A free
-Space sleeps when idle, so the first request may take 30 to 60s to wake. See
-[docs/hosting.md](docs/hosting.md) to deploy your own.
+Open the live demo at **[yashwanttth-takt.hf.space](https://yashwanttth-takt.hf.space)** and
+set two things at **[/admin](https://yashwanttth-takt.hf.space/admin)**: paste your own model
+key under **Models & API keys** (Anthropic, OpenAI, or MiniMax), and add a product under
+**Products & ingestion**. The demo set is the Prusa MK4S handbook. A free Space resets its
+catalog when it redeploys, so if it's empty, add the product there. If the Space has been idle,
+the first hit takes 30 to 60s to wake.
 
-**Local**, in under two minutes:
+Questions to try:
+
+- *"How do I run the Selftest calibration wizard?"*
+- *"Which flexible print sheet should I use first?"*
+- *"My extruder keeps clicking and filament won't come out. What should I check?"*
+
+Then hit the waveform to talk to it, turn on your camera, and point it at the printer. It
+draws on the live feed to show you what it means, and pins the 3D part right over what you're
+holding:
+
+|  |  |
+|---|---|
+| ![The agent drew an arrow and a ring on the live camera feed to point at what it's describing; the marks track as the camera moves](docs/media/live.png) | ![The rotatable 3D part floating inside the camera frame, over the live view](docs/media/live-3d.png) |
+| *Draws marks straight on the camera feed, tracked to the object* | *Pins the rotatable 3D part in the frame (AR on phones)* |
+
+Live mode does more than talk: on-device VAD, Whisper, and Kokoro; semantic end-of-turn
+detection; barge-in with echo cancellation; and server-side grounding so a fast model still
+cites the right page. The whole feature set is in [docs/live-mode.md](docs/live-mode.md).
+
+### Run it locally
 
 ```bash
 git clone <this-repo> && cd takt
@@ -102,25 +127,9 @@ pnpm install
 pnpm dev                      # web on :3000, agent on :8787
 ```
 
-Open http://localhost:3000. A fresh clone ships with an empty catalog. The runtime DB
-(`data/takt.db`) is created from the schema on first boot, so your first step is to add a
-product, either from the `/admin` console or the CLI (see [Add a product](#add-a-product)).
-Once it's in, pick it in the picker and ask. Semantic search downloads a small local
-embedding model on first use (no API key) and falls back to lexical grep if it can't.
-
-Questions to try once you've ingested the Prusa MK4S handbook:
-
-- *"How do I run the Selftest calibration wizard?"*
-- *"Which flexible print sheet should I use first?"*
-- *"My extruder keeps clicking and filament won't come out. What should I check?"*
-
-![Live voice mode: the agent watches your camera and draws on the feed, here an arrow and a ring pointing at what it's describing, tracking as the camera moves](docs/media/live.png)
-
-Live mode does a lot more than talk: on-device VAD, Whisper, and Kokoro; semantic end-of-turn
-detection; barge-in with echo cancellation; server-side grounding so a fast model still cites
-the right page; and `show_overlay`, which pins the 3D part, a manual figure, a clip, or arrows
-drawn on your camera feed while it explains. The whole feature set is in
-[docs/live-mode.md](docs/live-mode.md).
+Open http://localhost:3000. A fresh clone ships with an empty catalog, so add a product from
+`/admin` or `pnpm ingest <folder>` (see [Add a product](#add-a-product)), then pick it and
+ask. To deploy your own Space, see [docs/hosting.md](docs/hosting.md).
 
 ---
 
@@ -130,9 +139,10 @@ Two ways in, both fully automatic. Drop **one folder** holding everything (PDF m
 3D models in subsystem subfolders, a walkthrough video, images, gcode) and Takt sorts it,
 reads it, and builds the index.
 
-**From the browser:** go to `/admin` → **Products & ingestion**, name the product, drop the
-folder (or pick files), optionally paste source links for web pages or YouTube, and add it.
-Takt shows the vision cost before anything paid runs, then streams live progress.
+**From the browser:** go to [/admin](https://yashwanttth-takt.hf.space/admin) → **Products &
+ingestion**, name the product, drop the folder (or pick files), optionally paste source links
+for web pages or YouTube, and add it. Takt shows the vision cost before anything paid runs,
+then streams live progress.
 
 ![The /admin console: per-product knowledge stats and the add-product form](docs/media/admin-products.png)
 
@@ -163,18 +173,21 @@ The product shows up in the picker immediately, no redeploy. Full details in
 Takt exposes its grounded tools as an MCP server over Streamable HTTP, so Claude, ChatGPT, or
 any MCP client can query a product's knowledge graph with the same tools the agent uses
 (`list_products`, `find_entity`, `explore_entity`, `trace_path`, `search_product`,
-`get_media`, `read_profile`). Point a client at `<your-host>/mcp`, or with Claude Code:
+`get_media`, `read_profile`). Point a client at the hosted server, or with Claude Code:
 
 ```bash
-claude mcp add --transport http takt http://localhost:3000/mcp
+claude mcp add --transport http takt https://yashwanttth-takt.hf.space/mcp
 ```
+
+Running locally, it's `http://localhost:3000/mcp`.
 
 ---
 
 ## Configure models and keys
 
-Everything sensitive lives at `/admin` (typed URL only, gated by `TAKT_ADMIN_TOKEN` when
-deployed, open in local dev). The **Models & API keys** tab is where you paste provider keys
+Everything sensitive lives at [/admin](https://yashwanttth-takt.hf.space/admin) (typed URL
+only, gated by `TAKT_ADMIN_TOKEN` when deployed, open in local dev). The **Models & API keys**
+tab is where you paste provider keys
 and choose the model for each job: a chat model for gathering, a compose model for the canvas,
 a live-voice model, an ingestion (vision) model, and the reasoning effort. Keys are encrypted
 at rest and only the last 4 digits are shown.
@@ -200,8 +213,9 @@ A pnpm monorepo:
 | `packages/profile` | the OKF Profile store, local embeddings, hybrid graph retrieval |
 | `packages/shared` | shared types and the SSE + live-voice wire protocols |
 
-The web app also runs the on-device voice stack (`apps/web/src/lib/live/`: VAD, Whisper,
-Kokoro in a Web Worker) and the live UI (`apps/web/src/components/live/`).
+The web app also runs the on-device voice stack (`apps/web/src/lib/live/`: Silero VAD, Whisper,
+Kokoro, Smart-Turn, with the heavy models in a Web Worker) and the live UI
+(`apps/web/src/components/live/`).
 
 ---
 

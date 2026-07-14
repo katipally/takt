@@ -8,8 +8,9 @@ import { FeedOverlay } from "./OverlayLayer";
 
 // A floating camera tile during a live video call. VIEWPORT-fixed and above
 // every other surface (canvas, modals, rail) — the user's live view + the
-// agent's AR marks must never be buried under app chrome. Draggable from
-// anywhere on it, corner-resizable, clamped to the window.
+// agent's AR marks must never be buried under app chrome. Moved from a dedicated
+// top-left handle and resized from the bottom-right corner (so interacting with
+// the feed or an overlay never moves it), clamped to the window.
 export function CameraPiP({ stream }: { stream: MediaStream | null }) {
   const overlay = useLiveStore((s) => s.overlay);
   const vidRef = useRef<HTMLVideoElement>(null);

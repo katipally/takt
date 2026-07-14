@@ -1,7 +1,7 @@
 // Idempotent schema. The DB holds app state + metadata + the product KNOWLEDGE
 // GRAPH (entities/edges/kg_chunks/kg_media + FTS). Page images/captions also live
-// here; the semantic vector store lives beside the markdown Profile bundle
-// (data/products/<slug>/.index/vectors.bin). All built once at ingest.
+// here. The semantic vectors are BLOB columns on the entity/chunk/media rows
+// themselves (no on-disk vectors file); everything is built once at ingest.
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS products (
   id           TEXT PRIMARY KEY,

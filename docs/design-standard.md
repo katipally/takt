@@ -44,9 +44,13 @@ model to continue (up to 2 rounds) and concatenates.
 build_canvas / edit_canvas
   → read_design (modules)  →  PLAN (prose)  →  <takt:canvas> page </takt:canvas>
   → stop_reason max_tokens? → "continue exactly where you stopped" (up to 2 rounds)
-  → sanitize (asset allowlist, on* handlers) + grep-lint + one self-correct
-  → canvas_end ................ the paint; no post-render verify loop
+  → sanitize (asset allowlist, on* handlers) + grep-lint (one self-correct)
+  → spec fact-check (checkSpecValues, one repair round) → canvas_end with specCheck → the paint
 ```
+
+The one post-generation check is deterministic, not a render loop: every number and unit on the
+page must exist in the facts the turn gathered or the product graph, else one repair round. Its
+result rides `canvas_end` as `specCheck` and shows as the "N values verified" badge.
 
 ## CRAFT CORE (the non-negotiables)
 

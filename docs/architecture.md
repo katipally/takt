@@ -97,7 +97,7 @@ flowchart TD
   link --> done[("Graph + Profile in takt.db")]
 ```
 
-A few things worth knowing:
+Some specifics:
 
 - **Page captions are cached** in the DB keyed by page, so re-ingesting an unchanged manual
   skips the expensive vision pass. The Profile bundle is rebuilt from scratch each run.
@@ -197,14 +197,19 @@ text HTML page between `<takt:canvas>` markers.
 build_canvas / edit_canvas
   → read_design (modules)  →  PLAN (prose)  →  <takt:canvas> page </takt:canvas>
   → stop_reason max_tokens? → "continue where you stopped" (up to 2 rounds), concat
-  → sanitize (asset allowlist, strip on*= and javascript:) + grep-lint + one self-correct
-  → canvas_end → the paint, no post-render verify loop
+  → sanitize (asset allowlist, strip on*= and javascript:) + grep-lint (one self-correct)
+  → spec fact-check: every number+unit on the page must exist in the gathered facts / graph
+    (one repair round) → canvas_end with specCheck → the paint
 ```
 
-An earlier version ran a Playwright + vision verify loop after the paint. It got deleted: it
-silently no-op'd when chromium wasn't available, used the build model to judge its own output,
-and only caught two geometry classes. The investment moved upstream, into the skeletons and
-the plan-first contract, where it catches more for less.
+There's no post-render *rendering* verify loop. An earlier version ran a Playwright + vision
+loop after the paint and got deleted: it silently no-op'd when chromium wasn't available, used
+the build model to judge its own output, and only caught two geometry classes. What replaced it
+is deterministic and upstream: the blessed skeletons, the plan-first contract, and a
+number-and-unit fact-check (`checkSpecValues`) that runs on every build and edit. It matches
+each value on the page against the facts the turn gathered and the product graph, asks for one
+repair round if something doesn't line up, and ships the result on `canvas_end` as `specCheck`,
+which is the "N values verified" badge on the finished page.
 
 The finished page renders in an `<iframe sandbox srcdoc>` with an opaque origin. Its CSS/JS
 can't collide with or reach the app, and that isolation (not sanitization) is the security
@@ -264,7 +269,7 @@ One JSON object per `data:` line (defined in `packages/shared/src/sse-events.ts`
 | `reasoning_delta` | a chunk of streamed reasoning |
 | `tool_start` / `tool_done` | a tool started / finished (drives the "Searching the manual…" hint), matched by id; `lane` tags main vs. background build |
 | `source` | a manual page/crop cited as a source (opens in the source modal) |
-| `canvas_start` / `canvas_delta` / `canvas_end` | the canvas: `canvas_start` opens the shell, `canvas_delta` carries the decoded HTML so far and is painted live as an inert preview, `canvas_end` delivers the authoritative sanitized + linted page |
+| `canvas_start` / `canvas_delta` / `canvas_end` | the canvas: `canvas_start` opens the shell, `canvas_delta` carries the decoded HTML so far and is painted live as an inert preview, `canvas_end` delivers the authoritative sanitized + linted page and its `specCheck` (`{checked, flagged}`, the "N values verified" badge) |
 | `canvas_error` | the canvas build failed; the client clears the skeleton |
 | `canvas_highlight` | ring + scroll a canvas block into view by its `data-takt-id` (empty clears) |
 | `live_overlay` | live voice: pin/replace/clear the visual over the live view |
@@ -290,7 +295,7 @@ are handled correctly.
 - **Vision-caption every page.** The manuals are mostly diagrams and tables. A vision pass
   turns each page into searchable text and structured entities (a spec's exact value ends up
   on the graph node even when the page text defers to an online table). The captions and parse
-  are the quality moat.
+  are where most of the quality comes from.
 - **Canvas in a sandboxed iframe.** The model writes one HTML page rendered with an opaque
   origin, so its CSS/JS can't reach the app. That isolation is the security boundary.
 - **Voice on-device.** STT/TTS/VAD in the browser means privacy (no audio leaves the machine),

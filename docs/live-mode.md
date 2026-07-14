@@ -31,8 +31,9 @@ flowchart LR
   tts --> spk["Speaker"]
 ```
 
-Everything left of the WebSocket runs in a Web Worker in your browser. The worker stays warm for
-the whole tab, so reopening a call is instant.
+Everything left of the WebSocket runs on-device in your browser. The heavy models (Whisper, Kokoro,
+Smart-Turn) run in a Web Worker that stays warm for the whole tab, so reopening a call is instant;
+the VAD runs in an audio worklet and the turn logic on the main thread.
 
 ## The on-device stack
 
@@ -76,9 +77,9 @@ reply as "spoken" only when it actually starts playing, so the sentence it had s
 but never voiced doesn't get saved as if it were said. The server keeps only that spoken prefix,
 and history stays clean: you, then it, then you.
 
-The trick that makes this reliable is echo cancellation. The reply audio is routed through a
-hidden `<audio>` element that Chrome's echo canceller can see (Web Audio output alone is invisible
-to it), so the agent's own voice is removed from the mic and can't trigger a false interruption.
+Echo cancellation keeps this reliable. The reply audio is routed through a hidden `<audio>`
+element that Chrome's echo canceller can see (Web Audio output alone is invisible to it), so the
+agent's own voice is removed from the mic and can't trigger a false interruption.
 
 ## Talking as it thinks
 
@@ -122,9 +123,10 @@ The **`look`** tool grabs a fresh, higher-resolution frame on demand (1280px vs 
 samples) so the model can read a small label or serial number when it needs to. If the camera is
 off, it asks you to turn it on rather than guessing.
 
-Not every model can see. MiniMax models are voice-only (their endpoint takes no images), so the
-model picker warns "can't see, pick a vision model" and Takt prefers a vision-capable provider
-for live when one has a key.
+Not every model can see, and Takt reads that from the model metadata (models.dev), not a guess.
+MiniMax-M3 takes image input, so it works with the camera; the older M2.x line is text-only. When
+the picked model can't see, the picker warns "can't see, pick a vision model," and Takt prefers a
+vision-capable model for live when one has a key.
 
 ## Showing you things while it talks
 
@@ -220,7 +222,8 @@ session.
 ## Choosing a live model
 
 Live has its own model setting at `/admin`, separate from chat, so you can run a fast model here
-while chat uses a stronger one. The curated fast picks are `claude-haiku-4-5` (vision, about 600ms
-to first token), `gpt-5-mini` / `gpt-5-nano`, and MiniMax's highspeed models (voice-only). The
-picker still lets you choose any model; it just warns when the one you picked can't see the camera.
-See [architecture.md](architecture.md) for how live fits the rest of the system.
+while chat uses a stronger one. The curated fast picks are `claude-haiku-4-5` (vision, quick to
+first token), `gpt-5-mini` / `gpt-5-nano`, and `MiniMax-M3` (1M context, vision) with
+`MiniMax-M2.5-highspeed` as the fastest voice-only option. The picker lets you choose any model;
+it just warns when the one you picked can't see the camera. See
+[architecture.md](architecture.md) for how live fits the rest of the system.
