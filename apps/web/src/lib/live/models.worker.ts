@@ -84,9 +84,15 @@ self.onmessage = async (e: MessageEvent) => {
         turnSession = await ort.InferenceSession.create(buf, { executionProviders: ["wasm"] });
       } catch (err) { console.warn("[live] Smart-Turn unavailable:", err); turnSession = null; turnProc = null; }
       // Warm up (compiles WebGPU shaders) so the first real turn isn't janky.
-      try { await asr(new Float32Array(16000)); } catch { /* */ }
-      try { await tts.generate("Hi.", { voice: VOICE }); } catch { /* */ }
-      if (turnSession && turnProc) { try { await turnComplete(new Float32Array(16000)); } catch { /* */ } }
+      // ONLY on WebGPU: on the WASM/mobile tier there are no shaders to compile,
+      // so warm-up buys nothing — it just allocates a second set of inference
+      // buffers on top of the three resident model weights, and that peak is what
+      // OOM-crashes (and auto-reloads) a real phone mid-download. Skip it there.
+      if (device === "webgpu") {
+        try { await asr(new Float32Array(16000)); } catch { /* */ }
+        try { await tts.generate("Hi.", { voice: VOICE }); } catch { /* */ }
+        if (turnSession && turnProc) { try { await turnComplete(new Float32Array(16000)); } catch { /* */ } }
+      }
       post({ type: "ready", turn: !!(turnSession && turnProc) });
     } else if (msg.type === "stt") {
       const text = await serial(async () => String((await asr(msg.audio))?.text ?? "").trim());

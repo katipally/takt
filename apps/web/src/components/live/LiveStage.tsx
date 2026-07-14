@@ -76,15 +76,24 @@ export function PreCall({ mics, cams, micId, camId, onMic, onCam, error, modelsD
           )}
         </div>
 
-        <CameraPreview camId={camId} onGranted={refreshDevices} />
-        <MicMeter micId={micId} onGranted={refreshDevices} />
+        {/* The camera preview (continuous video decode) is the heaviest concurrent
+            memory/GPU consumer. Release it — and the mic AudioContext — during the
+            one-time model download so their memory isn't stacked under ~150MB of
+            WASM model weights, which OOM-crashes real phones mid-download. They
+            remount (permission already granted) once models are ready, for framing. */}
+        {!downloading && (
+          <>
+            <CameraPreview camId={camId} onGranted={refreshDevices} />
+            <MicMeter micId={micId} onGranted={refreshDevices} />
 
-        <div className="w-full max-w-xs space-y-2">
-          <DeviceSelect icon={Mic} name="Microphone" opts={mics} value={micId} onChange={onMic} />
-          <DeviceSelect icon={Video} name="Camera" opts={cams} value={camId} onChange={onCam} />
-        </div>
+            <div className="w-full max-w-xs space-y-2">
+              <DeviceSelect icon={Mic} name="Microphone" opts={mics} value={micId} onChange={onMic} />
+              <DeviceSelect icon={Video} name="Camera" opts={cams} value={camId} onChange={onCam} />
+            </div>
 
-        <ModelQuickPick onOpenSettings={onOpenSettings} />
+            <ModelQuickPick onOpenSettings={onOpenSettings} />
+          </>
+        )}
 
         {downloading ? (
           <div className="flex flex-col items-center gap-2">

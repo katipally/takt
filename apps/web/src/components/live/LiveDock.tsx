@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { X } from "lucide-react";
 import { useLiveStore } from "@/lib/live/liveStore";
@@ -26,6 +26,15 @@ export function LiveDock({ chatId, productSlug, onExit }: { chatId: string; prod
 
   const end = () => { stop(); onExit(); };
 
+  // Backdrop dismiss must fire ONLY on a genuine backdrop press — the press has to
+  // both start and end on the backdrop itself. Without this, iOS Safari retargets
+  // a tap's synthetic `click` to whatever is underneath when the tapped element is
+  // removed mid-gesture. Tapping "Download AI models" swaps the button out for the
+  // progress bar on the same tap, so the click fell through to this backdrop and
+  // closed Live straight back to chat — only on real phones (desktop doesn't
+  // retarget), which is why it reproduced on a device but not in emulation.
+  const pressedBackdrop = useRef(false);
+
   return (
     <>
       {/* setup modal — only before the call is live */}
@@ -35,7 +44,9 @@ export function LiveDock({ chatId, productSlug, onExit }: { chatId: string; prod
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
             {/* faint dim only (NO backdrop-blur of the whole section) + click-to-close;
                 separation comes from the modal's own lift, not a blurred stage. */}
-            <div className="absolute inset-0 bg-background/25" onClick={end} />
+            <div className="absolute inset-0 bg-background/25"
+              onPointerDown={(e) => { pressedBackdrop.current = e.target === e.currentTarget; }}
+              onClick={(e) => { if (e.target === e.currentTarget && pressedBackdrop.current) end(); }} />
             <motion.div
               initial={{ opacity: 0, y: 24, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 16, scale: 0.97 }}
               transition={{ type: "spring", stiffness: 320, damping: 30 }}
