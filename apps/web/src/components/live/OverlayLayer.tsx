@@ -226,9 +226,18 @@ export function FeedOverlay({ overlay, videoDim }: { overlay: LiveOverlay | null
             {onFeed.kind === "marks" && (onFeed.marks ?? []).flatMap((m, i) =>
               m.shape === "label" && m.at ? [<Bubble key={`l${i}`} at={px(m.at)} text={m.text ?? ""} />] : [])}
 
-            {/* note pin */}
-            {onFeed.kind === "note" && (
-              <Bubble at={px(onFeed.anchor ?? { x: 0.5, y: 0.5 })} text={onFeed.caption ?? ""} onDismiss={() => set({ overlay: null })} dot />
+            {/* note — a draggable label on the feed (grab it anywhere to move) */}
+            {onFeed.kind === "note" && onFeed.caption && (
+              <motion.div data-overlay-interactive onPointerDown={startPinDrag}
+                className="pointer-events-auto absolute cursor-grab touch-none active:cursor-grabbing" style={{ transform: "translate(-50%, -50%)" }}
+                animate={{ left: (manual ?? px(onFeed.anchor ?? { x: 0.5, y: 0.5 })).x, top: (manual ?? px(onFeed.anchor ?? { x: 0.5, y: 0.5 })).y }}
+                transition={manual || !onFeed.anchor ? { duration: 0 } : GLIDE}>
+                <div className="flex max-w-[220px] items-start gap-1.5 rounded-lg bg-black/78 px-2.5 py-1.5 text-[12px] leading-snug text-white shadow-lg backdrop-blur">
+                  <span>{onFeed.caption}</span>
+                  <button onPointerDown={(e) => e.stopPropagation()} onClick={() => set({ overlay: null })} aria-label="Dismiss note"
+                    className="mt-0.5 shrink-0 opacity-70 hover:opacity-100"><X size={11} /></button>
+                </div>
+              </motion.div>
             )}
 
             {/* model / figure floating IN the frame. Anchored → sits above the
@@ -258,7 +267,6 @@ export function FeedOverlay({ overlay, videoDim }: { overlay: LiveOverlay | null
                   <button onClick={() => set({ overlay: null })} aria-label="Dismiss"
                     className="absolute right-1 top-1 rounded-full bg-black/50 p-1 text-white/80 hover:text-white"><X size={10} /></button>
                 </div>
-                {pinAnchored && <div className="mx-auto mt-1 h-2.5 w-2.5 rounded-full border-2 border-white bg-accent shadow" />}
               </motion.div>
             )}
 
@@ -303,16 +311,13 @@ function Mark({ m, px, minDim }: { m: OverlayMark; px: (p: { x: number; y: numbe
   return null; // labels render as DOM bubbles
 }
 
-function Bubble({ at, text, onDismiss, dot }: { at: { x: number; y: number }; text: string; onDismiss?: () => void; dot?: boolean }) {
+// A small text tag for a "label" mark (marks track the object; labels ride along).
+function Bubble({ at, text }: { at: { x: number; y: number }; text: string }) {
   if (!text) return null;
   return (
-    <motion.div className="absolute" style={{ transform: "translate(-50%, -100%)" }}
+    <motion.div className="pointer-events-none absolute" style={{ transform: "translate(-50%, -100%)" }}
       animate={{ left: at.x, top: at.y }} transition={GLIDE}>
-      <div data-overlay-interactive className="pointer-events-auto flex max-w-[220px] items-start gap-1.5 rounded-lg bg-black/75 px-2.5 py-1.5 text-[12px] leading-snug text-white shadow-lg backdrop-blur">
-        <span>{text}</span>
-        {onDismiss && <button onClick={onDismiss} aria-label="Dismiss note" className="mt-0.5 shrink-0 opacity-70 hover:opacity-100"><X size={11} /></button>}
-      </div>
-      {dot && <div className="mx-auto mt-1 h-2.5 w-2.5 rounded-full border-2 border-white bg-accent shadow" />}
+      <div className="max-w-[220px] rounded-lg bg-black/75 px-2.5 py-1.5 text-[12px] leading-snug text-white shadow-lg backdrop-blur">{text}</div>
     </motion.div>
   );
 }

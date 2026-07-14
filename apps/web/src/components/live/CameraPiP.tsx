@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Video } from "lucide-react";
+import { Video, Move } from "lucide-react";
 import { useLiveStore } from "@/lib/live/liveStore";
 import { MarkTracker, trackables, applyTrack } from "@/lib/live/markTracker";
 import { FeedOverlay } from "./OverlayLayer";
@@ -68,12 +68,11 @@ export function CameraPiP({ stream }: { stream: MediaStream | null }) {
     return { x: Math.max(8, Math.min(x, window.innerWidth - w - 8)), y: Math.max(8, Math.min(y, window.innerHeight - h - 8)) };
   };
 
+  // Moving the tile happens ONLY from the dedicated move handle (top-left),
+  // exactly like resize is only from its corner — so interacting with the feed,
+  // the 3D part, or a pinned overlay can never move the camera by accident.
   const onDrag = (e: React.PointerEvent) => {
-    // The resize handle and any interactive overlay element (a pinned 3D
-    // model/figure, its drag handle, a note) own their own pointer — orbiting
-    // the 3D part or moving a pin must NOT drag the whole camera tile.
-    if ((e.target as HTMLElement).closest("[data-resize], [data-overlay-interactive]")) return;
-    e.preventDefault();
+    e.preventDefault(); e.stopPropagation();
     const startX = e.clientX, startY = e.clientY, ox = pos.x, oy = pos.y;
     const h = size * 0.75;
     const move = (ev: PointerEvent) => setPos(clamp(ox + (ev.clientX - startX), oy + (ev.clientY - startY), size, h));
@@ -90,9 +89,9 @@ export function CameraPiP({ stream }: { stream: MediaStream | null }) {
   };
 
   return (
-    <div ref={boxRef} onPointerDown={onDrag}
+    <div ref={boxRef}
       style={{ left: pos.x < 0 ? undefined : pos.x, top: pos.y < 0 ? undefined : pos.y, width: size, height: size * 0.75, right: pos.x < 0 ? 16 : undefined, bottom: pos.y < 0 ? 96 : undefined, opacity: pos.x < 0 ? 0 : 1 }}
-      className="group fixed z-[60] cursor-grab touch-none overflow-hidden rounded-2xl border border-border/60 bg-black shadow-2xl shadow-black/40 active:cursor-grabbing">
+      className="group fixed z-[60] touch-none overflow-hidden rounded-2xl border border-border/60 bg-black shadow-2xl shadow-black/40">
       {stream
         ? <video ref={vidRef} autoPlay muted playsInline className="h-full w-full object-cover"
             onLoadedMetadata={(e) => setVideoDim({ vw: e.currentTarget.videoWidth, vh: e.currentTarget.videoHeight })} />
@@ -100,9 +99,15 @@ export function CameraPiP({ stream }: { stream: MediaStream | null }) {
       {/* the agent's AR layer on the live view — marks (arrows/rings/paths),
           note pins, and in-feed 3D/figure tiles, tracked to the object */}
       <FeedOverlay overlay={overlay} videoDim={videoDim} />
+      {/* MOVE handle — top-left, the ONLY way to move the tile (mirrors resize).
+          Keeps interacting with the feed/overlays from moving it by accident. */}
+      <span onPointerDown={onDrag} title="Drag to move" aria-label="Move camera"
+        className="absolute left-1.5 top-1.5 z-30 grid size-7 cursor-grab place-items-center rounded-lg bg-black/55 text-white/75 opacity-0 backdrop-blur transition hover:bg-black/70 group-hover:opacity-100 active:cursor-grabbing">
+        <Move className="size-3.5" />
+      </span>
       {/* resize handle */}
       <span data-resize onPointerDown={onResize}
-        className="absolute bottom-0 right-0 size-5 cursor-nwse-resize opacity-0 transition group-hover:opacity-100"
+        className="absolute bottom-0 right-0 z-30 size-5 cursor-nwse-resize opacity-0 transition group-hover:opacity-100"
         style={{ background: "linear-gradient(135deg, transparent 50%, rgba(255,255,255,.5) 50%)" }} />
     </div>
   );
