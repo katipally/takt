@@ -125,6 +125,8 @@ The **`show_overlay`** tool pins one visual over your camera view while the agen
 the remote-expert surface. Overlays are ephemeral: a new one replaces the last, and `clear` takes
 it down. Nothing persists.
 
+![Ask for a part in a live call and the agent pins the rotatable 3D model while it talks](media/live-overlay.png)
+
 | Overlay | What it is |
 |---|---|
 | `model` | the rotatable 3D part (`<model-viewer>`), with AR placement on phones (WebXR / Scene Viewer / Quick Look) |
