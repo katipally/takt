@@ -153,14 +153,7 @@ function Showcase({ products, active, setActive, product }: {
         <h1 className="text-[22px] font-semibold tracking-tight">{product.name}</h1>
       </div>
 
-      {/* Below the hero: connect this catalog's graph tools to any MCP client,
-          and SEE the knowledge graph the answers walk. */}
-      <div data-reveal>
-        <McpConnect productName={product.name} />
-        <KnowledgeGraph key={product.slug} slug={product.slug} />
-      </div>
-
-      {/* Suggested questions */}
+      {/* Suggested questions — the ask-first funnel stays right under the hero. */}
       <div data-reveal className="mt-7">
         <div className="mb-2.5 flex items-center gap-1.5 text-[11px] uppercase tracking-[0.14em] text-faint">
           <Sparkles className="size-3.5" /> Suggested questions
@@ -177,8 +170,14 @@ function Showcase({ products, active, setActive, product }: {
         </div>
       </div>
 
-      {/* Scroll past the questions → the product's resources + the explorable
-          knowledge graph we built from them. */}
+      {/* Then the deeper layer: connect the graph tools to any MCP client, and
+          EXPLORE the knowledge graph itself alongside the ingested resources. */}
+      <div data-reveal>
+        <McpConnect productName={product.name} />
+        <KnowledgeGraph key={product.slug} slug={product.slug} />
+      </div>
+
+      {/* The product's resources — manuals, 3D parts, media, authored docs. */}
       <ResourcesSection key={product.slug} slug={product.slug} />
     </div>
   );

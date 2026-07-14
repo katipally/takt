@@ -357,25 +357,26 @@ export function graphExists(productId: string): boolean {
   return (db().prepare(`SELECT 1 FROM entities WHERE product_id = ? LIMIT 1`).get(productId)) != null;
 }
 
-/** A display sample of the graph: the most-connected entities plus every edge
- *  among them — enough to VISUALIZE the product's knowledge shape without
- *  shipping all 800+ nodes to the browser. */
-export function graphSample(productId: string, limit = 60): {
-  nodes: { id: string; type: string; name: string; degree: number }[];
+/** The COMPLETE graph for the interactive explorer — every entity (with its
+ *  measured value, page, and summary for the detail panel) and every edge.
+ *  A product graph is small (hundreds of nodes), so ship it whole and let the
+ *  client traverse it. */
+export function graphFull(productId: string): {
+  nodes: { id: string; type: string; name: string; degree: number; summary: string; value: string | null; unit: string | null; page: number | null }[];
   links: { src: string; dst: string; rel: string }[];
 } {
   const nodes = db().prepare(
-    `SELECT e.id, e.type, e.name, COUNT(ed.id) AS degree
+    `SELECT e.id, e.type, e.name, e.summary, e.page,
+            json_extract(e.attrs_json, '$.value') AS value,
+            json_extract(e.attrs_json, '$.unit')  AS unit,
+            COUNT(ed.id) AS degree
      FROM entities e
      LEFT JOIN edges ed ON (ed.src = e.id OR ed.dst = e.id)
      WHERE e.product_id = ?
      GROUP BY e.id
-     ORDER BY degree DESC, e.name
-     LIMIT ?`,
-  ).all(productId, limit) as { id: string; type: string; name: string; degree: number }[];
-  const ids = new Set(nodes.map((n) => n.id));
-  const links = (db().prepare(`SELECT src, dst, rel FROM edges WHERE product_id = ?`).all(productId) as { src: string; dst: string; rel: string }[])
-    .filter((l) => ids.has(l.src) && ids.has(l.dst));
+     ORDER BY degree DESC, e.name`,
+  ).all(productId) as { id: string; type: string; name: string; degree: number; summary: string; value: string | null; unit: string | null; page: number | null }[];
+  const links = db().prepare(`SELECT src, dst, rel FROM edges WHERE product_id = ?`).all(productId) as { src: string; dst: string; rel: string }[];
   return { nodes, links };
 }
 
