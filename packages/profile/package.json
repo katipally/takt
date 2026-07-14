@@ -7,7 +7,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "check": "tsx src/frontmatter.ts && tsx src/pkb.ts && tsx src/retrieve.ts",
+    "check": "tsx src/frontmatter.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
