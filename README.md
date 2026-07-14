@@ -114,7 +114,7 @@ Questions to try once you've ingested the Prusa MK4S handbook:
 - *"Which flexible print sheet should I use first?"*
 - *"My extruder keeps clicking and filament won't come out. What should I check?"*
 
-![Live voice mode: speak to Takt and it answers out loud, running the voice stack in your browser](docs/media/voice.png)
+![Live voice mode: the agent watches your camera and draws on the feed, here an arrow and a ring pointing at what it's describing, tracking as the camera moves](docs/media/live.png)
 
 Live mode does a lot more than talk: on-device VAD, Whisper, and Kokoro; semantic end-of-turn
 detection; barge-in with echo cancellation; server-side grounding so a fast model still cites
@@ -207,16 +207,16 @@ Kokoro in a Web Worker) and the live UI (`apps/web/src/components/live/`).
 
 ## Docs
 
-- [architecture.md](docs/architecture.md) — the whole system: processes, the chat and live
-  flows, the canvas, and the SSE protocol, with diagrams.
-- [ingestion.md](docs/ingestion.md) — how a folder becomes a knowledge graph, and how it's
+- [architecture.md](docs/architecture.md): the whole system, with diagrams. Processes, the
+  chat and live flows, the canvas, and the SSE protocol.
+- [ingestion.md](docs/ingestion.md): how a folder becomes a knowledge graph, and how it's
   stored (the pipeline, the vision parse, the graph build, the SQLite schema).
-- [live-mode.md](docs/live-mode.md) — the full live voice feature set, on-device stack, and
+- [live-mode.md](docs/live-mode.md): the full live voice feature set, on-device stack, and
   the `/live` protocol.
-- [adding-a-product.md](docs/adding-a-product.md) — the file-type table and the ingest flags.
-- [design-standard.md](docs/design-standard.md) — the canvas design system.
-- [hosting.md](docs/hosting.md) — deploying your own on a free Hugging Face Space (for
-  operators).
+- [adding-a-product.md](docs/adding-a-product.md): the file-type table and the ingest flags.
+- [design-standard.md](docs/design-standard.md): the canvas design system.
+- [hosting.md](docs/hosting.md): deploying your own on a free Hugging Face Space (operator
+  guide).
 
 ---
 

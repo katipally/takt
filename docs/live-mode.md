@@ -1,11 +1,18 @@
 # Live voice mode
 
 Live mode is a real conversation with your product manual. You talk, Takt listens, answers out
-loud, and can watch your camera and pin visuals over what you're holding. The whole voice stack
-runs on-device in your browser, so no audio ever leaves your machine. The server only ever sees
-text and the occasional camera frame.
+loud, and watches your camera. It draws on the live view and pins the 3D part right over what
+you're holding, like a remote expert leaning in over a video call. The whole voice stack runs
+on-device in your browser, so no audio ever leaves your machine. The server only ever sees text
+and the occasional camera frame.
 
-![The live call: the composer becomes a voice bar, the camera is a draggable tile, and the transcript lands in the chat rail](media/voice.png)
+![Live call on a real camera: the agent drew an arrow and a ring on the feed to point at what it's talking about, and the marks track as the camera moves](media/live.png)
+
+Everything the agent puts on screen is live and interactive. Here it drew an arrow and a ring
+straight onto the camera feed to point at what it's describing, and those marks follow the object
+as the camera moves. The camera tile has a dedicated move handle (top-left) and a resize corner
+(bottom-right), so you reposition it on purpose and never by accident while you're interacting
+with the feed.
 
 ## How a turn flows
 
@@ -125,7 +132,13 @@ The **`show_overlay`** tool pins one visual over your camera view while the agen
 the remote-expert surface. Overlays are ephemeral: a new one replaces the last, and `clear` takes
 it down. Nothing persists.
 
-![Ask for a part in a live call and the agent pins the rotatable 3D model while it talks](media/live-overlay.png)
+![The rotatable 3D part floating inside the camera frame, over the live view, with its own drag handle](media/live-3d.png)
+
+The 3D part floats right inside the camera frame, over your live view, so you compare the real
+thing and the model side by side. Orbit and zoom it, or drag it by its handle to move it off
+whatever it's covering. Marks, notes, and the pinned part are all movable, and interacting with
+any of them never disturbs the camera tile. On a phone, the same part opens in AR to place it in
+your space.
 
 | Overlay | What it is |
 |---|---|
