@@ -9,7 +9,16 @@ export const dynamic = "force-dynamic";
 //             locally too); this is the command the UI leads with.
 //   • stdio — only meaningful on the machine that runs Takt from source.
 export function GET(req: Request) {
-  const origin = new URL(req.url).origin;
+  // Behind a hosting proxy (HF Spaces, any LB) req.url carries the INTERNAL
+  // container host — use the platform host / forwarded headers for the public
+  // origin, falling back to the request origin for plain local dev.
+  const fwdHost = req.headers.get("x-forwarded-host");
+  const proto = req.headers.get("x-forwarded-proto") ?? "https";
+  const origin = process.env.SPACE_HOST
+    ? `https://${process.env.SPACE_HOST}`
+    : fwdHost
+      ? `${proto}://${fwdHost.split(",")[0]!.trim()}`
+      : new URL(req.url).origin;
   return NextResponse.json({
     httpUrl: `${origin}/mcp`,
     httpCommand: `claude mcp add --transport http takt ${origin}/mcp`,
