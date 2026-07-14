@@ -11,7 +11,7 @@
 // in the parent; model-viewer is vendored same-origin.
 (function () {
   "use strict";
-  var M = { ready: "takt:ready", size: "takt:size", cite: "takt:cite", lightbox: "takt:lightbox", action: "takt:action", select: "takt:select", theme: "takt:theme", highlight: "takt:highlight", wheel: "takt:wheel" };
+  var M = { ready: "takt:ready", size: "takt:size", cite: "takt:cite", lightbox: "takt:lightbox", action: "takt:action", select: "takt:select", theme: "takt:theme", highlight: "takt:highlight", wheel: "takt:wheel", stream: "takt:stream" };
   function send(type, payload) { try { parent.postMessage(Object.assign({ __takt: 1, type: type }, payload || {}), "*"); } catch (e) {} }
   var MODELVIEWER_URL = "/vendor/model-viewer.min.js";
   var SVGNS = "http://www.w3.org/2000/svg";
@@ -226,11 +226,28 @@
     send(M.wheel, { dx: e.deltaX, dy: e.deltaY });
   }, { passive: true });
 
+  /* ---------- live streaming preview ----------
+     While the page is still composing, the parent posts the sanitized partial
+     HTML here and we paint it INERT: innerHTML never executes <script>, and the
+     heavy islands (3D / video / mermaid) are swapped for placeholder boxes so
+     they don't re-initialize on every delta. The finished document (scripts,
+     real islands) replaces the whole frame via srcdoc when the stream ends. */
+  function streamUpdate(html) {
+    var page = document.querySelector(".takt-page"); if (!page) return;
+    html = String(html || "")
+      .replace(/<script(?![\s\S]*<\/script>)[\s\S]*$/i, "") // unclosed trailing <script>
+      .replace(/<[^>]*$/, "")                               // trailing half-tag
+      .replace(/<(takt-model|takt-video|takt-mermaid)\b[\s\S]*?(?:<\/\1>|$)/gi, '<div class="takt-preview-pending"></div>');
+    page.innerHTML = html;
+    schedule();
+  }
+
   /* ---------- inbound messages from parent ---------- */
   addEventListener("message", function (e) {
     if (e.source !== parent) return; var d = e.data; if (!d || typeof d !== "object") return;
     if (d.type === M.theme) { applyTheme(d.dark); schedule(); }
     else if (d.type === M.highlight) { highlight(d.id || ""); }
+    else if (d.type === M.stream) { streamUpdate(d.html); }
   });
 
   /* ---------- boot ---------- */

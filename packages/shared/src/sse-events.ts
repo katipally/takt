@@ -6,10 +6,10 @@ import { askQuestionSchema, askAnswerSchema } from "./ask-spec";
 // dumb byte-pass-through proxy; the chat-stream hook decodes them.
 //
 // The canvas is streamed as raw HTML: `canvas_start` opens it, `canvas_delta`
-// carries the full decoded HTML so far (idempotent replace; kept in the store
-// and persisted, so an interrupted stream still leaves a partial page — the
-// client paints only the finished page), and `canvas_end` delivers the
-// authoritative sanitized+linted full page.
+// carries the full sanitized HTML so far (idempotent replace; painted live as
+// an inert preview, and persisted so an interrupted stream still leaves a
+// partial page), and `canvas_end` delivers the authoritative sanitized+linted
+// full page (scripts run only then).
 
 export const sseEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("text_delta"), text: z.string() }),
@@ -32,11 +32,16 @@ export const sseEventSchema = z.discriminatedUnion("type", [
   }),
   // ── canvas (streamed HTML) ──
   // canvas_start opens a canvas (title shell); canvas_delta carries the full
-  // decoded HTML so far (crash-resilience only — not painted live); canvas_end
-  // is the authoritative sanitized + linted full page under the same canvasId.
+  // sanitized HTML so far (painted live as an inert preview + crash-resilient
+  // persistence); canvas_end is the authoritative sanitized + linted full page
+  // under the same canvasId. specCheck reports the deterministic number+unit
+  // fact-check of the page against the facts gathered this turn.
   z.object({ type: z.literal("canvas_start"), canvasId: z.string(), title: z.string().optional() }),
   z.object({ type: z.literal("canvas_delta"), canvasId: z.string(), html: z.string() }),
-  z.object({ type: z.literal("canvas_end"), canvasId: z.string(), html: z.string(), title: z.string().optional() }),
+  z.object({
+    type: z.literal("canvas_end"), canvasId: z.string(), html: z.string(), title: z.string().optional(),
+    specCheck: z.object({ checked: z.number(), flagged: z.number() }).optional(),
+  }),
   // The canvas build failed to produce a usable page (empty/contentless output,
   // or an error). The client clears the build skeleton — the answer stays in chat.
   z.object({ type: z.literal("canvas_error"), canvasId: z.string(), message: z.string() }),

@@ -9,7 +9,10 @@ import { CANVAS_CSS } from "./canvas-css";
 //   • the frame owns its whole world — its CSS/JS cannot touch or collide with the app
 //   • the runtime auto-heights the frame, syncs theme, and bridges island clicks
 //     (cite / lightbox / action / select) up to the app via postMessage
-//   • it renders the FINISHED document once — no partial parses
+//   • while composing, the parent posts sanitized partial HTML (FRAME_MSG.stream)
+//     and the runtime paints it INERT (innerHTML — scripts never run, heavy
+//     islands become placeholders); the finished document then replaces the
+//     whole frame via srcdoc, and only then do scripts run
 //
 // Security: sandbox="allow-scripts allow-modals" gives a NULL/opaque origin. We
 // deliberately DO NOT add allow-same-origin (with allow-scripts that pair lets the
@@ -30,6 +33,7 @@ export const FRAME_MSG = {
   // parent → child
   theme: "takt:theme",
   highlight: "takt:highlight",
+  stream: "takt:stream", // sanitized partial HTML → inert live preview
 } as const;
 
 // A srcdoc frame INHERITS the embedding app's CSP, so external CDNs are out (the

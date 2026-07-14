@@ -5,6 +5,7 @@ import { safeParseArgs } from "./turn-loop.js";
 import { resolveBuild } from "./providers.js";
 import { moduleIndex, readDesign } from "./design-catalog.js";
 import { lintCanvas, p0, lintFeedback } from "./lint-canvas.js";
+import { checkSpecValues, specFeedback } from "./spec-check.js";
 import { CRAFT_CORE, TEMPLATES } from "./design-standard.js";
 
 const MAX_STEPS = 4;
@@ -16,8 +17,11 @@ const MAX_CONTINUE = 2;
 // design modules it needs (read_design), writes a short token PLAN as prose, then
 // streams the page as PLAIN TEXT between <takt:canvas> markers — no JSON escaping,
 // so any model can emit it, and a max_tokens truncation is just an unclosed marker
-// we ask the model to continue. Quality lives UPSTREAM (plan, blessed skeletons,
-// craft law, lint) — there is no post-render verify loop; that's Claude's trade.
+// we ask the model to continue. Design quality lives UPSTREAM (plan, blessed
+// skeletons, craft law, lint) — no post-render layout verify; that's Claude's
+// trade. FACTS are different: after the page arrives we run a deterministic
+// number+unit check against the gathered facts (spec-check.ts) — one repair
+// round on a mismatch, and the result ships on canvas_end as `specCheck`.
 
 function canvasSystemPrompt(): string {
   return `You are Takt's canvas composer and DESIGN LEAD for AI TECHNICAL SUPPORT. For each answer you design ONE self-contained HTML page (no <html>/<head>/<body>). You never write prose to the user — your text output is consumed by the pipeline.
@@ -165,7 +169,9 @@ export async function runCanvasWorker(o: CanvasWorkerOpts): Promise<boolean> {
       const html = extractCanvasStream(soFar);
       if (html && html.length - lastLen >= 120) {
         lastLen = html.length;
-        await o.emit({ type: "canvas_delta", canvasId: o.canvasId, html });
+        // Sanitize the partial too — the client paints deltas live now, so the
+        // preview must carry the same guarantees as the final page.
+        await o.emit({ type: "canvas_delta", canvasId: o.canvasId, html: sanitizeCanvasHtml(html, allowed) });
       }
       return;
     }
@@ -181,6 +187,7 @@ export async function runCanvasWorker(o: CanvasWorkerOpts): Promise<boolean> {
 
   let emitted = false;
   let rejectedOnce = false;
+  let specFixedOnce = false;
   try {
     for (let step = 0; step < MAX_STEPS && !emitted && !o.signal.aborted; step++) {
       soFar = ""; lastLen = 0;
@@ -232,7 +239,20 @@ export async function runCanvasWorker(o: CanvasWorkerOpts): Promise<boolean> {
         continue;
       }
       if (!hasContent) break; // second empty attempt → give up (emitted stays false)
-      await o.emit({ type: "canvas_end", canvasId: o.canvasId, html: clean, title: block.title ?? o.title });
+      // Deterministic fact-check: every number+unit on the page must exist in
+      // the gathered facts. One repair round; then ship with the result attached
+      // (the client shows it as a verified/unverified badge).
+      const ground = o.mode === "build" ? `${o.facts ?? ""}\n${o.mediaHints ?? ""}` : "";
+      const spec = ground.trim() ? checkSpecValues(clean, ground) : undefined;
+      if (spec?.flagged.length && !specFixedOnce) {
+        specFixedOnce = true;
+        messages.push({ role: "user", text: specFeedback(spec) });
+        continue;
+      }
+      await o.emit({
+        type: "canvas_end", canvasId: o.canvasId, html: clean, title: block.title ?? o.title,
+        specCheck: spec ? { checked: spec.checked, flagged: spec.flagged.length } : undefined,
+      });
       emitted = true;
     }
   } catch (e: any) {

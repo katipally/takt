@@ -13,7 +13,7 @@ export interface ToolPart { id: string; kind: "tool"; tool: string; summary?: st
 export interface TodoItem { text: string; done: boolean; }
 export interface TextPart { id: string; kind: "text"; text: string; }
 export interface AskPart { id: string; kind: "ask"; askId: string; questions: AskQuestion[]; answers?: AskAnswer[]; cancelled?: boolean; }
-export interface CanvasPart { id: string; kind: "canvas"; canvasId: string; title?: string; html: string; }
+export interface CanvasPart { id: string; kind: "canvas"; canvasId: string; title?: string; html: string; specCheck?: { checked: number; flagged: number }; }
 export type Part = ReasoningPart | ToolPart | TextPart | SourcePart | AskPart | CanvasPart;
 
 // The CANVAS renders ONLY the streamed HTML canvas — a polished final product,
@@ -106,7 +106,7 @@ function applyStreamEvent(chatId: string, assistantId: string, e: SseEvent) {
   );
   else if (e.type === "canvas_start") update(chatId, (s) => setStatus(patchAssistant(s, assistantId, (p) => upsertCanvas(p, e.canvasId, (c) => ({ ...c, title: e.title ?? c.title }))), assistantId, null));
   else if (e.type === "canvas_delta") update(chatId, (s) => patchAssistant(s, assistantId, (p) => upsertCanvas(p, e.canvasId, (c) => ({ ...c, html: e.html }))));
-  else if (e.type === "canvas_end") update(chatId, (s) => patchAssistant(s, assistantId, (p) => upsertCanvas(p, e.canvasId, (c) => ({ ...c, html: e.html, title: e.title ?? c.title }))));
+  else if (e.type === "canvas_end") update(chatId, (s) => patchAssistant(s, assistantId, (p) => upsertCanvas(p, e.canvasId, (c) => ({ ...c, html: e.html, title: e.title ?? c.title, specCheck: e.specCheck }))));
   else if (e.type === "canvas_error") update(chatId, (s) => setStatus(patchAssistant(s, assistantId, (p) => p.filter((q) => !(q.kind === "canvas" && q.canvasId === e.canvasId))), assistantId, null));
   else if (e.type === "canvas_highlight") useUi.getState().highlightCanvas(e.target);
   else if (e.type === "action_result") { /* client ack only */ }
@@ -244,7 +244,7 @@ export const chatStore = {
             else if (b.type === "reasoning" && b.text) parts.push({ id: uid(), kind: "reasoning", text: b.text });
             else if (b.type === "tool") parts.push({ id: uid(), kind: "tool", tool: b.tool, summary: b.summary, detail: b.detail, status: "done" });
             else if (b.type === "source") parts.push({ id: uid(), kind: "source", citationId: b.citationId, url: b.url, page: b.page, manualKind: b.manualKind, manualTitle: b.manualTitle ?? undefined, caption: b.caption, productSlug: b.productSlug ?? null, productName: b.productName ?? null });
-            else if (b.type === "canvas") parts.push({ id: uid(), kind: "canvas", canvasId: b.canvasId, title: b.title, html: b.html });
+            else if (b.type === "canvas") parts.push({ id: uid(), kind: "canvas", canvasId: b.canvasId, title: b.title, html: b.html, specCheck: b.specCheck });
             else if (b.type === "ask_user") parts.push({ id: uid(), kind: "ask", askId: b.askId, questions: b.questions, answers: b.answers, cancelled: b.cancelled });
           }
           messages.push({ id: m.id, role: "assistant", parts, streaming: false });

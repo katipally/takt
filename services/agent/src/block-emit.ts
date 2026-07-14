@@ -40,8 +40,8 @@ export function foldBlock(blocks: MessageBlock[], e: SseEvent): void {
     }
     case "canvas_end": {
       const c = blocks.find((b) => b.type === "canvas" && b.canvasId === e.canvasId);
-      if (c && c.type === "canvas") { c.html = e.html; if (e.title) c.title = e.title; }
-      else blocks.push({ type: "canvas", canvasId: e.canvasId, title: e.title, html: e.html });
+      if (c && c.type === "canvas") { c.html = e.html; if (e.title) c.title = e.title; c.specCheck = e.specCheck; }
+      else blocks.push({ type: "canvas", canvasId: e.canvasId, title: e.title, html: e.html, specCheck: e.specCheck });
       break;
     }
     case "canvas_error": {

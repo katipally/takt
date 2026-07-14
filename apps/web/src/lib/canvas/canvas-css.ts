@@ -220,6 +220,11 @@ takt-figure,takt-video,takt-model{display:block}
 .takt-ctxitem:hover{background:var(--takt-surface)}
 .takt-ctxitem .dot{width:.5em;height:.5em;border-radius:50%;background:var(--takt-accent);flex:0 0 auto}
 
+/* Streaming preview: heavy islands (3D/video/mermaid) render as quiet boxes
+   until the finished document swaps in. */
+.takt-preview-pending{min-height:160px;border-radius:10px;background:var(--takt-surface);
+  border:1px dashed var(--takt-border);opacity:.7}
+
 button:focus-visible,a:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--takt-accent);outline-offset:2px;border-radius:6px}
 @media (prefers-reduced-motion: reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 `;

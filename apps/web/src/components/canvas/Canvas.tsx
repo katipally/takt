@@ -12,10 +12,13 @@ import { buildFrameSrcdoc, prepareCanvasHtml, FRAME_MSG } from "@/lib/canvas/fra
 // no allow-same-origin → opaque origin, no cookies/storage/parent access). The frame
 // owns its whole document, so the model's CSS/JS can never collide with the app, the
 // container-query grid can't collapse, and islands can't be wiped — the failures of
-// the old direct-DOM renderer. We set srcdoc ONCE, when the turn's stream
-// has stopped (the finished page), and never paint the partial stream. The in-frame
-// runtime posts island clicks (cite/lightbox/action/select) + its content height back
-// up here; we bridge them into the app and push theme down.
+// the old direct-DOM renderer. While the page is COMPOSING we load an empty shell
+// document once and post the sanitized partial stream into it (inert preview —
+// innerHTML, scripts never run, heavy islands become placeholders), so the page
+// paints itself live. When the stream stops, the finished document replaces the
+// whole frame via srcdoc and scripts run. The in-frame runtime posts island clicks
+// (cite/lightbox/action/select) + its content height back up here; we bridge them
+// into the app and push theme down.
 
 export function Canvas({ part, chatId, productSlug, streaming }: {
   part: CanvasPart;
@@ -29,12 +32,57 @@ export function Canvas({ part, chatId, productSlug, streaming }: {
   const highlight = useUi((s) => s.canvasHighlight);
 
   const ready = !streaming && !!part.html;
+  const previewing = streaming && !!part.html;
+
+  // Refs for the streaming preview: the frame's ready handshake races the first
+  // deltas, so the latest partial is kept here and flushed on ready.
+  const frameReadyRef = useRef(false);
+  const latestPartialRef = useRef("");
+  const previewingRef = useRef(false);
+  const shellLoadedRef = useRef(false);
+  const lastPostRef = useRef(0);
+  previewingRef.current = previewing;
+  if (previewing) latestPartialRef.current = part.html;
+
+  // The iframe mounts/unmounts with ready||previewing — reset the handshake
+  // state on every (re)mount, or a second canvas in the same chat posts into a
+  // blank frame that never loaded the shell.
+  const attachFrame = (el: HTMLIFrameElement | null) => {
+    if (frameRef.current !== el) { frameReadyRef.current = false; shellLoadedRef.current = false; }
+    frameRef.current = el;
+  };
+
+  const postStream = () => {
+    lastPostRef.current = Date.now();
+    frameRef.current?.contentWindow?.postMessage({ type: FRAME_MSG.stream, html: latestPartialRef.current }, "*");
+  };
+
+  // Streaming: load the empty shell document once, then post throttled partial
+  // updates into it (inert preview — see header comment).
+  useEffect(() => {
+    if (!previewing || !frameRef.current) return;
+    if (!shellLoadedRef.current) {
+      shellLoadedRef.current = true;
+      const dark = document.documentElement.classList.contains("dark");
+      buildFrameSrcdoc("", { dark }).then((doc) => {
+        if (frameRef.current && previewingRef.current) frameRef.current.srcdoc = doc;
+      });
+      return;
+    }
+    if (!frameReadyRef.current) return; // flushed by the ready handshake
+    const wait = 350 - (Date.now() - lastPostRef.current);
+    if (wait <= 0) { postStream(); return; }
+    const t = setTimeout(postStream, wait);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewing, part.html]);
 
   // Build + inject the finished document once the stream stops. Re-inject on html
   // change (an edit/verify-fix pass produces a new final html for the same part).
   useEffect(() => {
     if (!frameRef.current || !ready) return;
     let cancelled = false;
+    frameReadyRef.current = false; // the final document re-handshakes
     const dark = document.documentElement.classList.contains("dark");
     // Pre-render mermaid (async) in the parent, then inject the finished document.
     prepareCanvasHtml(part.html, { dark })
@@ -55,6 +103,9 @@ export function Canvas({ part, chatId, productSlug, streaming }: {
       switch (d.type) {
         case FRAME_MSG.ready:
           postTheme();
+          frameReadyRef.current = true;
+          // Shell just booted mid-stream → flush the partial it missed.
+          if (previewingRef.current && latestPartialRef.current) postStream();
           break;
         case FRAME_MSG.size:
           if (typeof d.h === "number") setHeight(Math.max(120, Math.ceil(d.h)));
@@ -107,17 +158,33 @@ export function Canvas({ part, chatId, productSlug, streaming }: {
 
   return (
     <>
-      {ready ? (
-        <iframe
-          ref={frameRef}
-          title="Canvas"
-          sandbox="allow-scripts allow-modals"
-          className="block w-full border-0"
-          style={{ height, background: "transparent" }}
-        />
+      {ready || previewing ? (
+        <div className="relative">
+          <iframe
+            ref={attachFrame}
+            title="Canvas"
+            sandbox="allow-scripts allow-modals"
+            className="block w-full border-0"
+            style={{ height, background: "transparent" }}
+          />
+          {/* Deterministic fact-check result (spec-check.ts): every number+unit
+              on the page was diffed against the facts gathered this turn. */}
+          {ready && part.specCheck && part.specCheck.checked > 0 && (
+            <div
+              className={`pointer-events-none absolute bottom-2 right-2 rounded-full border border-border bg-card/90 px-2.5 py-0.5 font-mono text-[11px] ${part.specCheck.flagged === 0 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}
+              title={part.specCheck.flagged === 0
+                ? "Every numeric spec on this page matches the gathered manual facts"
+                : "Some numbers on this page were not found in the gathered manual facts"}
+            >
+              {part.specCheck.flagged === 0
+                ? `✓ ${part.specCheck.checked} value${part.specCheck.checked === 1 ? "" : "s"} verified`
+                : `⚠ ${part.specCheck.flagged} unverified value${part.specCheck.flagged === 1 ? "" : "s"}`}
+            </div>
+          )}
+        </div>
       ) : (
-        // Build frontier — shimmer skeleton while the page composes (we never paint
-        // the partial stream; the finished document swaps in once the stream stops).
+        // Build frontier — shimmer skeleton until the first partial arrives; the
+        // stream then paints itself live in the shell frame above.
         <div className="takt-building mx-auto w-full max-w-[68ch] px-[clamp(16px,4cqi,56px)] py-10" aria-hidden>
           <div className="sk sk-line" style={{ width: "38%" }} />
           <div className="sk sk-block" />

@@ -81,7 +81,7 @@ export type MessageBlock =
   | { type: "reasoning"; text: string }
   | { type: "tool"; id?: string; tool: string; summary?: string; detail?: string; status: "running" | "done" }
   | { type: "source"; citationId: string; url: string; page: number; manualKind: ManualKind; manualTitle?: string | null; caption: string | null; productSlug?: string | null; productName?: string | null }
-  | { type: "canvas"; canvasId: string; title?: string; html: string }
+  | { type: "canvas"; canvasId: string; title?: string; html: string; specCheck?: { checked: number; flagged: number } }
   | { type: "ask_user"; askId: string; questions: AskQuestion[]; answers?: AskAnswer[]; cancelled?: boolean };
 
 /** Request body the web app POSTs to /api/chat (and the agent service).
