@@ -43,14 +43,24 @@ jobs:
         run: pip install -q -U "huggingface_hub[cli]"
 
       # A fresh checkout contains only tracked files (no node_modules/.env/.next —
-      # they're gitignored), so this uploads exactly the right set. --delete "*"
+      # they're gitignored), so this uploads exactly the right set. delete "*"
       # makes it a true mirror: files removed from the repo are removed from the Space.
+      # NOTE: `hf upload` always hits repos/create first, which HF now answers
+      # with 402 on free accounts EVEN WHEN the Space already exists — so call
+      # upload_folder directly (it never attempts creation).
       - name: Deploy to Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          hf upload yashwanttth/takt . . \
-            --repo-type space \
-            --exclude ".git/*" --exclude ".github/*" \
-            --delete "*" \
-            --commit-message "Deploy from GitHub @ ${GITHUB_SHA::7}"
+          python - <<'EOF'
+          import os
+          from huggingface_hub import HfApi
+          HfApi(token=os.environ["HF_TOKEN"]).upload_folder(
+              folder_path=".",
+              repo_id="yashwanttth/takt",
+              repo_type="space",
+              delete_patterns=["*"],
+              ignore_patterns=[".git/*", ".github/*"],
+              commit_message=f"Deploy from GitHub @ {os.environ['GITHUB_SHA'][:7]}",
+          )
+          EOF
